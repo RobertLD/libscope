@@ -9,8 +9,9 @@ import { getDocument } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
 import { listTopics } from "../core/topics.js";
+import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger } from "../logger.js";
-import { LibScopeError } from "../errors.js";
+import { LibScopeError, ValidationError } from "../errors.js";
 
 const config = loadConfig();
 initLogger(config.logging.level);
@@ -88,7 +89,9 @@ server.tool(
       const text =
         `# ${doc.title}\n\n` +
         `**Type:** ${doc.sourceType}\n` +
-        (doc.library ? `**Library:** ${doc.library}${doc.version ? ` v${doc.version}` : ""}\n` : "") +
+        (doc.library
+          ? `**Library:** ${doc.library}${doc.version ? ` v${doc.version}` : ""}\n`
+          : "") +
         (doc.url ? `**Source:** ${doc.url}\n` : "") +
         `**Rating:** ${ratings.averageRating.toFixed(1)}/5 (${ratings.totalRatings} ratings)\n\n` +
         doc.content;
@@ -129,7 +132,8 @@ server.tool(
         content: [
           {
             type: "text" as const,
-            text: `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
+            text:
+              `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
               (result.feedback ? `\nFeedback: ${result.feedback}` : "") +
               (result.suggestedCorrection ? `\nCorrection suggested.` : ""),
           },
@@ -144,28 +148,59 @@ server.tool(
 // Tool: submit-document
 server.tool(
   "submit-document",
-  "Submit a new document for indexing into the knowledge base",
+  "Submit a new document for indexing into the knowledge base. You can provide content directly, or provide a URL to fetch and index automatically.",
   {
-    title: z.string().describe("Document title"),
-    content: z.string().describe("Document content in markdown"),
+    title: z
+      .string()
+      .optional()
+      .describe("Document title (auto-detected from URL if not provided)"),
+    content: z
+      .string()
+      .optional()
+      .describe("Document content in markdown (omit if providing a URL to fetch)"),
+    url: z
+      .string()
+      .optional()
+      .describe(
+        "URL to fetch and index. When provided, content is fetched automatically. Title is auto-detected if not specified.",
+      ),
     sourceType: z
       .enum(["library", "topic", "manual", "model-generated"])
-      .describe("Type of document"),
+      .optional()
+      .describe("Type of document (default: 'manual', or 'library' if library name is given)"),
     topic: z.string().optional().describe("Topic ID to categorize under"),
     library: z.string().optional().describe("Library name (for library docs)"),
     version: z.string().optional().describe("Library version"),
-    url: z.string().optional().describe("Source URL"),
   },
   async (params) => {
     try {
+      let { title, content } = params;
+      const { url, library, version, topic } = params;
+
+      // If URL is provided and no content, fetch it
+      if (url && !content) {
+        const fetched = await fetchAndConvert(url);
+        content = fetched.content;
+        title ??= fetched.title;
+      }
+
+      if (!title) {
+        return errorResponse(new ValidationError("A title is required when not providing a URL"));
+      }
+      if (!content) {
+        return errorResponse(new ValidationError("Either content or a URL must be provided"));
+      }
+
+      const sourceType = params.sourceType ?? (library ? "library" : "manual");
+
       const result = await indexDocument(db, provider, {
-        title: params.title,
-        content: params.content,
-        sourceType: params.sourceType,
-        library: params.library,
-        version: params.version,
-        topicId: params.topic,
-        url: params.url,
+        title,
+        content,
+        sourceType,
+        library,
+        version,
+        topicId: topic,
+        url,
         submittedBy: "model",
       });
 
@@ -173,7 +208,12 @@ server.tool(
         content: [
           {
             type: "text" as const,
-            text: `Document indexed successfully.\nID: ${result.id}\nChunks: ${result.chunkCount}`,
+            text:
+              `Document indexed successfully.\n` +
+              `Title: ${title}\n` +
+              `ID: ${result.id}\n` +
+              `Chunks: ${result.chunkCount}` +
+              (url ? `\nSource: ${url}` : ""),
           },
         ],
       };
@@ -201,10 +241,7 @@ server.tool(
       }
 
       const text = topics
-        .map(
-          (t) =>
-            `- **${t.name}** (\`${t.id}\`)${t.description ? `: ${t.description}` : ""}`,
-        )
+        .map((t) => `- **${t.name}** (\`${t.id}\`)${t.description ? `: ${t.description}` : ""}`)
         .join("\n");
 
       return { content: [{ type: "text" as const, text: `## Topics\n\n${text}` }] };
@@ -214,7 +251,10 @@ server.tool(
   },
 );
 
-function errorResponse(err: unknown): { content: Array<{ type: "text"; text: string }>; isError: true } {
+function errorResponse(err: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
   const message = err instanceof LibScopeError ? err.message : "An unexpected error occurred";
   return {
     content: [{ type: "text" as const, text: `Error: ${message}` }],
