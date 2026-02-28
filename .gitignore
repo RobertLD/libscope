@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.libscope/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
