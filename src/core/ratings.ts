@@ -84,7 +84,7 @@ export function getDocumentRatings(db: Database.Database, documentId: string): R
     SELECT
       AVG(rating) AS avg_rating,
       COUNT(*) AS total,
-      SUM(CASE WHEN suggested_correction IS NOT NULL THEN 1 ELSE 0 END) AS corrections
+      COALESCE(SUM(CASE WHEN suggested_correction IS NOT NULL THEN 1 ELSE 0 END), 0) AS corrections
     FROM ratings
     WHERE document_id = ?
   `).get(documentId) as { avg_rating: number | null; total: number; corrections: number };
