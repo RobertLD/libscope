@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -60,6 +60,36 @@ const MIGRATIONS: Record<number, string> = {
       version INTEGER PRIMARY KEY
     );
     INSERT INTO schema_version (version) VALUES (1);
+  `,
+  2: `
+    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+      content,
+      chunk_id UNINDEXED,
+      document_id UNINDEXED,
+      tokenize='porter unicode61'
+    );
+
+    -- Triggers to keep FTS in sync with chunks table
+    CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+      INSERT INTO chunks_fts(content, chunk_id, document_id)
+      VALUES (new.content, new.id, new.document_id);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE chunk_id = old.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE chunk_id = old.id;
+      INSERT INTO chunks_fts(content, chunk_id, document_id)
+      VALUES (new.content, new.id, new.document_id);
+    END;
+
+    -- Backfill existing chunks into FTS
+    INSERT OR IGNORE INTO chunks_fts(content, chunk_id, document_id)
+    SELECT content, id, document_id FROM chunks;
+
+    INSERT INTO schema_version (version) VALUES (2);
   `,
 };
 

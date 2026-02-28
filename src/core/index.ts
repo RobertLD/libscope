@@ -12,3 +12,6 @@ export type { Document } from "./documents.js";
 
 export { createTopic, listTopics, getTopic } from "./topics.js";
 export type { Topic, CreateTopicInput } from "./topics.js";
+
+export { fetchAndConvert } from "./url-fetcher.js";
+export type { FetchedDocument } from "./url-fetcher.js";

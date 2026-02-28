@@ -40,10 +40,10 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   async embed(text: string): Promise<number[]> {
     await this.initialize();
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       const output = await (this.pipeline as any)(text, { pooling: "mean", normalize: true });
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-      return Array.from(output.data as Float32Array) as number[];
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      return Array.from(output.data as Float32Array);
     } catch (err) {
       throw new EmbeddingError(`Failed to generate embedding: ${String(err)}`, err);
     }

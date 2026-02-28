@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb } from "../fixtures/test-db.js";
 import { runMigrations } from "../../src/db/schema.js";
 import type Database from "better-sqlite3";
 import DatabaseConstructor from "better-sqlite3";
@@ -17,9 +16,7 @@ describe("database schema", () => {
       runMigrations(db);
 
       const tables = db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-        )
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         .all() as Array<{ name: string }>;
 
       const tableNames = tables.map((t) => t.name);
@@ -28,16 +25,17 @@ describe("database schema", () => {
       expect(tableNames).toContain("ratings");
       expect(tableNames).toContain("topics");
       expect(tableNames).toContain("schema_version");
+      expect(tableNames).toContain("chunks_fts");
     });
 
     it("should be idempotent", () => {
       runMigrations(db);
       runMigrations(db); // Should not throw
 
-      const version = db
-        .prepare("SELECT MAX(version) as v FROM schema_version")
-        .get() as { v: number };
-      expect(version.v).toBe(1);
+      const version = db.prepare("SELECT MAX(version) as v FROM schema_version").get() as {
+        v: number;
+      };
+      expect(version.v).toBe(2);
     });
 
     it("should create expected indexes", () => {

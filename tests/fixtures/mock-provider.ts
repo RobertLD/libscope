@@ -13,12 +13,12 @@ export class MockEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     this.embedCallCount++;
-    return this.hashToVector(text);
+    return Promise.resolve(this.hashToVector(text));
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     this.embedBatchCallCount++;
-    return texts.map((t) => this.hashToVector(t));
+    return Promise.resolve(texts.map((t) => this.hashToVector(t)));
   }
 
   /** Simple deterministic hash → 4D unit vector. */

@@ -10,7 +10,9 @@ import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument } from "../core/documents.js";
 import { initLogger, type LogLevel } from "../logger.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, extname, basename } from "node:path";
+import { fetchAndConvert } from "../core/url-fetcher.js";
 
 const program = new Command();
 
@@ -27,7 +29,7 @@ program
   .description("Initialize the LibScope database")
   .action(() => {
     const config = loadConfig();
-    setupLogging(program.opts() as ProgramOpts);
+    setupLogging(program.opts());
     const db = getDatabase(config.database.path);
     runMigrations(db);
     const provider = createEmbeddingProvider(config);
@@ -38,37 +40,114 @@ program
 
 // add
 program
-  .command("add <file>")
-  .description("Index a document from a file")
+  .command("add <fileOrUrl>")
+  .description("Index a document from a file or URL")
   .option("--topic <topicId>", "Assign to a topic")
   .option("--library <name>", "Mark as library documentation")
   .option("--version <version>", "Library version")
-  .option("--url <url>", "Source URL")
-  .action(async (file: string, opts: { topic?: string; library?: string; version?: string; url?: string }) => {
-    const config = loadConfig();
-    setupLogging(program.opts() as ProgramOpts);
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
-    const provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider.dimensions);
+  .option("--title <title>", "Override document title")
+  .action(
+    async (
+      fileOrUrl: string,
+      opts: { topic?: string; library?: string; version?: string; title?: string },
+    ) => {
+      const config = loadConfig();
+      setupLogging(program.opts());
+      const db = getDatabase(config.database.path);
+      runMigrations(db);
+      const provider = createEmbeddingProvider(config);
+      createVectorTable(db, provider.dimensions);
 
-    const content = readFileSync(file, "utf-8");
-    const title = file.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
+      let content: string;
+      let title: string;
+      let url: string | undefined;
 
-    const result = await indexDocument(db, provider, {
-      title,
-      content,
-      sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
-      library: opts.library,
-      version: opts.version,
-      topicId: opts.topic,
-      url: opts.url,
-    });
+      if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
+        console.log(`Fetching ${fileOrUrl}...`);
+        const fetched = await fetchAndConvert(fileOrUrl);
+        content = fetched.content;
+        title = opts.title ?? fetched.title;
+        url = fileOrUrl;
+      } else {
+        content = readFileSync(fileOrUrl, "utf-8");
+        title = opts.title ?? basename(fileOrUrl).replace(/\.[^.]+$/, "");
+      }
 
-    console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
-    console.log(`  ID: ${result.id}`);
-    closeDatabase();
-  });
+      const result = await indexDocument(db, provider, {
+        title,
+        content,
+        sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+        library: opts.library,
+        version: opts.version,
+        topicId: opts.topic,
+        url,
+      });
+
+      console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
+      console.log(`  ID: ${result.id}`);
+      closeDatabase();
+    },
+  );
+
+// import
+program
+  .command("import <directory>")
+  .description("Bulk import markdown files from a directory")
+  .option("--topic <topicId>", "Assign all to a topic")
+  .option("--library <name>", "Mark all as library documentation")
+  .option("--version <version>", "Library version")
+  .option("--extensions <exts>", "Comma-separated file extensions to include", ".md,.mdx,.txt")
+  .action(
+    async (
+      directory: string,
+      opts: { topic?: string; library?: string; version?: string; extensions: string },
+    ) => {
+      const config = loadConfig();
+      setupLogging(program.opts());
+      const db = getDatabase(config.database.path);
+      runMigrations(db);
+      const provider = createEmbeddingProvider(config);
+      createVectorTable(db, provider.dimensions);
+
+      const extensions = new Set(opts.extensions.split(",").map((e) => e.trim().toLowerCase()));
+      const files = findFiles(directory, extensions);
+
+      if (files.length === 0) {
+        console.log(`No matching files found in ${directory}`);
+        closeDatabase();
+        return;
+      }
+
+      console.log(`Found ${files.length} files to import...`);
+      let indexed = 0;
+      let failed = 0;
+
+      for (const file of files) {
+        try {
+          const content = readFileSync(file, "utf-8");
+          const title = basename(file).replace(/\.[^.]+$/, "");
+
+          const result = await indexDocument(db, provider, {
+            title,
+            content,
+            sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+            library: opts.library,
+            version: opts.version,
+            topicId: opts.topic,
+          });
+
+          console.log(`  ✓ ${file} (${result.chunkCount} chunks)`);
+          indexed++;
+        } catch (err) {
+          console.error(`  ✗ ${file}: ${err instanceof Error ? err.message : String(err)}`);
+          failed++;
+        }
+      }
+
+      console.log(`\nDone: ${indexed} indexed, ${failed} failed`);
+      closeDatabase();
+    },
+  );
 
 // search
 program
@@ -79,7 +158,7 @@ program
   .option("--limit <n>", "Max results", "5")
   .action(async (query: string, opts: { topic?: string; library?: string; limit: string }) => {
     const config = loadConfig();
-    setupLogging(program.opts() as ProgramOpts);
+    setupLogging(program.opts());
     const db = getDatabase(config.database.path);
     runMigrations(db);
     const provider = createEmbeddingProvider(config);
@@ -113,7 +192,7 @@ topicsCmd
   .description("List all topics")
   .action(() => {
     const config = loadConfig();
-    setupLogging(program.opts() as ProgramOpts);
+    setupLogging(program.opts());
     const db = getDatabase(config.database.path);
     runMigrations(db);
 
@@ -135,7 +214,7 @@ topicsCmd
   .option("--parent <parentId>", "Parent topic ID")
   .action((name: string, opts: { description?: string; parent?: string }) => {
     const config = loadConfig();
-    setupLogging(program.opts() as ProgramOpts);
+    setupLogging(program.opts());
     const db = getDatabase(config.database.path);
     runMigrations(db);
 
@@ -156,7 +235,7 @@ ratingsCmd
   .description("Show ratings for a document")
   .action((documentId: string) => {
     const config = loadConfig();
-    setupLogging(program.opts() as ProgramOpts);
+    setupLogging(program.opts());
     const db = getDatabase(config.database.path);
     runMigrations(db);
 
@@ -165,7 +244,9 @@ ratingsCmd
     const ratings = listRatings(db, documentId);
 
     console.log(`\nRatings for: ${doc.title}`);
-    console.log(`  Average: ${summary.averageRating.toFixed(1)}/5 (${summary.totalRatings} ratings)`);
+    console.log(
+      `  Average: ${summary.averageRating.toFixed(1)}/5 (${summary.totalRatings} ratings)`,
+    );
     console.log(`  Corrections suggested: ${summary.corrections}`);
 
     if (ratings.length > 0) {
@@ -222,8 +303,30 @@ interface ProgramOpts {
 function setupLogging(opts: ProgramOpts): void {
   const level: LogLevel = opts.verbose
     ? "debug"
-    : (opts.logLevel as LogLevel | undefined) ?? loadConfig().logging.level;
+    : ((opts.logLevel as LogLevel | undefined) ?? loadConfig().logging.level);
   initLogger(level);
+}
+
+/** Recursively find files matching given extensions. */
+function findFiles(dir: string, extensions: Set<string>): string[] {
+  const results: string[] = [];
+
+  function walk(currentDir: string): void {
+    const entries = readdirSync(currentDir);
+    for (const entry of entries) {
+      if (entry.startsWith(".")) continue;
+      const fullPath = join(currentDir, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        walk(fullPath);
+      } else if (extensions.has(extname(entry).toLowerCase())) {
+        results.push(fullPath);
+      }
+    }
+  }
+
+  walk(dir);
+  return results.sort();
 }
 
 program.parse();
