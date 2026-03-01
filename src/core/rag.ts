@@ -124,8 +124,16 @@ function createOpenAiProvider(
       });
 
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`OpenAI API error (${res.status}): ${body}`);
+        const status = res.status;
+        // Sanitize: don't leak response body which may contain account details
+        const genericMessages: Record<number, string> = {
+          401: "Invalid or expired API key",
+          429: "Rate limit exceeded",
+          500: "OpenAI internal server error",
+          503: "OpenAI service unavailable",
+        };
+        const message = genericMessages[status] ?? `HTTP ${status}`;
+        throw new Error(`OpenAI API error: ${message}`);
       }
 
       const data = (await res.json()) as {

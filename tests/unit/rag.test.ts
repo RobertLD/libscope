@@ -250,4 +250,31 @@ describe("createLlmProvider", () => {
 
     expect(() => createLlmProvider(config)).toThrow("OpenAI API key is required");
   });
+
+  it("sanitizes OpenAI error messages (does not leak response body)", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "openai", model: "gpt-4o", openaiApiKey: "sk-test" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    // Mock fetch to return a 401
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve('{"error":{"message":"Invalid API key: sk-test****"}}'),
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("Invalid or expired API key");
+      // Should NOT contain the actual response body with key info
+      await expect(provider.complete("test")).rejects.not.toThrow("sk-test");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

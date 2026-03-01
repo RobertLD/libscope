@@ -16,6 +16,8 @@ export function corsMiddleware(
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Max-Age", "86400");
 
+  setSecurityHeaders(res);
+
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
@@ -24,11 +26,70 @@ export function corsMiddleware(
   return false;
 }
 
+/** Set standard security response headers. */
+export function setSecurityHeaders(res: ServerResponse): void {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
+  );
+}
+
+/** Maximum request body size in bytes (default 1 MB). */
+const MAX_BODY_SIZE = 1 * 1024 * 1024;
+
+/** Simple in-memory rate limiter per IP address. */
+const rateLimitMap = new Map<string, number[]>();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 120;
+
+/** Check rate limit for a given IP. Returns true if request is allowed. */
+export function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(ip) ?? [];
+  const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+  if (recent.length >= RATE_LIMIT_MAX_REQUESTS) {
+    rateLimitMap.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  rateLimitMap.set(ip, recent);
+  return true;
+}
+
+/** Periodically clean up stale rate-limit entries (every 5 minutes). */
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of rateLimitMap) {
+    const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) {
+      rateLimitMap.delete(ip);
+    } else {
+      rateLimitMap.set(ip, recent);
+    }
+  }
+}, 5 * 60_000).unref();
+
 /** Parse the request body as JSON. Returns the parsed object or null on failure. */
-export async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
+export async function parseJsonBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_BODY_SIZE,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let received = 0;
+    req.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > maxBytes) {
+        req.destroy();
+        reject(new Error(`Request body too large (max ${maxBytes} bytes)`));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw) {

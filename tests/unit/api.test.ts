@@ -507,3 +507,55 @@ describe("OpenAPI spec", () => {
     expect(paths).toContain("/openapi.json");
   });
 });
+
+describe("middleware — security", () => {
+  it("should enforce request body size limit", async () => {
+    const largeBody = "x".repeat(2 * 1024 * 1024); // 2 MB
+    const req = createMockReq("POST", "/api/v1/documents", undefined);
+    // Manually emit data chunks to simulate large body
+    const promise = parseJsonBody(req, 1024); // 1 KB limit
+    req.emit("data", Buffer.from(largeBody));
+    await expect(promise).rejects.toThrow("Request body too large");
+  });
+
+  it("should parse valid JSON body within limits", async () => {
+    const data = { query: "test" };
+    const req = createMockReq("POST", "/api/v1/search", data);
+    const promise = parseJsonBody(req);
+    req.emit("data", Buffer.from(JSON.stringify(data)));
+    req.emit("end");
+    const result = await promise;
+    expect(result).toEqual(data);
+  });
+
+  it("should set security headers via CORS middleware", () => {
+    const socket = new Socket();
+    const req = new IncomingMessage(socket);
+    req.method = "GET";
+    const res = new ServerResponse(req);
+    corsMiddleware(req, res, ["*"]);
+    expect(res.getHeader("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.getHeader("X-Frame-Options")).toBe("DENY");
+    expect(res.getHeader("X-XSS-Protection")).toBe("1; mode=block");
+    expect(res.getHeader("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(res.getHeader("Content-Security-Policy")).toBeDefined();
+  });
+});
+
+describe("middleware — rate limiting", () => {
+  it("should allow requests under the limit", async () => {
+    const { checkRateLimit } = await import("../../src/api/middleware.js");
+    const testIp = `test-${Date.now()}`;
+    expect(checkRateLimit(testIp)).toBe(true);
+    expect(checkRateLimit(testIp)).toBe(true);
+  });
+
+  it("should block requests over the limit", async () => {
+    const { checkRateLimit } = await import("../../src/api/middleware.js");
+    const testIp = `flood-${Date.now()}`;
+    for (let i = 0; i < 120; i++) {
+      checkRateLimit(testIp);
+    }
+    expect(checkRateLimit(testIp)).toBe(false);
+  });
+});

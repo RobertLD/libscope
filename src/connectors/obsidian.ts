@@ -86,6 +86,9 @@ function findMarkdownFiles(dir: string, excludePatterns: string[]): string[] {
   return results;
 }
 
+/** Maximum content size (5 MB) to process through regex-heavy parsing. */
+const MAX_PARSE_SIZE = 5 * 1024 * 1024;
+
 export function parseObsidianMarkdown(
   content: string,
   vaultFiles: string[],
@@ -95,8 +98,11 @@ export function parseObsidianMarkdown(
   tags: string[];
   wikilinks: string[];
 } {
+  // Guard against excessively large files that could cause slow regex execution
+  const safeContent = content.length > MAX_PARSE_SIZE ? content.slice(0, MAX_PARSE_SIZE) : content;
+
   let frontmatter: Record<string, unknown> = {};
-  let body = content;
+  let body = safeContent;
 
   // Parse YAML frontmatter
   const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
