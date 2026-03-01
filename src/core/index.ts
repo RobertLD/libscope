@@ -81,6 +81,9 @@ export type { WatchOptions } from "./watcher.js";
 export { askQuestion, createLlmProvider, buildContextPrompt, extractSources } from "./rag.js";
 export type { RagOptions, RagResult, RagSource, LlmProvider } from "./rag.js";
 
+export { reindex } from "./reindex.js";
+export type { ReindexOptions, ReindexResult, ReindexProgress } from "./reindex.js";
+
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";
