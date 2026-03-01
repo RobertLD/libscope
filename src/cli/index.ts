@@ -1456,81 +1456,135 @@ connectCmd
         for (const e of result.errors) {
           console.log(`    - ${e.file}: ${e.error}`);
         }
+      }
+    },
+  );
 
-        connectCmd
-          .command("slack")
-          .description("Connect a Slack workspace")
-          .option("--token <token>", "Slack bot or user token (xoxb-... or xoxp-...)")
-          .option("--channels <channels>", "Comma-separated channel names or IDs, or 'all'", "all")
-          .option("--exclude <channels>", "Comma-separated channel names to exclude")
-          .option(
-            "--thread-mode <mode>",
-            "Thread handling: aggregate (full thread as one doc) or separate",
-            "aggregate",
-          )
-          .option("--sync", "Sync using saved configuration")
-          .action(
-            async (opts: {
-              token?: string;
-              channels: string;
-              exclude?: string;
-              threadMode: string;
-              sync?: boolean;
-            }) => {
-              const { db, provider } = initializeAppWithEmbedding();
-              try {
-                let slackConfig: SlackConfig;
+connectCmd
+  .command("slack")
+  .description("Connect a Slack workspace")
+  .option("--token <token>", "Slack bot or user token (xoxb-... or xoxp-...)")
+  .option("--channels <channels>", "Comma-separated channel names or IDs, or 'all'", "all")
+  .option("--exclude <channels>", "Comma-separated channel names to exclude")
+  .option(
+    "--thread-mode <mode>",
+    "Thread handling: aggregate (full thread as one doc) or separate",
+    "aggregate",
+  )
+  .option("--sync", "Sync using saved configuration")
+  .action(
+    async (opts: {
+      token?: string;
+      channels: string;
+      exclude?: string;
+      threadMode: string;
+      sync?: boolean;
+    }) => {
+      const { db, provider } = initializeAppWithEmbedding();
+      try {
+        let slackConfig: SlackConfig;
 
-                if (opts.sync) {
-                  if (!hasNamedConnectorConfig("slack")) {
-                    console.error(
-                      "No Slack configuration found. Run 'libscope connect slack --token ...' first.",
-                    );
-                    process.exit(1);
-                  }
-                  slackConfig = loadNamedConnectorConfig<SlackConfig>("slack");
-                } else {
-                  if (!opts.token) {
-                    console.error("--token is required for initial Slack connection.");
-                    process.exit(1);
-                  }
-                  slackConfig = {
-                    token: opts.token,
-                    channels: opts.channels.split(",").map((c) => c.trim()),
-                    threadMode: opts.threadMode === "separate" ? "separate" : "aggregate",
-                  };
-                  if (opts.exclude) {
-                    slackConfig = {
-                      ...slackConfig,
-                      excludeChannels: opts.exclude.split(",").map((c) => c.trim()),
-                    };
-                  }
-                }
+        if (opts.sync) {
+          if (!hasNamedConnectorConfig("slack")) {
+            console.error(
+              "No Slack configuration found. Run 'libscope connect slack --token ...' first.",
+            );
+            process.exit(1);
+          }
+          slackConfig = loadNamedConnectorConfig<SlackConfig>("slack");
+        } else {
+          if (!opts.token) {
+            console.error("--token is required for initial Slack connection.");
+            process.exit(1);
+          }
+          slackConfig = {
+            token: opts.token,
+            channels: opts.channels.split(",").map((c) => c.trim()),
+            threadMode: opts.threadMode === "separate" ? "separate" : "aggregate",
+          };
+          if (opts.exclude) {
+            slackConfig = {
+              ...slackConfig,
+              excludeChannels: opts.exclude.split(",").map((c) => c.trim()),
+            };
+          }
+        }
 
-                console.log("Syncing Slack messages...");
-                const result = await syncSlack(db, provider, slackConfig);
+        console.log("Syncing Slack messages...");
+        const result = await syncSlack(db, provider, slackConfig);
 
-                const updatedConfig: SlackConfig = {
-                  ...slackConfig,
-                  lastSync: new Date().toISOString(),
-                };
-                saveNamedConnectorConfig("slack", updatedConfig);
+        const updatedConfig: SlackConfig = {
+          ...slackConfig,
+          lastSync: new Date().toISOString(),
+        };
+        saveNamedConnectorConfig("slack", updatedConfig);
 
-                console.log(`✓ Slack sync complete:`);
-                console.log(`  Channels: ${result.channels}`);
-                console.log(`  Messages indexed: ${result.messagesIndexed}`);
-                console.log(`  Threads indexed: ${result.threadsIndexed}`);
-                if (result.errors.length > 0) {
-                  console.log(`  Errors: ${result.errors.length}`);
-                  for (const err of result.errors) {
-                    console.log(`    - #${err.channel}: ${err.error}`);
-                  }
-                }
-              } finally {
-                closeDatabase();
-              }
-            },
-          );
+        console.log(`✓ Slack sync complete:`);
+        console.log(`  Channels: ${result.channels}`);
+        console.log(`  Messages indexed: ${result.messagesIndexed}`);
+        console.log(`  Threads indexed: ${result.threadsIndexed}`);
+        if (result.errors.length > 0) {
+          console.log(`  Errors: ${result.errors.length}`);
+          for (const err of result.errors) {
+            console.log(`    - #${err.channel}: ${err.error}`);
+          }
+        }
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
+
+connectCmd
+  .command("confluence")
+  .description("Sync Confluence spaces and pages")
+  .option("--url <url>", "Confluence base URL (e.g. https://acme.atlassian.net)")
+  .option("--email <email>", "Confluence user email")
+  .option("--token <token>", "API token or PAT")
+  .option("--spaces <keys>", "Comma-separated space keys, or 'all'", "all")
+  .option("--exclude-spaces <keys>", "Comma-separated space keys to exclude")
+  .option("--sync", "Sync using previously saved config")
+  .action(
+    async (opts: {
+      url?: string;
+      email?: string;
+      token?: string;
+      spaces?: string;
+      excludeSpaces?: string;
+      sync?: boolean;
+    }) => {
+      const { syncConfluence } = await import("../connectors/confluence.js");
+      const { db, provider } = initializeAppWithEmbedding();
+      try {
+        const url = opts.url ?? process.env["CONFLUENCE_URL"] ?? "";
+        const email = opts.email ?? process.env["CONFLUENCE_EMAIL"] ?? "";
+        const token = opts.token ?? process.env["CONFLUENCE_TOKEN"] ?? "";
+
+        const spaces = (opts.spaces ?? "all").split(",").map((s) => s.trim());
+        const excludeSpaces = opts.excludeSpaces
+          ? opts.excludeSpaces.split(",").map((s) => s.trim())
+          : undefined;
+
+        const result = await syncConfluence(db, provider, {
+          baseUrl: url,
+          email,
+          token,
+          spaces,
+          excludeSpaces,
+        });
+
+        console.log(`✓ Confluence sync complete`);
+        console.log(`  Spaces: ${result.spaces}`);
+        console.log(`  Pages indexed: ${result.pagesIndexed}`);
+        console.log(`  Pages updated: ${result.pagesUpdated}`);
+        if (result.errors.length > 0) {
+          console.log(`  Errors: ${result.errors.length}`);
+          for (const e of result.errors) {
+            console.log(`    - ${e.page}: ${e.error}`);
+          }
+        }
+      } finally {
+        closeDatabase();
       }
     },
   );
@@ -1550,69 +1604,83 @@ disconnectCmd
 
     const removed = disconnectVault(db, resolvedPath);
     console.log(`✓ Disconnected vault. Removed ${removed} documents.`);
+  });
 
-    connectCmd
-      .command("notion")
-      .description("Connect and sync Notion pages and databases")
-      .option("--token <token>", "Notion integration token (secret_...)")
-      .option("--sync", "Sync pages using a previously stored token")
-      .option("--exclude <ids...>", "Page/database IDs to exclude")
-      .action(async (opts: { token?: string; sync?: boolean; exclude?: string[] }) => {
-        const { db, provider } = initializeAppWithEmbedding();
-        let token = opts.token;
+connectCmd
+  .command("notion")
+  .description("Connect and sync Notion pages and databases")
+  .option("--token <token>", "Notion integration token (secret_...)")
+  .option("--sync", "Sync pages using a previously stored token")
+  .option("--exclude <ids...>", "Page/database IDs to exclude")
+  .action(async (opts: { token?: string; sync?: boolean; exclude?: string[] }) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    let token = opts.token;
 
-        if (opts.sync && !token) {
-          token = process.env["NOTION_TOKEN"];
-          if (!token) {
-            console.error("Error: --token is required, or set NOTION_TOKEN environment variable.");
-            process.exitCode = 1;
-            return;
-          }
-        }
+    if (opts.sync && !token) {
+      token = process.env["NOTION_TOKEN"];
+      if (!token) {
+        console.error("Error: --token is required, or set NOTION_TOKEN environment variable.");
+        process.exitCode = 1;
+        return;
+      }
+    }
 
-        if (!token) {
-          console.error("Error: --token <token> is required.");
-          process.exitCode = 1;
-          return;
-        }
+    if (!token) {
+      console.error("Error: --token <token> is required.");
+      process.exitCode = 1;
+      return;
+    }
 
-        const config: NotionConfig = { token };
-        if (opts.exclude) {
-          config.excludePages = opts.exclude;
-        }
+    const config: NotionConfig = { token };
+    if (opts.exclude) {
+      config.excludePages = opts.exclude;
+    }
 
-        console.log("Syncing Notion...");
-        const result = await syncNotion(db, provider, config);
-        console.log(
-          `✓ Synced: ${result.pagesIndexed} pages, ${result.databasesIndexed} databases` +
-            (result.errors.length > 0 ? `, ${result.errors.length} errors` : ""),
-        );
-        for (const err of result.errors) {
-          console.log(`  ⚠ ${err.page}: ${err.error}`);
-        }
-      });
+    console.log("Syncing Notion...");
+    const result = await syncNotion(db, provider, config);
+    console.log(
+      `✓ Synced: ${result.pagesIndexed} pages, ${result.databasesIndexed} databases` +
+        (result.errors.length > 0 ? `, ${result.errors.length} errors` : ""),
+    );
+    for (const err of result.errors) {
+      console.log(`  ⚠ ${err.page}: ${err.error}`);
+    }
+  });
 
-    disconnectCmd
-      .command("notion")
-      .description("Remove all Notion documents")
-      .action(async () => {
-        const { db } = initializeApp();
-        const removed = await disconnectNotion(db);
-        console.log(`✓ Removed ${removed} Notion documents.`);
-      });
+disconnectCmd
+  .command("notion")
+  .description("Remove all Notion documents")
+  .action(async () => {
+    const { db } = initializeApp();
+    const removed = await disconnectNotion(db);
+    console.log(`✓ Removed ${removed} Notion documents.`);
+  });
 
-    disconnectCmd
-      .command("slack")
-      .description("Remove all Slack data from the knowledge base")
-      .action(() => {
-        const { db } = initializeApp();
-        try {
-          const count = disconnectSlack(db);
-          console.log(`✓ Removed ${count} Slack documents from the knowledge base.`);
-        } finally {
-          closeDatabase();
-        }
-      });
+disconnectCmd
+  .command("slack")
+  .description("Remove all Slack data from the knowledge base")
+  .action(() => {
+    const { db } = initializeApp();
+    try {
+      const count = disconnectSlack(db);
+      console.log(`✓ Removed ${count} Slack documents from the knowledge base.`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+disconnectCmd
+  .command("confluence")
+  .description("Remove all Confluence-synced content")
+  .action(async () => {
+    const { disconnectConfluence } = await import("../connectors/confluence.js");
+    const { db } = initializeApp();
+    try {
+      const removed = disconnectConfluence(db);
+      console.log(`✓ Removed ${removed} Confluence documents`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 program.parse();

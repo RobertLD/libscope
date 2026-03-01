@@ -159,3 +159,10 @@ export {
   deleteConnectorDocuments,
 } from "../connectors/index.js";
 export type { ConnectorConfig } from "../connectors/index.js";
+
+export {
+  syncConfluence,
+  convertConfluenceStorage,
+  disconnectConfluence,
+} from "../connectors/confluence.js";
+export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confluence.js";

@@ -747,6 +747,43 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: sync-confluence
+  server.tool(
+    "sync-confluence",
+    "Sync Confluence spaces and pages into the knowledge base",
+    {
+      baseUrl: z.string().describe("Confluence base URL (e.g. https://acme.atlassian.net)"),
+      email: z.string().describe("Confluence user email"),
+      token: z.string().describe("API token or PAT"),
+      spaces: z
+        .array(z.string())
+        .optional()
+        .describe("Space keys to sync, or ['all'] (default: ['all'])"),
+      excludeSpaces: z.array(z.string()).optional().describe("Space keys to exclude"),
+    },
+    withErrorHandling(async (params) => {
+      const { syncConfluence } = await import("../connectors/confluence.js");
+      const result = await syncConfluence(db, provider, {
+        baseUrl: params.baseUrl,
+        email: params.email,
+        token: params.token,
+        spaces: params.spaces ?? ["all"],
+        excludeSpaces: params.excludeSpaces,
+      });
+
+      const text =
+        `Confluence sync complete.\n` +
+        `Spaces: ${result.spaces}\n` +
+        `Pages indexed: ${result.pagesIndexed}\n` +
+        `Pages updated: ${result.pagesUpdated}` +
+        (result.errors.length > 0
+          ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join(", ")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
