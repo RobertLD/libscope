@@ -158,7 +158,7 @@ describe("vector fallback error handling (issue #74)", () => {
   });
 
   it("propagates unexpected provider errors", async () => {
-    provider.embed = () => Promise.reject(new Error("API rate limit exceeded"));
+    provider.embed = (): Promise<number[]> => Promise.reject(new Error("API rate limit exceeded"));
 
     await expect(searchDocuments(db, provider, { query: "anything" })).rejects.toThrow(
       "API rate limit exceeded",
@@ -187,9 +187,8 @@ describe("LIKE wildcard escaping in keyword search (issue #79)", () => {
     insertChunk(db, "c2", "doc2", "something completely different here");
 
     const { results } = await searchDocuments(db, provider, { query: "100%" });
-    // Should match doc1 only, not doc2 (% should not be a wildcard)
     expect(results.length).toBe(1);
-    expect(results[0].content).toContain("100%");
+    expect(results[0]!.content).toContain("100%");
   });
 
   it("does not treat _ in query as single-char wildcard", async () => {
@@ -201,6 +200,6 @@ describe("LIKE wildcard escaping in keyword search (issue #79)", () => {
 
     const { results } = await searchDocuments(db, provider, { query: "user_name" });
     expect(results.length).toBe(1);
-    expect(results[0].content).toContain("user_name");
+    expect(results[0]!.content).toContain("user_name");
   });
 });
