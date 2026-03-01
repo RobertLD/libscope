@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { loadConfig, saveUserConfig } from "../config.js";
+import { loadConfig, saveUserConfig, type LibScopeConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
-import { createEmbeddingProvider } from "../providers/index.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
 import { initLogger, type LogLevel } from "../logger.js";
+import type Database from "better-sqlite3";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
@@ -38,10 +39,7 @@ program
   .command("init")
   .description("Initialize the LibScope database")
   .action(() => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { config, db } = initializeApp();
     // Only create vector table if provider can be initialized without download
     try {
       const provider = createEmbeddingProvider(config);
@@ -66,12 +64,7 @@ program
       fileOrUrl: string,
       opts: { topic?: string; library?: string; version?: string; title?: string },
     ) => {
-      const config = loadConfig();
-      setupLogging(program.opts());
-      const db = getDatabase(config.database.path);
-      runMigrations(db);
-      const provider = createEmbeddingProvider(config);
-      createVectorTable(db, provider.dimensions);
+      const { db, provider } = initializeAppWithEmbedding();
 
       let content: string;
       let title: string;
@@ -117,12 +110,7 @@ program
       directory: string,
       opts: { topic?: string; library?: string; version?: string; extensions: string },
     ) => {
-      const config = loadConfig();
-      setupLogging(program.opts());
-      const db = getDatabase(config.database.path);
-      runMigrations(db);
-      const provider = createEmbeddingProvider(config);
-      createVectorTable(db, provider.dimensions);
+      const { db, provider } = initializeAppWithEmbedding();
 
       const extensions = new Set(opts.extensions.split(",").map((e) => e.trim().toLowerCase()));
       const files = findFiles(directory, extensions);
@@ -178,12 +166,7 @@ program
   .option("--library <name>", "Filter by library")
   .option("--limit <n>", "Max results", "5")
   .action(async (query: string, opts: { topic?: string; library?: string; limit: string }) => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
-    const provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider.dimensions);
+    const { db, provider } = initializeAppWithEmbedding();
 
     const results = await searchDocuments(db, provider, {
       query,
@@ -212,10 +195,7 @@ topicsCmd
   .command("list")
   .description("List all topics")
   .action(() => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     const topics = listTopics(db);
     if (topics.length === 0) {
@@ -234,10 +214,7 @@ topicsCmd
   .option("--description <desc>", "Topic description")
   .option("--parent <parentId>", "Parent topic ID")
   .action((name: string, opts: { description?: string; parent?: string }) => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     const topic = createTopic(db, {
       name,
@@ -255,10 +232,7 @@ ratingsCmd
   .command("show <documentId>")
   .description("Show ratings for a document")
   .action((documentId: string) => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     const doc = getDocument(db, documentId);
     const summary = getDocumentRatings(db, documentId);
@@ -290,10 +264,7 @@ docsCmd
   .option("--source-type <type>", "Filter by source type")
   .option("--limit <n>", "Max results", "50")
   .action((opts: { library?: string; topic?: string; sourceType?: string; limit: string }) => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     const docs = listDocuments(db, {
       library: opts.library,
@@ -321,10 +292,7 @@ docsCmd
   .command("show <documentId>")
   .description("Show a specific document")
   .action((documentId: string) => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     const doc = getDocument(db, documentId);
     console.log(`\n# ${doc.title}\n`);
@@ -344,10 +312,7 @@ docsCmd
   .command("delete <documentId>")
   .description("Delete a document by ID")
   .action((documentId: string) => {
-    const config = loadConfig();
-    setupLogging(program.opts());
-    const db = getDatabase(config.database.path);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     const doc = getDocument(db, documentId);
     deleteDocument(db, documentId);
@@ -402,6 +367,27 @@ function setupLogging(opts: ProgramOpts): void {
     ? "debug"
     : ((opts.logLevel as LogLevel | undefined) ?? loadConfig().logging.level);
   initLogger(level);
+}
+
+/** Shared CLI initialization: loadConfig → setupLogging → getDatabase → runMigrations. */
+function initializeApp(): { config: LibScopeConfig; db: Database.Database } {
+  const config = loadConfig();
+  setupLogging(program.opts());
+  const db = getDatabase(config.database.path);
+  runMigrations(db);
+  return { config, db };
+}
+
+/** Initialization with an embedding provider and vector table. */
+function initializeAppWithEmbedding(): {
+  config: LibScopeConfig;
+  db: Database.Database;
+  provider: EmbeddingProvider;
+} {
+  const { config, db } = initializeApp();
+  const provider = createEmbeddingProvider(config);
+  createVectorTable(db, provider.dimensions);
+  return { config, db, provider };
 }
 
 /** Recursively find files matching given extensions. */
