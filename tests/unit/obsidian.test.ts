@@ -577,3 +577,315 @@ describe("folder-to-topic mapping", () => {
     expect(result.body).toContain("Content.");
   });
 });
+
+describe("parseObsidianMarkdown – extra branches", () => {
+  it("should handle embeds targeting files not in vault", () => {
+    // Line 119: target not found in fileMap
+    const content = "Before ![[unknown-file]] After";
+    const result = parseObsidianMarkdown(content, ["other.md"]);
+    expect(result.body).toContain("[unknown-file]");
+  });
+
+  it("should handle embeds targeting files that exist in vault", () => {
+    // Line 123-125: target found, returns placeholder
+    const content = "Before ![[note-a]] After";
+    const result = parseObsidianMarkdown(content, ["note-a.md"]);
+    expect(result.body).toContain("[Embedded: note-a]");
+  });
+
+  it("should flush pending YAML list when followed by another key", () => {
+    // Lines 198-200: flush pending list values
+    const content = `---
+items:
+  - one
+  - two
+title: After List
+---
+
+Body.`;
+    const result = parseObsidianMarkdown(content, []);
+    expect(result.frontmatter.items).toEqual(["one", "two"]);
+    expect(result.frontmatter.title).toBe("After List");
+  });
+});
+
+describe("syncObsidianVault – extra branches", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    initLogger("silent");
+    db = createTestDbWithVec();
+    provider = new MockEmbeddingProvider();
+
+    mockedExistsSync.mockReturnValue(false);
+    mockedWriteFileSync.mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  function setupVaultFs(files: Record<string, string>, mtimes?: Record<string, Date>): void {
+    const fileNames = Object.keys(files);
+
+    mockedReaddirSync.mockImplementation((dir: unknown) => {
+      const dirStr = String(dir);
+      if (dirStr === "/vault") {
+        const topLevel = new Set<string>();
+        for (const f of fileNames) {
+          const parts = f.split("/");
+          topLevel.add(parts[0] ?? f);
+        }
+        return [...topLevel] as unknown as ReturnType<typeof readdirSync>;
+      }
+      const subDir = dirStr.replace("/vault/", "");
+      const children = new Set<string>();
+      for (const f of fileNames) {
+        if (f.startsWith(subDir + "/")) {
+          const rest = f.slice(subDir.length + 1);
+          const parts = rest.split("/");
+          children.add(parts[0] ?? rest);
+        }
+      }
+      return [...children] as unknown as ReturnType<typeof readdirSync>;
+    });
+
+    mockedStatSync.mockImplementation((p: unknown) => {
+      const path = String(p);
+      const rel = path.replace("/vault/", "");
+      if (files[rel] !== undefined) {
+        return makeStat(false, mtimes?.[rel]);
+      }
+      const isDir = fileNames.some((f) => f.startsWith(rel + "/"));
+      if (isDir) {
+        return makeStat(true);
+      }
+      throw new Error(`ENOENT: ${path}`);
+    });
+
+    mockedReadFileSync.mockImplementation((p: unknown, _encoding?: unknown) => {
+      const path = String(p);
+      const rel = path.replace("/vault/", "");
+      const content = files[rel];
+      if (content !== undefined) {
+        return content;
+      }
+      throw new Error(`ENOENT: ${path}`);
+    });
+  }
+
+  it("should throw ValidationError when vaultPath is empty (line 292)", async () => {
+    await expect(
+      syncObsidianVault(db, provider, {
+        vaultPath: "",
+        topicMapping: "folder",
+        excludePatterns: [],
+      }),
+    ).rejects.toThrow("Vault path is required");
+  });
+
+  it("should handle readdirSync failure gracefully (line 55)", async () => {
+    mockedReaddirSync.mockImplementation(() => {
+      throw new Error("Permission denied");
+    });
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: [],
+    });
+
+    expect(result.added).toBe(0);
+  });
+
+  it("should handle statSync failure and continue (line 74)", async () => {
+    mockedReaddirSync.mockImplementation(() => {
+      return ["good.md", "broken.md"] as unknown as ReturnType<typeof readdirSync>;
+    });
+
+    mockedStatSync.mockImplementation((_p: unknown) => {
+      if (String(_p).includes("broken.md")) {
+        throw new Error("stat failed");
+      }
+      return makeStat(false);
+    });
+
+    mockedReadFileSync.mockImplementation((p: unknown, _encoding?: unknown) => {
+      const path = String(p);
+      if (path.endsWith("connectors.json")) throw new Error("ENOENT");
+      return "# Good\n\nContent.";
+    });
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: [],
+    });
+
+    expect(result.added).toBe(1);
+  });
+
+  it("should exclude files matching non-directory patterns (line 66)", async () => {
+    mockedReaddirSync.mockImplementation(() => {
+      return ["note.md", "secret.md"] as unknown as ReturnType<typeof readdirSync>;
+    });
+
+    mockedStatSync.mockImplementation(() => makeStat(false));
+
+    mockedReadFileSync.mockImplementation((p: unknown, _encoding?: unknown) => {
+      const path = String(p);
+      if (path.endsWith("connectors.json")) throw new Error("ENOENT");
+      return "# Note\n\nContent.";
+    });
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: ["secret.md"],
+    });
+
+    expect(result.added).toBe(1);
+  });
+
+  it("should use frontmatter topic mapping (lines 344-347)", async () => {
+    setupVaultFs({
+      "note.md": "---\ntopic: My Topic\n---\n\n# Note\n\nContent.",
+    });
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "frontmatter",
+      excludePatterns: [],
+    });
+
+    expect(result.added).toBe(1);
+    const topics = db.prepare("SELECT * FROM topics").all() as Array<{ name: string }>;
+    expect(topics.some((t) => t.name === "My Topic")).toBe(true);
+  });
+
+  it("should handle tags and tag creation errors (lines 371-381)", async () => {
+    setupVaultFs({
+      "note.md": "# Note\n\nContent with #test-tag and #another-tag.",
+    });
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: [],
+    });
+
+    expect(result.added).toBe(1);
+  });
+
+  it("should resolve embeds during sync (lines 250-262)", async () => {
+    setupVaultFs({
+      "main.md": "# Main\n\n![[embed-target]]\n\nAfter embed.",
+      "embed-target.md": "---\ntitle: Embedded\n---\n\nEmbedded content here.",
+    });
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: [],
+    });
+
+    expect(result.added).toBe(2);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("should preserve tracking on error (line 399)", async () => {
+    const mtime = new Date("2024-01-01T00:00:00.000Z");
+    setupVaultFs({ "note.md": "# Note\n\nContent." }, { "note.md": mtime });
+
+    // First sync
+    await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: [],
+    });
+
+    const saveCall = mockedWriteFileSync.mock.calls[0];
+    const savedConfigStr = saveCall?.[1];
+    const savedConfig = JSON.parse(
+      typeof savedConfigStr === "string" ? savedConfigStr : "{}",
+    ) as Record<string, unknown>;
+
+    // Second sync: file changed but provider throws
+    const newMtime = new Date("2024-06-01T00:00:00.000Z");
+    setupVaultFs({ "note.md": "# Note\n\nUpdated content." }, { "note.md": newMtime });
+    mockedExistsSync.mockReturnValue(true);
+    const origRead = mockedReadFileSync.getMockImplementation();
+    mockedReadFileSync.mockImplementation((p: unknown, encoding?: unknown) => {
+      const path = String(p);
+      if (path.endsWith("connectors.json")) {
+        return JSON.stringify(savedConfig);
+      }
+      return origRead!(p, encoding as BufferEncoding);
+    });
+
+    // Make the provider throw so the file processing fails
+    provider.embed = () => {
+      throw new Error("embedding failed");
+    };
+    provider.embedBatch = () => {
+      throw new Error("embedding failed");
+    };
+
+    const result = await syncObsidianVault(db, provider, {
+      vaultPath: "/vault",
+      topicMapping: "folder",
+      excludePatterns: [],
+    });
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]?.file).toBe("note.md");
+  });
+});
+
+describe("disconnectVault – with connector state (lines 449-452)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    initLogger("silent");
+    db = createTestDb();
+    mockedWriteFileSync.mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  it("should remove documents tracked in connector state", () => {
+    // Insert documents
+    db.prepare(
+      `INSERT INTO documents (id, source_type, title, content, url, submitted_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run("doc1", "manual", "Note 1", "Content 1", "obsidian:///vault/note1.md", "crawler");
+
+    // Mock connector config with vault state
+    const state = {
+      type: "obsidian",
+      vaultPath: "/vault",
+      lastSync: new Date().toISOString(),
+      topicMapping: "folder",
+      excludePatterns: [],
+      files: {
+        "note1.md": { mtime: "2024-01-01T00:00:00.000Z", docId: "doc1" },
+      },
+    };
+
+    mockedExistsSync.mockReturnValue(true);
+    mockedReadFileSync.mockImplementation(() => {
+      return JSON.stringify({ "obsidian:/vault": state });
+    });
+
+    const removed = disconnectVault(db, "/vault");
+
+    expect(removed).toBeGreaterThanOrEqual(1);
+  });
+});

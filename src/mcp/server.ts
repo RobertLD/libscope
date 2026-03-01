@@ -632,6 +632,12 @@ async function main(): Promise<void> {
         `Pages deleted: ${result.pagesDeleted}` +
         (result.errors.length > 0
           ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join("; ")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   // Tool: sync-obsidian-vault
   server.tool(
     "sync-obsidian-vault",

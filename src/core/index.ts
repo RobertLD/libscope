@@ -111,6 +111,8 @@ export {
   convertOneNoteHtml,
 } from "../connectors/onenote.js";
 export type { OneNoteConfig, OneNoteSyncResult } from "../connectors/onenote.js";
+
+export {
   syncObsidianVault,
   parseObsidianMarkdown,
   disconnectVault,
