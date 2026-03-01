@@ -32,6 +32,12 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(4); // initial + 3 retries (default)
   });
 
+  it("should throw immediately when maxRetries is 0", async () => {
+    const fn = vi.fn().mockRejectedValue(new Error("no retries"));
+    await expect(withRetry(fn, { maxRetries: 0, baseDelayMs: 1 })).rejects.toThrow("no retries");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it("should handle non-Error thrown values", async () => {
     const fn = vi.fn().mockRejectedValueOnce("string error").mockResolvedValue("ok");
     const result = await withRetry(fn, { baseDelayMs: 1 });

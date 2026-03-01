@@ -10,14 +10,14 @@ export async function withRetry<T>(fn: () => Promise<T>, options?: RetryOptions)
   const baseDelayMs = options?.baseDelayMs ?? 100;
   const logger = getLogger();
 
-  let lastError: unknown;
+  let lastError: unknown = new Error("All retry attempts failed");
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastError = err;
       if (attempt < maxRetries) {
-        const delay = baseDelayMs * Math.pow(2, attempt);
+        const delay = baseDelayMs * Math.pow(2, attempt) * (0.5 + Math.random() * 0.5);
         logger.warn(
           `Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
         );
