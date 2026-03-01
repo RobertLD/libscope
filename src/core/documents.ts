@@ -10,6 +10,7 @@ export interface Document {
   title: string;
   content: string;
   url: string | null;
+  contentHash: string | null;
   submittedBy: string;
   createdAt: string;
   updatedAt: string;
@@ -20,7 +21,7 @@ export function getDocument(db: Database.Database, documentId: string): Document
   const row = db
     .prepare(
       `
-    SELECT id, source_type, library, version, topic_id, title, content, url, submitted_by, created_at, updated_at
+    SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
     FROM documents WHERE id = ?
   `,
     )
@@ -34,6 +35,7 @@ export function getDocument(db: Database.Database, documentId: string): Document
         title: string;
         content: string;
         url: string | null;
+        content_hash: string | null;
         submitted_by: string;
         created_at: string;
         updated_at: string;
@@ -53,6 +55,7 @@ export function getDocument(db: Database.Database, documentId: string): Document
     title: row.title,
     content: row.content,
     url: row.url,
+    contentHash: row.content_hash,
     submittedBy: row.submitted_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -91,7 +94,7 @@ export function listDocuments(
   },
 ): Document[] {
   let sql = `
-    SELECT id, source_type, library, version, topic_id, title, content, url, submitted_by, created_at, updated_at
+    SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
     FROM documents WHERE 1=1
   `;
   const params: unknown[] = [];
@@ -121,6 +124,7 @@ export function listDocuments(
     title: string;
     content: string;
     url: string | null;
+    content_hash: string | null;
     submitted_by: string;
     created_at: string;
     updated_at: string;
@@ -135,6 +139,7 @@ export function listDocuments(
     title: row.title,
     content: row.content,
     url: row.url,
+    contentHash: row.content_hash,
     submittedBy: row.submitted_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
