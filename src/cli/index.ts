@@ -1079,6 +1079,5 @@ workspaceCmd
     deleteWorkspace(name);
     console.log(`✓ Workspace "${name}" deleted.`);
   });
-  });
 
 program.parse();

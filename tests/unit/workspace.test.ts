@@ -132,4 +132,126 @@ describe("workspace", () => {
   it("should have DEFAULT_WORKSPACE equal to default", () => {
     expect(DEFAULT_WORKSPACE).toBe("default");
   });
+
+  it("should create workspaces dir when it does not exist", () => {
+    // Remove the workspaces dir so ensureWorkspacesDir creates it
+    const wsDir = join(tempDir, ".libscope", "workspaces");
+    rmSync(wsDir, { recursive: true, force: true });
+    expect(existsSync(wsDir)).toBe(false);
+    const ws = createWorkspace("fresh");
+    expect(existsSync(wsDir)).toBe(true);
+    expect(ws.name).toBe("fresh");
+  });
+
+  it("should handle corrupted .workspace.json in listWorkspaces", () => {
+    createWorkspace("corrupt");
+    const metaPath = join(getWorkspacesDir(), "corrupt", ".workspace.json");
+    writeFileSync(metaPath, "NOT VALID JSON", "utf-8");
+    const list = listWorkspaces();
+    const ws = list.find((w) => w.name === "corrupt");
+    expect(ws).toBeDefined();
+    expect(ws!.createdAt).toBeTruthy();
+  });
+
+  it("should handle .workspace.json with non-string createdAt in listWorkspaces", () => {
+    createWorkspace("bad-date");
+    const metaPath = join(getWorkspacesDir(), "bad-date", ".workspace.json");
+    writeFileSync(metaPath, JSON.stringify({ name: "bad-date", createdAt: 12345 }), "utf-8");
+    const list = listWorkspaces();
+    const ws = list.find((w) => w.name === "bad-date");
+    expect(ws).toBeDefined();
+    expect(ws!.createdAt).toBeTruthy();
+  });
+
+  it("should handle missing .workspace.json in listWorkspaces", () => {
+    createWorkspace("no-meta");
+    const metaPath = join(getWorkspacesDir(), "no-meta", ".workspace.json");
+    rmSync(metaPath, { force: true });
+    const list = listWorkspaces();
+    const ws = list.find((w) => w.name === "no-meta");
+    expect(ws).toBeDefined();
+    expect(ws!.createdAt).toBeTruthy();
+  });
+
+  it("should read active workspace from active-workspace file", () => {
+    delete process.env["LIBSCOPE_WORKSPACE"];
+    createWorkspace("file-ws");
+    setActiveWorkspace("file-ws");
+    expect(getActiveWorkspace()).toBe("file-ws");
+  });
+
+  it("should handle unreadable active-workspace file gracefully", () => {
+    delete process.env["LIBSCOPE_WORKSPACE"];
+    const activeFile = join(tempDir, ".libscope", "active-workspace");
+    // Write empty content to trigger the `if (active)` falsy branch
+    writeFileSync(activeFile, "  ", "utf-8");
+    expect(getActiveWorkspace()).toBe("default");
+  });
+
+  it("should handle malformed .libscope.json in cwd", () => {
+    delete process.env["LIBSCOPE_WORKSPACE"];
+    const projectConfig = join(process.cwd(), ".libscope.json");
+    let cleanupProjectConfig = false;
+    if (!existsSync(projectConfig)) {
+      writeFileSync(projectConfig, "INVALID JSON{{{", "utf-8");
+      cleanupProjectConfig = true;
+    }
+    try {
+      // Should not throw, falls through to default
+      const result = getActiveWorkspace();
+      expect(result).toBeTruthy();
+    } finally {
+      if (cleanupProjectConfig) {
+        rmSync(projectConfig, { force: true });
+      }
+    }
+  });
+
+  it("should handle .libscope.json without workspace field in cwd", () => {
+    delete process.env["LIBSCOPE_WORKSPACE"];
+    const projectConfig = join(process.cwd(), ".libscope.json");
+    let cleanupProjectConfig = false;
+    if (!existsSync(projectConfig)) {
+      writeFileSync(projectConfig, JSON.stringify({ other: "value" }), "utf-8");
+      cleanupProjectConfig = true;
+    }
+    try {
+      const result = getActiveWorkspace();
+      expect(result).toBe("default");
+    } finally {
+      if (cleanupProjectConfig) {
+        rmSync(projectConfig, { force: true });
+      }
+    }
+  });
+
+  it("should throw when setting active workspace to non-existent non-default", () => {
+    expect(() => setActiveWorkspace("nonexistent")).toThrow("does not exist");
+  });
+
+  it("should allow setting active workspace to default even if dir missing", () => {
+    delete process.env["LIBSCOPE_WORKSPACE"];
+    setActiveWorkspace("default");
+    const activeFile = join(tempDir, ".libscope", "active-workspace");
+    expect(readFileSync(activeFile, "utf-8")).toBe("default");
+  });
+
+  it("should create .libscope dir when setting active workspace if missing", () => {
+    const libscopeDir = join(tempDir, ".libscope");
+    rmSync(libscopeDir, { recursive: true, force: true });
+    expect(existsSync(libscopeDir)).toBe(false);
+    // default workspace doesn't require existence check
+    setActiveWorkspace("default");
+    expect(existsSync(libscopeDir)).toBe(true);
+  });
+
+  it("should skip non-directory entries in listWorkspaces", () => {
+    createWorkspace("real-ws");
+    // Create a file (not directory) in workspaces dir
+    writeFileSync(join(getWorkspacesDir(), "not-a-dir.txt"), "file", "utf-8");
+    const list = listWorkspaces();
+    const names = list.map((w) => w.name);
+    expect(names).not.toContain("not-a-dir.txt");
+    expect(names).toContain("real-ws");
+  });
 });
