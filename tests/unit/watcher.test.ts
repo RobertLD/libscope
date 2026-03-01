@@ -231,7 +231,8 @@ describe("FileWatcher", () => {
 
     expect(closeFn).toHaveBeenCalled();
 
-    // The timer should have been cleared
+    // The timer should have been cleared — reset call tracking before asserting
+    mockStatSync.mockClear();
     vi.advanceTimersByTime(2000);
     expect(mockStatSync).not.toHaveBeenCalled();
   });

@@ -505,6 +505,13 @@ tagCmd
       } else {
         for (const t of allTags) {
           console.log(`  ${t.name} (${t.documentCount} doc${t.documentCount !== 1 ? "s" : ""})`);
+        }
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
 docsCmd
   .command("history <documentId>")
   .description("Show version history of a document")
