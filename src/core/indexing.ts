@@ -135,6 +135,7 @@ export function chunkContentStreaming(
 
   const overlap = Math.min(Math.floor(windowSize * 0.1), 1024); // 10% overlap, max 1KB
   const allChunks: string[] = [];
+  const seenHashes = new Set<string>();
   let offset = 0;
 
   while (offset < text.length) {
@@ -158,7 +159,14 @@ export function chunkContentStreaming(
 
     // Chunk this window using the existing logic
     const windowChunks = chunkContent(window, maxChunkSize);
-    allChunks.push(...windowChunks);
+    for (const chunk of windowChunks) {
+      const normalized = chunk.replace(/\s+/g, " ").trim();
+      const hash = createHash("sha256").update(normalized).digest("hex");
+      if (!seenHashes.has(hash)) {
+        seenHashes.add(hash);
+        allChunks.push(chunk);
+      }
+    }
 
     // Advance past window, minus overlap
     offset = windowEnd - overlap;
