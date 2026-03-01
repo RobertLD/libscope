@@ -56,8 +56,19 @@ const MAX_RETRIES = 3;
 const MAX_REQUESTS_PER_MINUTE = 50;
 
 let requestTimestamps: number[] = [];
+let rateLimitLock: Promise<void> = Promise.resolve();
 
 async function rateLimitedFetch(url: string, options: RequestInit): Promise<Response> {
+  // Serialize rate-limit checks to prevent concurrent async contexts from
+  // exceeding the budget. Each call awaits the previous one's gate.
+  let unlock: () => void;
+  const gate = new Promise<void>((resolve) => {
+    unlock = resolve;
+  });
+  const prev = rateLimitLock;
+  rateLimitLock = gate;
+  await prev;
+
   const log = getLogger();
   const now = Date.now();
   requestTimestamps = requestTimestamps.filter((t) => now - t < 60_000);
@@ -66,10 +77,14 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
     log.debug({ waitMs }, "Rate limit reached, waiting");
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
+  requestTimestamps.push(Date.now());
+  unlock!();
 
   let lastError: unknown;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    requestTimestamps.push(Date.now());
+    if (attempt > 0) {
+      requestTimestamps.push(Date.now());
+    }
     const response = await fetch(url, options);
 
     if (response.status === 429) {
