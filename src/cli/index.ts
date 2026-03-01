@@ -164,28 +164,36 @@ program
   .option("--topic <topicId>", "Filter by topic")
   .option("--library <name>", "Filter by library")
   .option("--limit <n>", "Max results", "5")
-  .action(async (query: string, opts: { topic?: string; library?: string; limit: string }) => {
-    const { db, provider } = initializeAppWithEmbedding();
+  .option("--offset <n>", "Offset for pagination", "0")
+  .action(
+    async (
+      query: string,
+      opts: { topic?: string; library?: string; limit: string; offset: string },
+    ) => {
+      const { db, provider } = initializeAppWithEmbedding();
 
-    const results = await searchDocuments(db, provider, {
-      query,
-      topic: opts.topic,
-      library: opts.library,
-      limit: parseInt(opts.limit, 10),
-    });
+      const { results, totalCount } = await searchDocuments(db, provider, {
+        query,
+        topic: opts.topic,
+        library: opts.library,
+        limit: parseInt(opts.limit, 10),
+        offset: parseInt(opts.offset, 10),
+      });
 
-    if (results.length === 0) {
-      console.log("No results found.");
-    } else {
-      for (const r of results) {
-        console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
-        if (r.library) console.log(`  Library: ${r.library}`);
-        if (r.url) console.log(`  Source: ${r.url}`);
-        console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+      if (results.length === 0) {
+        console.log("No results found.");
+      } else {
+        console.log(`\nShowing ${results.length} of ${totalCount} results:\n`);
+        for (const r of results) {
+          console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
+          if (r.library) console.log(`  Library: ${r.library}`);
+          if (r.url) console.log(`  Source: ${r.url}`);
+          console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+        }
       }
-    }
-    closeDatabase();
-  });
+      closeDatabase();
+    },
+  );
 
 // topics
 const topicsCmd = program.command("topics").description("Manage topics");

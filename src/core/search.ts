@@ -9,6 +9,12 @@ export interface SearchOptions {
   version?: string | undefined;
   minRating?: number | undefined;
   limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  totalCount: number;
 }
 
 export interface SearchResult {
@@ -30,11 +36,12 @@ export async function searchDocuments(
   db: Database.Database,
   provider: EmbeddingProvider,
   options: SearchOptions,
-): Promise<SearchResult[]> {
+): Promise<SearchResponse> {
   const log = getLogger();
   const limit = options.limit ?? 10;
+  const offset = options.offset ?? 0;
 
-  log.info({ query: options.query, limit }, "Searching documents");
+  log.info({ query: options.query, limit, offset }, "Searching documents");
 
   // Generate query embedding
   const queryEmbedding = await provider.embed(options.query);
@@ -91,8 +98,17 @@ export async function searchDocuments(
       params.push(options.minRating);
     }
 
-    sql += ` ORDER BY candidates.distance LIMIT ?`;
+    sql += ` ORDER BY candidates.distance LIMIT ? OFFSET ?`;
     params.push(limit);
+    params.push(offset);
+
+    // Count total results (without LIMIT/OFFSET)
+    const countSql = sql.replace(/ORDER BY candidates\.distance LIMIT \? OFFSET \?/, "");
+    const countParams = params.slice(0, -2);
+    const countRow = db
+      .prepare(`SELECT COUNT(*) AS cnt FROM (${countSql})`)
+      .get(...countParams) as { cnt: number };
+    const totalCount = countRow.cnt;
 
     const rows = db.prepare(sql).all(...params) as Array<{
       chunk_id: string;
@@ -108,22 +124,25 @@ export async function searchDocuments(
       avg_rating: number | null;
     }>;
 
-    return rows.map((row) => ({
-      documentId: row.document_id,
-      chunkId: row.chunk_id,
-      title: row.title,
-      content: row.chunk_content,
-      sourceType: row.source_type,
-      library: row.library,
-      version: row.version,
-      topicId: row.topic_id,
-      url: row.url,
-      score: 1 - row.distance, // Convert distance to similarity
-      avgRating: row.avg_rating,
-    }));
+    return {
+      totalCount,
+      results: rows.map((row) => ({
+        documentId: row.document_id,
+        chunkId: row.chunk_id,
+        title: row.title,
+        content: row.chunk_content,
+        sourceType: row.source_type,
+        library: row.library,
+        version: row.version,
+        topicId: row.topic_id,
+        url: row.url,
+        score: 1 - row.distance, // Convert distance to similarity
+        avgRating: row.avg_rating,
+      })),
+    };
   } catch (err) {
     log.warn({ err }, "Vector search unavailable, falling back to keyword search");
-    return keywordSearch(db, options, limit);
+    return keywordSearch(db, options, limit, offset);
   }
 }
 
@@ -133,18 +152,19 @@ function keywordSearch(
   db: Database.Database,
   options: SearchOptions,
   limit: number,
-): SearchResult[] {
+  offset: number,
+): SearchResponse {
   const log = getLogger();
 
   // Try FTS5 first
   try {
-    return fts5Search(db, options, limit);
+    return fts5Search(db, options, limit, offset);
   } catch (err) {
     log.debug({ err }, "FTS5 unavailable, falling back to LIKE search");
   }
 
   const words = options.query.split(/\s+/).filter((w) => w.length > 2);
-  if (words.length === 0) return [];
+  if (words.length === 0) return { results: [], totalCount: 0 };
 
   const likeConditions = words.map(() => "c.content LIKE ?").join(" OR ");
   const params: unknown[] = words.map((w) => `%${w}%`);
@@ -188,8 +208,17 @@ function keywordSearch(
     params.push(options.minRating);
   }
 
-  sql += " LIMIT ?";
+  sql += " LIMIT ? OFFSET ?";
   params.push(limit);
+  params.push(offset);
+
+  // Count total results
+  const countSql = sql.replace(/ LIMIT \? OFFSET \?$/, "");
+  const countParams = params.slice(0, -2);
+  const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM (${countSql})`).get(...countParams) as {
+    cnt: number;
+  };
+  const totalCount = countRow.cnt;
 
   const rows = db.prepare(sql).all(...params) as Array<{
     chunk_id: string;
@@ -204,26 +233,34 @@ function keywordSearch(
     avg_rating: number | null;
   }>;
 
-  return rows.map((row, index) => ({
-    documentId: row.document_id,
-    chunkId: row.chunk_id,
-    title: row.title,
-    content: row.chunk_content,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    url: row.url,
-    score: Math.max(0, 1 - index * 0.1), // Simple rank-based score
-    avgRating: row.avg_rating,
-  }));
+  return {
+    totalCount,
+    results: rows.map((row, index) => ({
+      documentId: row.document_id,
+      chunkId: row.chunk_id,
+      title: row.title,
+      content: row.chunk_content,
+      sourceType: row.source_type,
+      library: row.library,
+      version: row.version,
+      topicId: row.topic_id,
+      url: row.url,
+      score: Math.max(0, 1 - index * 0.1), // Simple rank-based score
+      avgRating: row.avg_rating,
+    })),
+  };
 }
 
 /** FTS5-based full-text search with BM25 ranking. */
-function fts5Search(db: Database.Database, options: SearchOptions, limit: number): SearchResult[] {
+function fts5Search(
+  db: Database.Database,
+  options: SearchOptions,
+  limit: number,
+  offset: number,
+): SearchResponse {
   // Escape FTS5 query: wrap each word in quotes for safety
   const words = options.query.split(/\s+/).filter((w) => w.length > 0);
-  if (words.length === 0) return [];
+  if (words.length === 0) return { results: [], totalCount: 0 };
 
   const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" OR ");
   const params: unknown[] = [ftsQuery];
@@ -268,8 +305,17 @@ function fts5Search(db: Database.Database, options: SearchOptions, limit: number
     params.push(options.minRating);
   }
 
-  sql += " ORDER BY rank LIMIT ?";
+  sql += " ORDER BY rank LIMIT ? OFFSET ?";
   params.push(limit);
+  params.push(offset);
+
+  // Count total results
+  const countSql = sql.replace(/ ORDER BY rank LIMIT \? OFFSET \?$/, "");
+  const countParams = params.slice(0, -2);
+  const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM (${countSql})`).get(...countParams) as {
+    cnt: number;
+  };
+  const totalCount = countRow.cnt;
 
   const rows = db.prepare(sql).all(...params) as Array<{
     chunk_id: string;
@@ -285,17 +331,20 @@ function fts5Search(db: Database.Database, options: SearchOptions, limit: number
     avg_rating: number | null;
   }>;
 
-  return rows.map((row) => ({
-    documentId: row.document_id,
-    chunkId: row.chunk_id,
-    title: row.title,
-    content: row.chunk_content,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    url: row.url,
-    score: -row.fts_rank, // BM25 rank is negative, lower = better
-    avgRating: row.avg_rating,
-  }));
+  return {
+    totalCount,
+    results: rows.map((row) => ({
+      documentId: row.document_id,
+      chunkId: row.chunk_id,
+      title: row.title,
+      content: row.chunk_content,
+      sourceType: row.source_type,
+      library: row.library,
+      version: row.version,
+      topicId: row.topic_id,
+      url: row.url,
+      score: -row.fts_rank, // BM25 rank is negative, lower = better
+      avgRating: row.avg_rating,
+    })),
+  };
 }
