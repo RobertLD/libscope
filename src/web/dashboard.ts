@@ -93,6 +93,7 @@ export function getDashboardHtml(): string {
 <body>
 <header>
   <h1>📚 LibScope</h1>
+  <a href="/graph" style="color:var(--accent);text-decoration:none;font-size:14px;">📊 Knowledge Graph</a>
   <div class="stats" id="stats"></div>
 </header>
 <div class="layout">
@@ -291,6 +292,228 @@ export function getDashboardHtml(): string {
   loadTopics();
   loadDocuments();
 </script>
+</body>
+</html>`;
+}
+
+/** Returns a self-contained HTML page for the knowledge graph visualization. */
+export function getGraphPageHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibScope — Knowledge Graph</title>
+<script src="https://d3js.org/d3.v7.min.js"><\/script>
+<style>
+  :root {
+    --bg: #fff; --bg2: #f5f5f5; --fg: #1a1a1a; --fg2: #555;
+    --border: #ddd; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f0f; --bg2: #1a1a1a; --fg: #e5e5e5; --fg2: #999;
+      --border: #333; --accent: #3b82f6;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header a { color: var(--accent); text-decoration: none; font-size: 14px; }
+  .controls {
+    padding: 12px 24px; background: var(--bg2); border-bottom: 1px solid var(--border);
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap; font-size: 14px;
+  }
+  .controls label { color: var(--fg2); }
+  .controls select, .controls input[type="range"] { font-size: 13px; }
+  .controls .slider-val { min-width: 36px; text-align: center; }
+  #graph-container { width: 100%; height: calc(100vh - 105px); }
+  svg { width: 100%; height: 100%; }
+  .tooltip {
+    position: absolute; background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 10px; font-size: 13px; pointer-events: none;
+    display: none; z-index: 10;
+  }
+  .legend { position: absolute; bottom: 20px; left: 20px; font-size: 12px; }
+  .legend span {
+    display: inline-flex; align-items: center; gap: 4px; margin-right: 12px;
+  }
+  .legend .dot {
+    width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 Knowledge Graph</h1>
+  <a href="/">← Dashboard</a>
+</header>
+<div class="controls">
+  <label>Topic:
+    <select id="topic-filter"><option value="">All</option></select>
+  </label>
+  <label>Similarity threshold:
+    <input type="range" id="threshold-slider" min="0.5" max="1.0" step="0.05" value="0.85">
+    <span class="slider-val" id="threshold-val">0.85</span>
+  </label>
+  <button id="refresh-btn" style="padding:4px 12px;cursor:pointer;">Refresh</button>
+</div>
+<div id="graph-container">
+  <svg id="graph-svg"></svg>
+</div>
+<div class="tooltip" id="tooltip"></div>
+<div class="legend">
+  <span><span class="dot" style="background:#3b82f6"></span> Document</span>
+  <span><span class="dot" style="background:#22c55e"></span> Topic</span>
+  <span><span class="dot" style="background:#f97316"></span> Tag</span>
+</div>
+<script>
+  const colorMap = { document: '#3b82f6', topic: '#22c55e', tag: '#f97316' };
+  const $tooltip = document.getElementById('tooltip');
+  const $topicFilter = document.getElementById('topic-filter');
+  const $thresholdSlider = document.getElementById('threshold-slider');
+  const $thresholdVal = document.getElementById('threshold-val');
+  const svg = d3.select('#graph-svg');
+  let simulation;
+
+  $thresholdSlider.addEventListener('input', () => {
+    $thresholdVal.textContent = $thresholdSlider.value;
+  });
+
+  document.getElementById('refresh-btn').addEventListener('click', loadGraph);
+
+  async function loadTopics() {
+    try {
+      const res = await fetch('/api/topics');
+      const topics = await res.json();
+      for (const t of topics) {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        $topicFilter.appendChild(opt);
+      }
+    } catch {}
+  }
+
+  function connectionCount(nodeId, edges) {
+    let count = 0;
+    for (const e of edges) {
+      if (e.source === nodeId || e.target === nodeId ||
+          (e.source && e.source.id === nodeId) || (e.target && e.target.id === nodeId)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async function loadGraph() {
+    const params = new URLSearchParams();
+    params.set('threshold', $thresholdSlider.value);
+    params.set('maxNodes', '200');
+    const topic = $topicFilter.value;
+    if (topic) params.set('topic', topic);
+
+    let data;
+    try {
+      const res = await fetch('/api/graph?' + params);
+      data = await res.json();
+    } catch { return; }
+
+    svg.selectAll('*').remove();
+    if (simulation) simulation.stop();
+
+    const width = document.getElementById('graph-container').clientWidth;
+    const height = document.getElementById('graph-container').clientHeight;
+
+    const g = svg.append('g');
+
+    svg.call(d3.zoom().on('zoom', (event) => {
+      g.attr('transform', event.transform);
+    }));
+
+    const link = g.append('g')
+      .selectAll('line')
+      .data(data.edges)
+      .join('line')
+      .attr('stroke', '#666')
+      .attr('stroke-opacity', d => d.type === 'similar_to' ? d.weight * 0.6 : 0.3)
+      .attr('stroke-width', d => d.type === 'similar_to' ? d.weight * 2 : 1);
+
+    const node = g.append('g')
+      .selectAll('circle')
+      .data(data.nodes)
+      .join('circle')
+      .attr('r', d => {
+        if (d.type !== 'document') return 6;
+        return Math.max(5, Math.min(16, 4 + connectionCount(d.id, data.edges) * 2));
+      })
+      .attr('fill', d => colorMap[d.type] || '#999')
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1.5)
+      .style('cursor', 'pointer')
+      .call(d3.drag()
+        .on('start', dragstarted)
+        .on('drag', dragged)
+        .on('end', dragended))
+      .on('mouseover', (event, d) => {
+        $tooltip.style.display = 'block';
+        $tooltip.textContent = d.label;
+        $tooltip.style.left = (event.pageX + 12) + 'px';
+        $tooltip.style.top = (event.pageY - 12) + 'px';
+      })
+      .on('mousemove', (event) => {
+        $tooltip.style.left = (event.pageX + 12) + 'px';
+        $tooltip.style.top = (event.pageY - 12) + 'px';
+      })
+      .on('mouseout', () => { $tooltip.style.display = 'none'; })
+      .on('click', (_event, d) => {
+        if (d.type === 'document') {
+          window.location.href = '/?doc=' + encodeURIComponent(d.id);
+        }
+      });
+
+    simulation = d3.forceSimulation(data.nodes)
+      .force('link', d3.forceLink(data.edges).id(d => d.id).distance(60))
+      .force('charge', d3.forceManyBody().strength(-120))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide().radius(12))
+      .on('tick', () => {
+        link
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+        node
+          .attr('cx', d => d.x)
+          .attr('cy', d => d.y);
+      });
+
+    function dragstarted(event) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+    }
+    function dragged(event) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
+    }
+    function dragended(event) {
+      if (!event.active) simulation.alphaTarget(0);
+      event.subject.fx = null;
+      event.subject.fy = null;
+    }
+  }
+
+  loadTopics();
+  loadGraph();
+<\/script>
 </body>
 </html>`;
 }
