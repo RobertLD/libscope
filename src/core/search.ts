@@ -3,6 +3,24 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 import { validateCountRow } from "../utils/db-validation.js";
 
+/** Build SQL clause and params for AND-logic tag filtering on a document alias. */
+function buildTagFilter(
+  tags: string[] | undefined,
+  docAlias: string,
+): { clause: string; params: unknown[] } {
+  if (!tags || tags.length === 0) return { clause: "", params: [] };
+  const normalized = tags.map((t) => t.trim().toLowerCase());
+  const placeholders = normalized.map(() => "?").join(", ");
+  const clause = ` AND ${docAlias}.id IN (
+    SELECT dt_f.document_id FROM document_tags dt_f
+    JOIN tags t_f ON t_f.id = dt_f.tag_id
+    WHERE t_f.name IN (${placeholders})
+    GROUP BY dt_f.document_id
+    HAVING COUNT(DISTINCT t_f.name) = ?
+  )`;
+  return { clause, params: [...normalized, normalized.length] };
+}
+
 /** Errors that indicate the vector table is missing or unusable – safe to fall back from. */
 const VECTOR_TABLE_MISSING_PATTERNS = [
   "no such table: chunk_embeddings",
@@ -33,6 +51,7 @@ export interface SearchOptions {
   dateFrom?: string | undefined;
   dateTo?: string | undefined;
   source?: string | undefined;
+  tags?: string[] | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -144,6 +163,10 @@ export async function searchDocuments(
       sql += " AND d.source_type = ?";
       params.push(options.source);
     }
+
+    const tagFilterVec = buildTagFilter(options.tags, "d");
+    sql += tagFilterVec.clause;
+    params.push(...tagFilterVec.params);
 
     // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
     const baseSql = sql;
@@ -279,6 +302,10 @@ function keywordSearch(
     params.push(options.source);
   }
 
+  const tagFilterKw = buildTagFilter(options.tags, "d");
+  sql += tagFilterKw.clause;
+  params.push(...tagFilterKw.params);
+
   // Build count query from base SQL (before adding LIMIT/OFFSET)
   const baseSql = sql;
   const baseParams = [...params];
@@ -396,6 +423,10 @@ function fts5Search(
     sql += " AND d.source_type = ?";
     params.push(options.source);
   }
+
+  const tagFilterFts = buildTagFilter(options.tags, "d");
+  sql += tagFilterFts.clause;
+  params.push(...tagFilterFts.params);
 
   // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
   const baseSql = sql;
