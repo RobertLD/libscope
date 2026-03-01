@@ -1,0 +1,184 @@
+# CLI Commands
+
+## Core Commands
+
+| Command | Description |
+|---------|-------------|
+| `libscope init` | Initialize the database |
+| `libscope add <fileOrUrl>` | Index a document from a file or URL |
+| `libscope import <directory>` | Bulk import files from a directory |
+| `libscope import-batch <directory>` | Batch import with parallel processing |
+| `libscope search <query>` | Semantic search |
+| `libscope ask <question>` | RAG question-answering |
+| `libscope repl` | Interactive search REPL |
+| `libscope serve` | Start MCP server (or `--api` for REST API) |
+
+### `libscope add`
+
+Index a single file or URL.
+
+```bash
+libscope add ./path/to/doc.md --topic deployment --title "Deploy Guide"
+libscope add https://reactjs.org/docs/hooks-intro.html --library react
+```
+
+| Option | Description |
+|--------|-------------|
+| `--library <name>` | Assign to a library |
+| `--topic <name>` | Assign to a topic |
+| `--title <title>` | Override the document title |
+| `--version <ver>` | Library version tag |
+
+### `libscope import`
+
+Recursively import files from a directory.
+
+```bash
+libscope import ./wiki/ --topic internal --extensions .md,.mdx,.txt
+```
+
+| Option | Description |
+|--------|-------------|
+| `--library <name>` | Assign all docs to a library |
+| `--topic <name>` | Assign all docs to a topic |
+| `--extensions <exts>` | Comma-separated file extensions (default: `.md`) |
+
+### `libscope import-batch`
+
+Parallel batch import with progress tracking.
+
+```bash
+libscope import-batch ./docs/ --concurrency 10 --filter "**/*.md" --library my-lib
+```
+
+| Option | Description |
+|--------|-------------|
+| `--concurrency <n>` | Number of parallel workers |
+| `--filter <glob>` | Glob pattern to match files |
+| `--library <name>` | Assign all docs to a library |
+
+### `libscope search`
+
+```bash
+libscope search "authentication best practices" --library my-lib --limit 10
+```
+
+| Option | Description |
+|--------|-------------|
+| `--library <name>` | Filter by library |
+| `--topic <name>` | Filter by topic |
+| `--limit <n>` | Max results (default: 10) |
+| `--min-rating <n>` | Minimum average rating |
+
+### `libscope ask`
+
+```bash
+libscope ask "How do I configure OAuth2?" --library my-lib --top-k 8
+```
+
+| Option | Description |
+|--------|-------------|
+| `--library <name>` | Filter source documents by library |
+| `--topic <name>` | Filter source documents by topic |
+| `--top-k <n>` | Number of chunks to retrieve for context |
+
+### `libscope serve`
+
+Start the MCP server or REST API.
+
+```bash
+libscope serve          # MCP server (stdio)
+libscope serve --api    # REST API
+libscope serve --api --port 3378
+```
+
+| Option | Description |
+|--------|-------------|
+| `--api` | Start REST API instead of MCP server |
+| `--port <n>` | REST API port (default: 3378) |
+
+## Document Management
+
+| Command | Description |
+|---------|-------------|
+| `libscope docs list` | List indexed documents |
+| `libscope docs show <id>` | Show a specific document |
+| `libscope docs delete <id>` | Delete a document |
+| `libscope docs history <id>` | View version history |
+| `libscope docs rollback <id> <version>` | Rollback to a previous version |
+
+## Topics & Tags
+
+| Command | Description |
+|---------|-------------|
+| `libscope topics list` | List all topics |
+| `libscope topics create <name>` | Create a topic (`--parent`, `--description`) |
+| `libscope tag add <docId> <tags...>` | Add tags to a document |
+| `libscope tag remove <docId> <tag>` | Remove a tag |
+| `libscope tag list` | List all tags with document counts |
+
+## Workspaces
+
+| Command | Description |
+|---------|-------------|
+| `libscope workspace create <name>` | Create a new workspace |
+| `libscope workspace list` | List all workspaces |
+| `libscope workspace use <name>` | Switch active workspace |
+| `libscope workspace delete <name>` | Delete a workspace |
+
+## Knowledge Packs
+
+| Command | Description |
+|---------|-------------|
+| `libscope pack install <nameOrPath>` | Install a pack (from registry or file) |
+| `libscope pack remove <name>` | Remove a pack and its documents |
+| `libscope pack list` | List installed packs (`--available` for registry) |
+| `libscope pack create` | Export documents as a pack file |
+
+## Connectors
+
+| Command | Description |
+|---------|-------------|
+| `libscope connect obsidian <path>` | Sync an Obsidian vault |
+| `libscope connect onenote` | Sync OneNote notebooks |
+| `libscope connect notion` | Sync Notion pages and databases |
+| `libscope connect confluence` | Sync Confluence spaces |
+| `libscope connect slack` | Sync Slack channels |
+| `libscope add-repo <url>` | Index a GitHub/GitLab repository |
+| `libscope disconnect <connector>` | Remove connector data |
+
+## Developer Tools
+
+| Command | Description |
+|---------|-------------|
+| `libscope watch <directory>` | Watch for file changes and auto-reindex |
+| `libscope reindex` | Re-embed chunks with current provider |
+| `libscope dedupe` | Scan for duplicate documents |
+| `libscope export <outputPath>` | Export knowledge base to JSON |
+| `libscope import-backup <backupPath>` | Import from a backup file |
+
+## Analytics
+
+| Command | Description |
+|---------|-------------|
+| `libscope stats` | Overview dashboard |
+| `libscope stats popular` | Most-returned documents in search |
+| `libscope stats stale` | Documents with no search hits |
+| `libscope stats queries` | Top search queries |
+
+## Configuration
+
+| Command | Description |
+|---------|-------------|
+| `libscope config set <key> <value>` | Set a configuration value |
+| `libscope config show` | Show current configuration |
+
+## Global Options
+
+These work with any command:
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Enable debug logging |
+| `--log-level <level>` | Set log level (`debug` / `info` / `warn` / `error` / `silent`) |
+| `--workspace <name>` | Use a specific workspace |
