@@ -217,6 +217,34 @@ The MCP server (`src/mcp/server.ts`) uses **stdio transport** and exposes 5 tool
 
 To test the MCP server locally: `npm run build && npm run serve`
 
+## Parallel Agent Work — Git Worktrees
+
+When multiple agents work on the repo simultaneously, they **must** use **git worktrees** to avoid stepping on each other's working directory:
+
+```bash
+# From the main repo, create a worktree for your branch:
+git worktree add ../libscope-<branch-name> -b <branch-name> origin/main
+
+# Work entirely inside the worktree directory:
+cd ../libscope-<branch-name>
+npm install          # each worktree needs its own node_modules
+# ... make changes, run tests, commit, push ...
+
+# Clean up when done:
+cd ~/Repos/libscope
+git worktree remove ../libscope-<branch-name>
+```
+
+**Rules for parallel agents:**
+- **Never** `git checkout` branches inside the shared main repo — use a worktree instead.
+- Each worktree is an independent working directory with its own `node_modules/`.
+- Run `npm install` in the worktree before building/testing (worktrees don't share `node_modules`).
+- Push your branch from within the worktree, then create the PR via `gh pr create`.
+- After the PR is merged, remove the worktree to keep things clean.
+- If you need the latest `main`, run `git pull origin main` from within your worktree (or rebase).
+
+**Why worktrees?** Multiple agents sharing a single working directory cause race conditions — concurrent `git checkout`, conflicting `node_modules`, and dirty working trees that break other agents' builds.
+
 ## Adding a New Feature — Checklist
 
 1. Add business logic in `src/core/` (no framework dependencies).
