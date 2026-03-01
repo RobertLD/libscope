@@ -30,6 +30,16 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || randomUUID();
 
+  // Verify parent exists if provided
+  if (input.parentId) {
+    const parent = db.prepare("SELECT id FROM topics WHERE id = ?").get(input.parentId) as
+      | { id: string }
+      | undefined;
+    if (!parent) {
+      throw new ValidationError(`Parent topic '${input.parentId}' not found`);
+    }
+  }
+
   // Check for duplicate
   const existing = db.prepare("SELECT id FROM topics WHERE id = ?").get(id) as
     | { id: string }
