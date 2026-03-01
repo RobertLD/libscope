@@ -86,7 +86,7 @@ const MIGRATIONS: Record<number, string> = {
     END;
 
     -- Backfill existing chunks into FTS
-    INSERT OR IGNORE INTO chunks_fts(content, chunk_id, document_id)
+    INSERT INTO chunks_fts(content, chunk_id, document_id)
     SELECT content, id, document_id FROM chunks;
 
     INSERT INTO schema_version (version) VALUES (2);
@@ -139,6 +139,9 @@ export function runMigrations(db: Database.Database): void {
 
 /** Create the virtual table for vector search (requires sqlite-vec). */
 export function createVectorTable(db: Database.Database, dimensions: number): void {
+  if (!Number.isInteger(dimensions) || dimensions <= 0 || dimensions > 10000) {
+    throw new DatabaseError("Invalid vector dimensions: must be a positive integer <= 10000");
+  }
   const log = getLogger();
   try {
     db.exec(`

@@ -5,12 +5,12 @@ import { loadConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
-import { getDocument } from "../core/documents.js";
+import { getDocument, listDocuments } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
 import { listTopics } from "../core/topics.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
-import { initLogger } from "../logger.js";
+import { initLogger, getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
 
 const config = loadConfig();
@@ -251,11 +251,67 @@ server.tool(
   },
 );
 
+// Tool: list-documents
+server.tool(
+  "list-documents",
+  "List all indexed documents with optional filters",
+  {
+    library: z.string().optional().describe("Filter by library name"),
+    topic: z.string().optional().describe("Filter by topic ID"),
+    sourceType: z
+      .enum(["library", "topic", "manual", "model-generated"])
+      .optional()
+      .describe("Filter by source type"),
+    limit: z.number().min(1).max(100).optional().describe("Maximum results (default: 50)"),
+  },
+  (params) => {
+    try {
+      const docs = listDocuments(db, {
+        library: params.library,
+        topicId: params.topic,
+        sourceType: params.sourceType,
+        limit: params.limit,
+      });
+
+      if (docs.length === 0) {
+        return { content: [{ type: "text" as const, text: "No documents found." }] };
+      }
+
+      const text = docs
+        .map(
+          (d) =>
+            `- **${d.title}** (\`${d.id}\`)` +
+            (d.library ? ` — ${d.library}${d.version ? ` v${d.version}` : ""}` : "") +
+            (d.url ? ` — [source](${d.url})` : "") +
+            ` (${d.sourceType})`,
+        )
+        .join("\n");
+
+      return {
+        content: [{ type: "text" as const, text: `## Documents (${docs.length})\n\n${text}` }],
+      };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  },
+);
+
 function errorResponse(err: unknown): {
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  const message = err instanceof LibScopeError ? err.message : "An unexpected error occurred";
+  let message: string;
+  if (err instanceof LibScopeError) {
+    message = err.message;
+  } else if (err instanceof Error) {
+    message = `${err.name}: ${err.message}`;
+  } else {
+    message = `An unexpected error occurred: ${String(err)}`;
+  }
+
+  const log = getLogger();
+  log.error({ err }, "MCP tool error");
+
   return {
     content: [{ type: "text" as const, text: `Error: ${message}` }],
     isError: true,
@@ -267,6 +323,15 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
+
+process.on("SIGINT", () => {
+  db.close();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  db.close();
+  process.exit(0);
+});
 
 main().catch((err: unknown) => {
   console.error("Fatal error starting LibScope MCP server:", err);

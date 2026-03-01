@@ -38,10 +38,12 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
     throw new ValidationError(`Topic '${id}' already exists`);
   }
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO topics (id, name, description, parent_id)
     VALUES (?, ?, ?, ?)
-  `).run(id, input.name, input.description ?? null, input.parentId ?? null);
+  `,
+  ).run(id, input.name, input.description ?? null, input.parentId ?? null);
 
   return {
     id,
@@ -91,17 +93,23 @@ export function listTopics(db: Database.Database, parentId?: string): Topic[] {
 
 /** Get a topic by ID. */
 export function getTopic(db: Database.Database, topicId: string): Topic | null {
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT id, name, description, parent_id, created_at, updated_at
     FROM topics WHERE id = ?
-  `).get(topicId) as {
-    id: string;
-    name: string;
-    description: string | null;
-    parent_id: string | null;
-    created_at: string;
-    updated_at: string;
-  } | undefined;
+  `,
+    )
+    .get(topicId) as
+    | {
+        id: string;
+        name: string;
+        description: string | null;
+        parent_id: string | null;
+        created_at: string;
+        updated_at: string;
+      }
+    | undefined;
 
   if (!row) return null;
 

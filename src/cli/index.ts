@@ -8,11 +8,21 @@ import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
-import { getDocument } from "../core/documents.js";
+import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
 import { initLogger, type LogLevel } from "../logger.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
+
+// Graceful shutdown
+process.on("SIGINT", () => {
+  closeDatabase();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  closeDatabase();
+  process.exit(0);
+});
 
 const program = new Command();
 
@@ -32,8 +42,13 @@ program
     setupLogging(program.opts());
     const db = getDatabase(config.database.path);
     runMigrations(db);
-    const provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider.dimensions);
+    // Only create vector table if provider can be initialized without download
+    try {
+      const provider = createEmbeddingProvider(config);
+      createVectorTable(db, provider.dimensions);
+    } catch {
+      console.log("  ℹ Vector table skipped (embedding provider not available)");
+    }
     console.log(`✓ Database initialized at ${config.database.path}`);
     closeDatabase();
   });
@@ -119,6 +134,7 @@ program
       }
 
       console.log(`Found ${files.length} files to import...`);
+      const startTime = Date.now();
       let indexed = 0;
       let failed = 0;
 
@@ -136,15 +152,20 @@ program
             topicId: opts.topic,
           });
 
-          console.log(`  ✓ ${file} (${result.chunkCount} chunks)`);
           indexed++;
+          console.log(
+            `  [${indexed + failed}/${files.length}] ✓ ${file} (${result.chunkCount} chunks)`,
+          );
         } catch (err) {
-          console.error(`  ✗ ${file}: ${err instanceof Error ? err.message : String(err)}`);
           failed++;
+          console.error(
+            `  [${indexed + failed}/${files.length}] ✗ ${file}: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
 
-      console.log(`\nDone: ${indexed} indexed, ${failed} failed`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`\nDone: ${indexed} indexed, ${failed} failed in ${elapsed}s`);
       closeDatabase();
     },
   );
@@ -255,6 +276,82 @@ ratingsCmd
         console.log(`  ${r.rating}/5 by ${r.ratedBy} — ${r.feedback ?? "(no feedback)"}`);
       }
     }
+    closeDatabase();
+  });
+
+// docs
+const docsCmd = program.command("docs").description("Manage documents");
+
+docsCmd
+  .command("list")
+  .description("List indexed documents")
+  .option("--library <name>", "Filter by library")
+  .option("--topic <topicId>", "Filter by topic")
+  .option("--source-type <type>", "Filter by source type")
+  .option("--limit <n>", "Max results", "50")
+  .action((opts: { library?: string; topic?: string; sourceType?: string; limit: string }) => {
+    const config = loadConfig();
+    setupLogging(program.opts());
+    const db = getDatabase(config.database.path);
+    runMigrations(db);
+
+    const docs = listDocuments(db, {
+      library: opts.library,
+      topicId: opts.topic,
+      sourceType: opts.sourceType,
+      limit: parseInt(opts.limit, 10),
+    });
+
+    if (docs.length === 0) {
+      console.log("No documents found.");
+    } else {
+      console.log(`Found ${docs.length} documents:\n`);
+      for (const d of docs) {
+        console.log(`  ${d.id}  ${d.title}`);
+        if (d.library) console.log(`    Library: ${d.library}${d.version ? ` v${d.version}` : ""}`);
+        if (d.url) console.log(`    URL: ${d.url}`);
+        console.log(`    Type: ${d.sourceType}  |  Updated: ${d.updatedAt}`);
+        console.log();
+      }
+    }
+    closeDatabase();
+  });
+
+docsCmd
+  .command("show <documentId>")
+  .description("Show a specific document")
+  .action((documentId: string) => {
+    const config = loadConfig();
+    setupLogging(program.opts());
+    const db = getDatabase(config.database.path);
+    runMigrations(db);
+
+    const doc = getDocument(db, documentId);
+    console.log(`\n# ${doc.title}\n`);
+    console.log(`ID: ${doc.id}`);
+    console.log(`Type: ${doc.sourceType}`);
+    if (doc.library) console.log(`Library: ${doc.library}${doc.version ? ` v${doc.version}` : ""}`);
+    if (doc.url) console.log(`URL: ${doc.url}`);
+    console.log(`Submitted by: ${doc.submittedBy}`);
+    console.log(`Created: ${doc.createdAt}`);
+    console.log(`Updated: ${doc.updatedAt}`);
+    console.log(`\n---\n`);
+    console.log(doc.content);
+    closeDatabase();
+  });
+
+docsCmd
+  .command("delete <documentId>")
+  .description("Delete a document by ID")
+  .action((documentId: string) => {
+    const config = loadConfig();
+    setupLogging(program.opts());
+    const db = getDatabase(config.database.path);
+    runMigrations(db);
+
+    const doc = getDocument(db, documentId);
+    deleteDocument(db, documentId);
+    console.log(`✓ Deleted "${doc.title}" (${documentId})`);
     closeDatabase();
   });
 

@@ -44,8 +44,8 @@ export async function searchDocuments(
   try {
     let sql = `
       SELECT
-        ce.chunk_id,
-        ce.distance,
+        candidates.chunk_id,
+        candidates.distance,
         c.document_id,
         c.content AS chunk_content,
         d.title,
@@ -55,13 +55,19 @@ export async function searchDocuments(
         d.topic_id,
         d.url,
         (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) AS avg_rating
-      FROM chunk_embeddings ce
-      JOIN chunks c ON c.id = ce.chunk_id
+      FROM (
+        SELECT chunk_id, distance
+        FROM chunk_embeddings
+        WHERE embedding MATCH ?
+        ORDER BY distance
+        LIMIT ?
+      ) candidates
+      JOIN chunks c ON c.id = candidates.chunk_id
       JOIN documents d ON d.id = c.document_id
-      WHERE ce.embedding MATCH ?
+      WHERE 1=1
     `;
 
-    const params: unknown[] = [vecBuffer];
+    const params: unknown[] = [vecBuffer, limit * 3];
 
     if (options.library) {
       sql += " AND d.library = ?";
@@ -80,7 +86,7 @@ export async function searchDocuments(
       params.push(options.minRating);
     }
 
-    sql += ` ORDER BY ce.distance LIMIT ?`;
+    sql += ` ORDER BY candidates.distance LIMIT ?`;
     params.push(limit);
 
     const rows = db.prepare(sql).all(...params) as Array<{

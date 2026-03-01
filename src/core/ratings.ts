@@ -36,9 +36,9 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
   }
 
   // Verify document exists
-  const doc = db
-    .prepare("SELECT id FROM documents WHERE id = ?")
-    .get(input.documentId) as { id: string } | undefined;
+  const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get(input.documentId) as
+    | { id: string }
+    | undefined;
   if (!doc) {
     throw new DocumentNotFoundError(input.documentId);
   }
@@ -46,10 +46,12 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
   const id = randomUUID();
   const ratedBy = input.ratedBy ?? "user";
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO ratings (id, document_id, chunk_id, rating, feedback, suggested_correction, rated_by)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `,
+  ).run(
     id,
     input.documentId,
     input.chunkId ?? null,
@@ -73,21 +75,25 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
 
 /** Get rating summary for a document. */
 export function getDocumentRatings(db: Database.Database, documentId: string): RatingSummary {
-  const doc = db
-    .prepare("SELECT id FROM documents WHERE id = ?")
-    .get(documentId) as { id: string } | undefined;
+  const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get(documentId) as
+    | { id: string }
+    | undefined;
   if (!doc) {
     throw new DocumentNotFoundError(documentId);
   }
 
-  const summary = db.prepare(`
+  const summary = db
+    .prepare(
+      `
     SELECT
       AVG(rating) AS avg_rating,
       COUNT(*) AS total,
       COALESCE(SUM(CASE WHEN suggested_correction IS NOT NULL THEN 1 ELSE 0 END), 0) AS corrections
     FROM ratings
     WHERE document_id = ?
-  `).get(documentId) as { avg_rating: number | null; total: number; corrections: number };
+  `,
+    )
+    .get(documentId) as { avg_rating: number | null; total: number; corrections: number };
 
   return {
     documentId,
@@ -99,12 +105,16 @@ export function getDocumentRatings(db: Database.Database, documentId: string): R
 
 /** Get all ratings for a document. */
 export function listRatings(db: Database.Database, documentId: string): Rating[] {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT id, document_id, chunk_id, rating, feedback, suggested_correction, rated_by, created_at
     FROM ratings
     WHERE document_id = ?
     ORDER BY created_at DESC
-  `).all(documentId) as Array<{
+  `,
+    )
+    .all(documentId) as Array<{
     id: string;
     document_id: string;
     chunk_id: string | null;

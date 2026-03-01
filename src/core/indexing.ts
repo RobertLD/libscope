@@ -28,16 +28,36 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
   const lines = content.split("\n");
   const chunks: string[] = [];
   let currentChunk: string[] = [];
+  const headingStack: Array<{ level: number; text: string }> = [];
 
   for (const line of lines) {
+    const headingMatch = /^(#{1,3})\s+(.+)$/.exec(line);
+
     // Split on markdown headings (## or higher)
-    if (/^#{1,3}\s/.test(line) && currentChunk.length > 0) {
+    if (headingMatch && currentChunk.length > 0) {
       const text = currentChunk.join("\n").trim();
       if (text.length > 0) {
         chunks.push(text);
       }
-      currentChunk = [line];
+
+      // Update heading stack
+      const level = headingMatch[1]!.length;
+      // Remove headings at same or deeper level
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1]!.level >= level) {
+        headingStack.pop();
+      }
+
+      // Build breadcrumb from parent headings
+      const breadcrumb = headingStack.map((h) => h.text).join(" > ");
+      headingStack.push({ level, text: headingMatch[2]!.trim() });
+
+      currentChunk = breadcrumb ? [`<!-- context: ${breadcrumb} -->`, line] : [line];
     } else {
+      if (headingMatch) {
+        // First heading in the document
+        const level = headingMatch[1]!.length;
+        headingStack.push({ level, text: headingMatch[2]!.trim() });
+      }
       currentChunk.push(line);
     }
 
@@ -74,6 +94,29 @@ export async function indexDocument(
   }
   if (!input.content.trim()) {
     throw new ValidationError("Document content is required");
+  }
+
+  // Check for duplicate by URL
+  if (input.url) {
+    const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(input.url) as
+      | { id: string }
+      | undefined;
+    if (existing) {
+      throw new ValidationError(
+        `Document with URL already exists (id: ${existing.id}). Delete it first or use a different URL.`,
+      );
+    }
+  }
+
+  // Check for duplicate by title + content length (lightweight content dedup)
+  const contentLength = input.content.length;
+  const existingByContent = db
+    .prepare("SELECT id FROM documents WHERE title = ? AND LENGTH(content) = ?")
+    .get(input.title, contentLength) as { id: string } | undefined;
+  if (existingByContent) {
+    throw new ValidationError(
+      `Document with same title and content length already exists (id: ${existingByContent.id}). Delete it first or modify the content.`,
+    );
   }
 
   const docId = randomUUID();

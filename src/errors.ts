@@ -35,6 +35,13 @@ export class ValidationError extends LibScopeError {
   }
 }
 
+export class FetchError extends LibScopeError {
+  constructor(message: string, cause?: unknown) {
+    super(message, "FETCH_ERROR", cause);
+    this.name = "FetchError";
+  }
+}
+
 export class ConfigError extends LibScopeError {
   constructor(message: string, cause?: unknown) {
     super(message, "CONFIG_ERROR", cause);

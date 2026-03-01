@@ -1,4 +1,5 @@
-import { EmbeddingError } from "../errors.js";
+import { NodeHtmlMarkdown } from "node-html-markdown";
+import { FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
 export interface FetchedDocument {
@@ -15,18 +16,32 @@ export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
   log.info({ url }, "Fetching URL");
 
   try {
+    // redirect: "follow" uses the browser/Node default of ~20 redirects
     const response = await fetch(url, {
       headers: {
         "User-Agent": "LibScope/0.1.0 (documentation indexer)",
         Accept: "text/html, text/markdown, text/plain, */*",
       },
+      signal: AbortSignal.timeout(30_000),
+      redirect: "follow",
     });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
+    // Check content-length to avoid downloading huge pages
+    const contentLength = parseInt(response.headers.get("content-length") ?? "0", 10);
+    const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+    if (contentLength > MAX_BODY_SIZE) {
+      throw new FetchError(
+        `Response too large: ${contentLength} bytes (max ${MAX_BODY_SIZE})`,
+        undefined,
+      );
+    }
+
     const contentType = response.headers.get("content-type") ?? "";
+    // Body download is also bounded by the 30-second timeout above
     const body = await response.text();
 
     // If it's already markdown or plain text, return as-is
@@ -44,8 +59,8 @@ export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
       content: converted,
     };
   } catch (err) {
-    if (err instanceof EmbeddingError) throw err;
-    throw new EmbeddingError(`Failed to fetch URL: ${url} — ${String(err)}`, err);
+    if (err instanceof FetchError) throw err;
+    throw new FetchError(`Failed to fetch URL: ${url} — ${String(err)}`, err);
   }
 }
 
@@ -78,53 +93,5 @@ function titleFromUrl(url: string): string {
 
 /** Convert HTML to simplified plain text / pseudo-markdown. */
 function htmlToText(html: string): string {
-  let text = html;
-
-  // Remove script, style, nav, footer, header tags and their content
-  text = text.replace(/<(script|style|nav|footer|header|aside)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
-
-  // Convert headings
-  text = text.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, "\n# $1\n");
-  text = text.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, "\n## $1\n");
-  text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, "\n### $1\n");
-  text = text.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, "\n#### $1\n");
-  text = text.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, "\n##### $1\n");
-  text = text.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, "\n###### $1\n");
-
-  // Convert code blocks
-  text = text.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "\n```\n$1\n```\n");
-  text = text.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, "\n```\n$1\n```\n");
-  text = text.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
-
-  // Convert lists
-  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
-
-  // Convert paragraphs and breaks
-  text = text.replace(/<br\s*\/?>/gi, "\n");
-  text = text.replace(/<\/p>/gi, "\n\n");
-  text = text.replace(/<p[^>]*>/gi, "");
-
-  // Convert links
-  text = text.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
-
-  // Convert bold/italic
-  text = text.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, "**$2**");
-  text = text.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, "*$2*");
-
-  // Strip remaining HTML tags
-  text = text.replace(/<[^>]+>/g, "");
-
-  // Decode common HTML entities
-  text = text.replace(/&amp;/g, "&");
-  text = text.replace(/&lt;/g, "<");
-  text = text.replace(/&gt;/g, ">");
-  text = text.replace(/&quot;/g, '"');
-  text = text.replace(/&#39;/g, "'");
-  text = text.replace(/&nbsp;/g, " ");
-
-  // Clean up whitespace
-  text = text.replace(/\n{3,}/g, "\n\n");
-  text = text.trim();
-
-  return text;
+  return NodeHtmlMarkdown.translate(html);
 }

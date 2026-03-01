@@ -17,22 +17,28 @@ export interface Document {
 
 /** Get a document by ID. */
 export function getDocument(db: Database.Database, documentId: string): Document {
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT id, source_type, library, version, topic_id, title, content, url, submitted_by, created_at, updated_at
     FROM documents WHERE id = ?
-  `).get(documentId) as {
-    id: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    title: string;
-    content: string;
-    url: string | null;
-    submitted_by: string;
-    created_at: string;
-    updated_at: string;
-  } | undefined;
+  `,
+    )
+    .get(documentId) as
+    | {
+        id: string;
+        source_type: string;
+        library: string | null;
+        version: string | null;
+        topic_id: string | null;
+        title: string;
+        content: string;
+        url: string | null;
+        submitted_by: string;
+        created_at: string;
+        updated_at: string;
+      }
+    | undefined;
 
   if (!row) {
     throw new DocumentNotFoundError(documentId);
@@ -55,6 +61,19 @@ export function getDocument(db: Database.Database, documentId: string): Document
 
 /** Delete a document and all its chunks/ratings (cascade). */
 export function deleteDocument(db: Database.Database, documentId: string): void {
+  // Clean up chunk_embeddings (no foreign key cascade for virtual tables)
+  try {
+    db.prepare(
+      `
+      DELETE FROM chunk_embeddings WHERE chunk_id IN (
+        SELECT id FROM chunks WHERE document_id = ?
+      )
+    `,
+    ).run(documentId);
+  } catch {
+    // chunk_embeddings table may not exist (sqlite-vec not loaded)
+  }
+
   const result = db.prepare("DELETE FROM documents WHERE id = ?").run(documentId);
   if (result.changes === 0) {
     throw new DocumentNotFoundError(documentId);

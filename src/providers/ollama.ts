@@ -55,6 +55,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       }
 
       const data = (await response.json()) as { embeddings: number[][] };
+      if (data.embeddings.length !== texts.length) {
+        throw new EmbeddingError(
+          `Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`,
+        );
+      }
       return data.embeddings;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;

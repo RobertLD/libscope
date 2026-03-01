@@ -47,3 +47,26 @@ export function closeDatabase(): void {
     db = null;
   }
 }
+
+/** Create an independent database connection (for testing/isolation). */
+export function createDatabase(dbPath: string): Database.Database {
+  const log = getLogger();
+  try {
+    const dir = dirname(dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const newDb = new Database(dbPath);
+    newDb.pragma("journal_mode = WAL");
+    newDb.pragma("foreign_keys = ON");
+    try {
+      const sqliteVec = require("sqlite-vec") as { load: (db: Database.Database) => void };
+      sqliteVec.load(newDb);
+    } catch (err) {
+      log.warn({ err }, "sqlite-vec extension not available");
+    }
+    return newDb;
+  } catch (err) {
+    throw new DatabaseError(`Failed to open database at ${dbPath}`, err);
+  }
+}

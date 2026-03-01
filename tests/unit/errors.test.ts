@@ -3,6 +3,7 @@ import {
   LibScopeError,
   DatabaseError,
   EmbeddingError,
+  FetchError,
   ValidationError,
   ConfigError,
   DocumentNotFoundError,
@@ -32,6 +33,14 @@ describe("errors", () => {
     expect(err).toBeInstanceOf(LibScopeError);
   });
 
+  it("should create FetchError", () => {
+    const cause = new Error("network error");
+    const err = new FetchError("fetch failed", cause);
+    expect(err.code).toBe("FETCH_ERROR");
+    expect(err.cause).toBe(cause);
+    expect(err).toBeInstanceOf(LibScopeError);
+  });
+
   it("should create ValidationError", () => {
     const err = new ValidationError("invalid input");
     expect(err.code).toBe("VALIDATION_ERROR");
@@ -58,6 +67,7 @@ describe("errors", () => {
     const errors = [
       new DatabaseError("db"),
       new EmbeddingError("embed"),
+      new FetchError("fetch"),
       new ValidationError("valid"),
       new ConfigError("config"),
       new DocumentNotFoundError("doc"),

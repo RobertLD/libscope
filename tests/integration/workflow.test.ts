@@ -79,7 +79,8 @@ describe("integration: full workflow", () => {
   it("should index library docs with version", async () => {
     const indexed = await indexDocument(db, provider, {
       title: "React Hooks API",
-      content: "# useState\n\nManage state in function components.\n\n# useEffect\n\nPerform side effects.",
+      content:
+        "# useState\n\nManage state in function components.\n\n# useEffect\n\nPerform side effects.",
       sourceType: "library",
       library: "react",
       version: "18.2.0",

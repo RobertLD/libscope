@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb } from "../fixtures/test-db.js";
-import {
-  getDocument,
-  deleteDocument,
-  listDocuments,
-} from "../../src/core/documents.js";
+import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
+import { getDocument, deleteDocument, listDocuments } from "../../src/core/documents.js";
+import { indexDocument, type IndexDocumentInput } from "../../src/core/indexing.js";
+import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
+import { ValidationError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 
 describe("documents", () => {
@@ -13,20 +12,34 @@ describe("documents", () => {
   beforeEach(() => {
     db = createTestDb();
     // Seed some documents
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO documents (id, source_type, library, version, title, content, submitted_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run("doc-1", "library", "react", "18.2.0", "React Hooks", "Content about hooks", "manual");
+    `,
+    ).run("doc-1", "library", "react", "18.2.0", "React Hooks", "Content about hooks", "manual");
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO documents (id, source_type, library, version, title, content, submitted_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run("doc-2", "library", "react", "18.2.0", "React Components", "Content about components", "manual");
+    `,
+    ).run(
+      "doc-2",
+      "library",
+      "react",
+      "18.2.0",
+      "React Components",
+      "Content about components",
+      "manual",
+    );
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO documents (id, source_type, title, content, submitted_by)
       VALUES (?, ?, ?, ?, ?)
-    `).run("doc-3", "topic", "Deployment Guide", "How to deploy", "manual");
+    `,
+    ).run("doc-3", "topic", "Deployment Guide", "How to deploy", "manual");
   });
 
   describe("getDocument", () => {
@@ -56,10 +69,12 @@ describe("documents", () => {
 
     it("should cascade delete chunks", () => {
       // Insert a chunk for doc-1
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO chunks (id, document_id, content, chunk_index)
         VALUES ('chunk-1', 'doc-1', 'Some chunk', 0)
-      `).run();
+      `,
+      ).run();
 
       deleteDocument(db, "doc-1");
 
@@ -68,10 +83,12 @@ describe("documents", () => {
     });
 
     it("should cascade delete ratings", () => {
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO ratings (id, document_id, rating, rated_by)
         VALUES ('rating-1', 'doc-1', 5, 'user')
-      `).run();
+      `,
+      ).run();
 
       deleteDocument(db, "doc-1");
 
@@ -106,6 +123,68 @@ describe("documents", () => {
     it("should return empty array when no matches", () => {
       const docs = listDocuments(db, { library: "nonexistent" });
       expect(docs.length).toBe(0);
+    });
+  });
+
+  describe("duplicate detection", () => {
+    let vecDb: Database.Database;
+    let provider: MockEmbeddingProvider;
+
+    const baseInput: IndexDocumentInput = {
+      title: "Test Doc",
+      content: "Some test content here.",
+      sourceType: "library",
+      library: "react",
+      url: "https://example.com/doc",
+    };
+
+    beforeEach(() => {
+      vecDb = createTestDbWithVec();
+      provider = new MockEmbeddingProvider();
+    });
+
+    it("should reject duplicate URL", async () => {
+      await indexDocument(vecDb, provider, baseInput);
+
+      await expect(
+        indexDocument(vecDb, provider, {
+          ...baseInput,
+          title: "Different Title",
+          content: "Different content",
+        }),
+      ).rejects.toThrow(ValidationError);
+
+      await expect(
+        indexDocument(vecDb, provider, {
+          ...baseInput,
+          title: "Different Title",
+          content: "Different content",
+        }),
+      ).rejects.toThrow("Document with URL already exists");
+    });
+
+    it("should reject duplicate title + content length", async () => {
+      const inputNoUrl: IndexDocumentInput = { ...baseInput, url: undefined };
+      await indexDocument(vecDb, provider, inputNoUrl);
+
+      // Same title and same content length but different URL
+      await expect(indexDocument(vecDb, provider, inputNoUrl)).rejects.toThrow(
+        "Document with same title and content length already exists",
+      );
+    });
+
+    it("should allow same URL if undefined", async () => {
+      const inputNoUrl: IndexDocumentInput = { ...baseInput, url: undefined, content: "Content A" };
+      await indexDocument(vecDb, provider, inputNoUrl);
+
+      const inputNoUrl2: IndexDocumentInput = {
+        ...baseInput,
+        url: undefined,
+        title: "Other Title",
+        content: "Content B",
+      };
+      const result = await indexDocument(vecDb, provider, inputNoUrl2);
+      expect(result.id).toBeDefined();
     });
   });
 });

@@ -16,10 +16,7 @@ export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvid
     case "local":
       return new LocalEmbeddingProvider();
     case "ollama":
-      return new OllamaEmbeddingProvider(
-        config.embedding.ollamaUrl,
-        config.embedding.ollamaModel,
-      );
+      return new OllamaEmbeddingProvider(config.embedding.ollamaUrl, config.embedding.ollamaModel);
     case "openai": {
       const apiKey = config.embedding.openaiApiKey;
       if (!apiKey) {

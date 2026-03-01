@@ -42,6 +42,11 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         model: this.model,
         input: texts,
       });
+      if (response.data.length !== texts.length) {
+        throw new EmbeddingError(
+          `OpenAI returned ${response.data.length} embeddings for ${texts.length} inputs`,
+        );
+      }
       return response.data.map((d) => d.embedding);
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;

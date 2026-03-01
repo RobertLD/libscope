@@ -1,10 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb } from "../fixtures/test-db.js";
-import {
-  rateDocument,
-  getDocumentRatings,
-  listRatings,
-} from "../../src/core/ratings.js";
+import { rateDocument, getDocumentRatings, listRatings } from "../../src/core/ratings.js";
 import type Database from "better-sqlite3";
 
 describe("ratings", () => {
@@ -14,10 +10,12 @@ describe("ratings", () => {
   beforeEach(() => {
     db = createTestDb();
     // Insert a test document
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO documents (id, source_type, title, content, submitted_by)
       VALUES (?, 'manual', 'Test Doc', 'Test content', 'manual')
-    `).run(testDocId);
+    `,
+    ).run(testDocId);
   });
 
   describe("rateDocument", () => {
@@ -36,23 +34,23 @@ describe("ratings", () => {
     });
 
     it("should reject invalid ratings", () => {
-      expect(() =>
-        rateDocument(db, { documentId: testDocId, rating: 0 }),
-      ).toThrow("Rating must be an integer between 1 and 5");
+      expect(() => rateDocument(db, { documentId: testDocId, rating: 0 })).toThrow(
+        "Rating must be an integer between 1 and 5",
+      );
 
-      expect(() =>
-        rateDocument(db, { documentId: testDocId, rating: 6 }),
-      ).toThrow("Rating must be an integer between 1 and 5");
+      expect(() => rateDocument(db, { documentId: testDocId, rating: 6 })).toThrow(
+        "Rating must be an integer between 1 and 5",
+      );
 
-      expect(() =>
-        rateDocument(db, { documentId: testDocId, rating: 3.5 }),
-      ).toThrow("Rating must be an integer between 1 and 5");
+      expect(() => rateDocument(db, { documentId: testDocId, rating: 3.5 })).toThrow(
+        "Rating must be an integer between 1 and 5",
+      );
     });
 
     it("should reject rating for nonexistent document", () => {
-      expect(() =>
-        rateDocument(db, { documentId: "nonexistent", rating: 3 }),
-      ).toThrow("Document not found");
+      expect(() => rateDocument(db, { documentId: "nonexistent", rating: 3 })).toThrow(
+        "Document not found",
+      );
     });
 
     it("should store suggested corrections", () => {

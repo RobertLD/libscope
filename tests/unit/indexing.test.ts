@@ -17,7 +17,9 @@ Content of section two.`;
     expect(chunks.length).toBe(3);
     expect(chunks[0]).toContain("Introduction");
     expect(chunks[1]).toContain("Section One");
+    expect(chunks[1]).toContain("<!-- context: Introduction -->");
     expect(chunks[2]).toContain("Section Two");
+    expect(chunks[2]).toContain("<!-- context: Introduction -->");
   });
 
   it("should handle content without headings", () => {
@@ -86,5 +88,6 @@ Fourth level stays with H3.`;
     expect(chunks.length).toBe(3);
     expect(chunks[2]).toContain("H3");
     expect(chunks[2]).toContain("H4");
+    expect(chunks[2]).toContain("<!-- context: H1 > H2 -->");
   });
 });
