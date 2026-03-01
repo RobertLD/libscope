@@ -40,9 +40,7 @@ import {
   setActiveWorkspace,
   getWorkspacePath,
 } from "../core/workspace.js";
-import { indexRepository, parseRepoUrl } from "../core/repo.js";
 
-import { reindexEmbeddings } from "../core/reindex.js";
 
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 

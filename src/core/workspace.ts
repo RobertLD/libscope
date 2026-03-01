@@ -104,8 +104,9 @@ export function listWorkspaces(): Workspace[] {
 
     if (existsSync(metaPath)) {
       try {
-        const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
-        createdAt = meta.createdAt ?? statSync(wsPath).birthtime.toISOString();
+        const meta: unknown = JSON.parse(readFileSync(metaPath, "utf-8"));
+        const metaObj = meta as Record<string, unknown>;
+        createdAt = (typeof metaObj.createdAt === "string" ? metaObj.createdAt : undefined) ?? statSync(wsPath).birthtime.toISOString();
       } catch {
         createdAt = statSync(wsPath).birthtime.toISOString();
       }

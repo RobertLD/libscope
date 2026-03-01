@@ -44,7 +44,7 @@ describe("workspace", () => {
     expect(ws.name).toBe("test-project");
     expect(ws.createdAt).toBeTruthy();
     expect(existsSync(ws.path)).toBe(true);
-    const meta = JSON.parse(readFileSync(join(ws.path, ".workspace.json"), "utf-8"));
+    const meta = JSON.parse(readFileSync(join(ws.path, ".workspace.json"), "utf-8")) as Record<string, unknown>;
     expect(meta.name).toBe("test-project");
     expect(meta.createdAt).toBeTruthy();
   });
