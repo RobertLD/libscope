@@ -862,7 +862,6 @@ program
     }
   });
 
-
 // stats
 const statsCmd = program.command("stats").description("Usage analytics and content health metrics");
 
