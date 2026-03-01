@@ -246,6 +246,29 @@ describe("API routes", () => {
       expect(parsed.data).toBeDefined();
       expect(parsed.meta.took).toBeDefined();
     });
+
+    it("should accept offset query parameter for pagination", async () => {
+      await indexDocument(db, provider, {
+        title: "Doc A",
+        content: "First document content",
+        sourceType: "manual",
+      });
+      await indexDocument(db, provider, {
+        title: "Doc B",
+        content: "Second document content",
+        sourceType: "manual",
+      });
+
+      const req = createMockReq("GET", "/api/v1/search?q=document&limit=5&offset=1");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      expect(parsed.data).toBeDefined();
+      expect(parsed.meta.took).toBeDefined();
+    });
   });
 
   describe("POST /api/v1/documents", () => {
