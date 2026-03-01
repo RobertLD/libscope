@@ -146,7 +146,7 @@ export function validateConfig(config: LibScopeConfig): string[] {
 
   // Check OpenAI API key for embedding provider
   if (config.embedding.provider === "openai") {
-    const hasKey = config.embedding.openaiApiKey || process.env["OPENAI_API_KEY"];
+    const hasKey = config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
     if (!hasKey) {
       warnings.push(
         'embedding.provider is "openai" but no API key found. Set embedding.openaiApiKey or OPENAI_API_KEY env var.',
@@ -164,7 +164,7 @@ export function validateConfig(config: LibScopeConfig): string[] {
   // Check OpenAI API key for LLM provider
   if (config.llm?.provider === "openai") {
     const hasKey =
-      config.llm.openaiApiKey || config.embedding.openaiApiKey || process.env["OPENAI_API_KEY"];
+      config.llm.openaiApiKey ?? config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
     if (!hasKey) {
       warnings.push(
         'llm.provider is "openai" but no API key found. Set llm.openaiApiKey or OPENAI_API_KEY env var.',
