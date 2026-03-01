@@ -119,9 +119,6 @@ export {
 } from "../connectors/obsidian.js";
 export type { ObsidianConfig, SyncResult } from "../connectors/obsidian.js";
 
-export { loadConnectorConfig, saveConnectorConfig } from "../connectors/index.js";
-export type { ConnectorConfig } from "../connectors/index.js";
-
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";
@@ -143,3 +140,14 @@ export type { KnowledgeGraph, GraphNode, GraphEdge, GraphOptions } from "./graph
 
 export { startApiServer } from "../api/server.js";
 export type { ApiServerOptions } from "../api/server.js";
+
+export { syncNotion, convertNotionBlocks, disconnectNotion } from "../connectors/notion.js";
+export type { NotionConfig, NotionSyncResult, NotionBlock } from "../connectors/notion.js";
+export {
+  saveDbConnectorConfig,
+  loadDbConnectorConfig,
+  deleteDbConnectorConfig,
+  loadConnectorConfig,
+  saveConnectorConfig,
+} from "../connectors/index.js";
+export type { ConnectorConfig } from "../connectors/index.js";
