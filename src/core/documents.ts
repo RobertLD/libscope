@@ -4,6 +4,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DocumentNotFoundError, ValidationError } from "../errors.js";
 import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
 import { getLogger } from "../logger.js";
+import { saveVersion } from "./versioning.js";
 
 export interface Document {
   id: string;
@@ -174,6 +175,9 @@ export async function updateDocument(
 
   // Verify document exists
   const existing = getDocument(db, documentId);
+
+  // Snapshot current state before applying changes
+  saveVersion(db, documentId);
 
   if (input.title !== undefined && !input.title.trim()) {
     throw new ValidationError("Document title cannot be empty");
