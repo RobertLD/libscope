@@ -68,7 +68,10 @@ export class FileWatcher {
     if (!this.extensions.has(ext)) return;
 
     const existing = this.debounceTimers.get(fullPath);
-    if (existing) clearTimeout(existing);
+    if (existing) {
+      clearTimeout(existing);
+      this.debounceTimers.delete(fullPath);
+    }
 
     const timer = setTimeout(() => {
       this.debounceTimers.delete(fullPath);

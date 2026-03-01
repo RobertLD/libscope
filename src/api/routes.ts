@@ -106,9 +106,9 @@ export async function handleRequest(
       }
       const topic = url.searchParams.get("topic") ?? undefined;
       const tag = url.searchParams.get("tag") ?? undefined;
-      const limit = url.searchParams.has("limit")
-        ? parseInt(url.searchParams.get("limit")!, 10)
-        : undefined;
+      const limitRaw = url.searchParams.get("limit");
+      const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
+      const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
       const tags = tag ? [tag] : undefined;
 
       const result = await searchDocuments(db, provider, { query: q, topic, tags, limit });
@@ -120,9 +120,9 @@ export async function handleRequest(
     // List documents
     if (pathname === "/api/v1/documents" && method === "GET") {
       const topicId = url.searchParams.get("topic") ?? undefined;
-      const limit = url.searchParams.has("limit")
-        ? parseInt(url.searchParams.get("limit")!, 10)
-        : undefined;
+      const limitRaw = url.searchParams.get("limit");
+      const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
+      const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
       const docs = listDocuments(db, { topicId, limit });
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, docs, took);
