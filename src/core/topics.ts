@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { ValidationError, TopicNotFoundError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
+import { validateRow } from "../utils/db-validation.js";
 
 export interface Topic {
   id: string;
@@ -71,22 +72,28 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
     .prepare(
       "SELECT id, name, description, parent_id, created_at, updated_at FROM topics WHERE name = ?",
     )
-    .get(input.name) as {
+    .get(input.name);
+
+  const validated = validateRow<{
     id: string;
     name: string;
     description: string | null;
     parent_id: string | null;
     created_at: string;
     updated_at: string;
-  };
+  }>(
+    row,
+    ["id", "name", "description", "parent_id", "created_at", "updated_at"],
+    "existing topic lookup",
+  );
 
   return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    parentId: row.parent_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id: validated.id,
+    name: validated.name,
+    description: validated.description,
+    parentId: validated.parent_id,
+    createdAt: validated.created_at,
+    updatedAt: validated.updated_at,
   };
 }
 
