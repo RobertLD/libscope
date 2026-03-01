@@ -7,6 +7,7 @@ import { addTagsToDocument } from "../core/tags.js";
 import { deleteDocument } from "../core/documents.js";
 import { getLogger } from "../logger.js";
 import { FetchError, ValidationError } from "../errors.js";
+import { fetchWithRetry } from "./http-utils.js";
 
 export interface ConfluenceConfig {
   baseUrl: string;
@@ -54,7 +55,7 @@ async function confluenceFetch<T>(url: string, auth: string): Promise<T> {
   const log = getLogger();
   log.debug({ url }, "Confluence API request");
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     headers: {
       Authorization: auth,
       Accept: "application/json",

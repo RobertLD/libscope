@@ -152,6 +152,9 @@ export function deleteConnectorDocuments(db: Database.Database, sourceType: stri
 export { syncNotion, convertNotionBlocks, disconnectNotion } from "./notion.js";
 export type { NotionConfig, NotionSyncResult, NotionBlock } from "./notion.js";
 
+export { fetchWithRetry } from "./http-utils.js";
+export type { RetryConfig } from "./http-utils.js";
+
 export {
   syncConfluence,
   convertConfluenceStorage,

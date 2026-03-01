@@ -17,7 +17,8 @@ function jsonResponse(data: unknown, status = 200): Response {
     status,
     json: () => Promise.resolve(data),
     text: () => Promise.resolve(JSON.stringify(data)),
-  } as Response;
+    headers: new Headers(),
+  } as unknown as Response;
 }
 
 describe("convertNotionBlocks", () => {
@@ -387,10 +388,14 @@ describe("syncNotion", () => {
   });
 
   it("should handle rate limiting (429)", async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse({ message: "Rate limited" }, 429));
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ message: "Rate limited" }, 429))
+      .mockResolvedValueOnce(jsonResponse({ message: "Rate limited" }, 429))
+      .mockResolvedValueOnce(jsonResponse({ message: "Rate limited" }, 429))
+      .mockResolvedValueOnce(jsonResponse({ message: "Rate limited" }, 429));
 
     await expect(syncNotion(db, provider, { token: "secret_test123" })).rejects.toThrow(FetchError);
-  });
+  }, 15000);
 
   it("should collect errors for individual pages", async () => {
     // Search returns one page
