@@ -530,6 +530,51 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: sync-slack
+  server.tool(
+    "sync-slack",
+    "Sync Slack channel messages and threads into the knowledge base",
+    {
+      token: z.string().describe("Slack bot token (xoxb-...) or user token (xoxp-...)"),
+      channels: z
+        .array(z.string())
+        .describe("Channel names or IDs to sync, or ['all'] for all channels"),
+      excludeChannels: z
+        .array(z.string())
+        .optional()
+        .describe("Channel names to exclude from sync"),
+      threadMode: z
+        .enum(["aggregate", "separate"])
+        .optional()
+        .describe(
+          "Thread handling: aggregate (default) combines thread into one doc, separate creates one doc per reply",
+        ),
+    },
+    withErrorHandling(async (params) => {
+      const { syncSlack: doSyncSlack } = await import("../connectors/slack.js");
+
+      const slackConfig = {
+        token: params.token,
+        channels: params.channels,
+        excludeChannels: params.excludeChannels,
+        threadMode: params.threadMode ?? ("aggregate" as const),
+      };
+
+      const result = await doSyncSlack(db, provider, slackConfig);
+
+      const text =
+        `Slack sync complete.\n` +
+        `Channels: ${result.channels}\n` +
+        `Messages indexed: ${result.messagesIndexed}\n` +
+        `Threads indexed: ${result.threadsIndexed}` +
+        (result.errors.length > 0
+          ? `\nErrors:\n${result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   // Tool: install-pack
   server.tool(
     "install-pack",
