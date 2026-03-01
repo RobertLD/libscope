@@ -43,6 +43,18 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
     throw new DocumentNotFoundError(input.documentId);
   }
 
+  // Verify chunk belongs to the document if provided
+  if (input.chunkId) {
+    const chunk = db
+      .prepare("SELECT id FROM chunks WHERE id = ? AND document_id = ?")
+      .get(input.chunkId, input.documentId) as { id: string } | undefined;
+    if (!chunk) {
+      throw new ValidationError(
+        `Chunk '${input.chunkId}' not found for document '${input.documentId}'`,
+      );
+    }
+  }
+
   const id = randomUUID();
   const ratedBy = input.ratedBy ?? "user";
 

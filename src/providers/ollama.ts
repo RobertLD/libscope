@@ -37,7 +37,10 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       return embedding;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
-      throw new EmbeddingError(`Ollama embedding failed: ${String(err)}`, err);
+      throw new EmbeddingError(
+        `Failed to generate embedding: ${err instanceof Error ? err.message : String(err)}`,
+        err,
+      );
     }
   }
 
@@ -63,7 +66,10 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       return data.embeddings;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
-      throw new EmbeddingError(`Ollama batch embedding failed: ${String(err)}`, err);
+      throw new EmbeddingError(
+        `Failed to generate embedding: ${err instanceof Error ? err.message : String(err)}`,
+        err,
+      );
     }
   }
 }
