@@ -1,0 +1,121 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createTestDb } from "../fixtures/test-db.js";
+import { exportKnowledgeBase, importFromBackup } from "../../src/core/export.js";
+import type Database from "better-sqlite3";
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+describe("export/backup", () => {
+  let db: Database.Database;
+  let tempDir: string;
+
+  beforeEach(() => {
+    db = createTestDb();
+    tempDir = mkdtempSync(join(tmpdir(), "libscope-export-test-"));
+
+    // Seed data
+    db.prepare(`INSERT INTO topics (id, name, description) VALUES (?, ?, ?)`).run(
+      "topic-1",
+      "React",
+      "React framework docs",
+    );
+
+    db.prepare(
+      `INSERT INTO documents (id, source_type, library, version, topic_id, title, content, submitted_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "doc-1",
+      "library",
+      "react",
+      "18.2.0",
+      "topic-1",
+      "React Hooks",
+      "Hooks content",
+      "manual",
+    );
+
+    db.prepare(
+      `INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)`,
+    ).run("chunk-1", "doc-1", "Hooks content chunk", 0);
+
+    db.prepare(`INSERT INTO ratings (id, document_id, rating, rated_by) VALUES (?, ?, ?, ?)`).run(
+      "rating-1",
+      "doc-1",
+      5,
+      "user",
+    );
+  });
+
+  afterEach(() => {
+    db.close();
+    if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+  });
+
+  describe("exportKnowledgeBase", () => {
+    it("should export all data to a JSON file", () => {
+      const outputPath = join(tempDir, "backup.json");
+      const result = exportKnowledgeBase(db, outputPath);
+
+      expect(existsSync(outputPath)).toBe(true);
+      expect(result.metadata.version).toBe("1.0");
+      expect(result.metadata.exportDate).toBeDefined();
+      expect(result.metadata.counts.documents).toBe(1);
+      expect(result.metadata.counts.chunks).toBe(1);
+      expect(result.metadata.counts.topics).toBe(1);
+      expect(result.metadata.counts.ratings).toBe(1);
+      expect(result.documents).toHaveLength(1);
+      expect(result.chunks).toHaveLength(1);
+      expect(result.topics).toHaveLength(1);
+      expect(result.ratings).toHaveLength(1);
+    });
+
+    it("should export empty database without error", () => {
+      const emptyDb = createTestDb();
+      const outputPath = join(tempDir, "empty-backup.json");
+      const result = exportKnowledgeBase(emptyDb, outputPath);
+
+      expect(result.metadata.counts.documents).toBe(0);
+      expect(result.metadata.counts.chunks).toBe(0);
+      emptyDb.close();
+    });
+  });
+
+  describe("importFromBackup", () => {
+    it("should restore data from a backup file", () => {
+      const backupPath = join(tempDir, "backup.json");
+      exportKnowledgeBase(db, backupPath);
+
+      // Import into a fresh database
+      const newDb = createTestDb();
+      const result = importFromBackup(newDb, backupPath);
+
+      expect(result.metadata.counts.documents).toBe(1);
+
+      const docs = newDb.prepare("SELECT * FROM documents").all();
+      expect(docs).toHaveLength(1);
+
+      const topics = newDb.prepare("SELECT * FROM topics").all();
+      expect(topics).toHaveLength(1);
+
+      const chunks = newDb.prepare("SELECT * FROM chunks").all();
+      expect(chunks).toHaveLength(1);
+
+      const ratings = newDb.prepare("SELECT * FROM ratings").all();
+      expect(ratings).toHaveLength(1);
+
+      newDb.close();
+    });
+
+    it("should throw on invalid backup file", () => {
+      const badPath = join(tempDir, "bad.json");
+      writeFileSync(badPath, JSON.stringify({ noMetadata: true }), "utf-8");
+
+      expect(() => importFromBackup(db, badPath)).toThrow("Invalid backup file");
+    });
+
+    it("should throw on missing file", () => {
+      expect(() => importFromBackup(db, join(tempDir, "missing.json"))).toThrow();
+    });
+  });
+});

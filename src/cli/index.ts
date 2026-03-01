@@ -13,6 +13,7 @@ import { initLogger, type LogLevel } from "../logger.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
+import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -316,6 +317,28 @@ docsCmd
     const doc = getDocument(db, documentId);
     deleteDocument(db, documentId);
     console.log(`✓ Deleted "${doc.title}" (${documentId})`);
+    closeDatabase();
+  });
+
+// export
+program
+  .command("export <outputPath>")
+  .description("Export the knowledge base to a JSON file")
+  .action((outputPath: string) => {
+    const { db } = initializeApp();
+    const data = exportKnowledgeBase(db, outputPath);
+    console.log(`✓ Exported ${data.metadata.counts.documents} documents to ${outputPath}`);
+    closeDatabase();
+  });
+
+// import-backup
+program
+  .command("import-backup <backupPath>")
+  .description("Import knowledge base data from a backup file")
+  .action((backupPath: string) => {
+    const { db } = initializeApp();
+    const data = importFromBackup(db, backupPath);
+    console.log(`✓ Imported ${data.metadata.counts.documents} documents from ${backupPath}`);
     closeDatabase();
   });
 
