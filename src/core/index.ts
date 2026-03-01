@@ -10,8 +10,16 @@ export type { RateDocumentInput, Rating, RatingSummary } from "./ratings.js";
 export { getDocument, deleteDocument, listDocuments } from "./documents.js";
 export type { Document } from "./documents.js";
 
-export { createTopic, listTopics, getTopic } from "./topics.js";
-export type { Topic, CreateTopicInput } from "./topics.js";
+export {
+  createTopic,
+  listTopics,
+  getTopic,
+  deleteTopic,
+  renameTopic,
+  getDocumentsByTopic,
+  getTopicStats,
+} from "./topics.js";
+export type { Topic, CreateTopicInput, GetDocumentsByTopicOptions, TopicStats } from "./topics.js";
 
 export { fetchAndConvert, DEFAULT_FETCH_OPTIONS } from "./url-fetcher.js";
 export type { FetchedDocument, FetchOptions } from "./url-fetcher.js";
