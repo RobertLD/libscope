@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
-import { corsMiddleware, checkRateLimit } from "./middleware.js";
+import { corsMiddleware, checkRateLimit, checkApiKey } from "./middleware.js";
 import { handleRequest } from "./routes.js";
 
 export interface ApiServerOptions {
@@ -31,6 +31,7 @@ export async function startApiServer(
     }
 
     if (corsMiddleware(req, res, corsOrigins)) return;
+    if (!checkApiKey(req, res)) return;
     handleRequest(req, res, db, provider).catch((err: unknown) => {
       log.error({ err }, "Unhandled error in request handler");
       if (!res.headersSent) {

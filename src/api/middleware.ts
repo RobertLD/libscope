@@ -100,6 +100,26 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
+/** Check API key authentication. Returns true if request is authorized. */
+export function checkApiKey(req: IncomingMessage, res: ServerResponse): boolean {
+  const apiKey = process.env.LIBSCOPE_API_KEY;
+  if (!apiKey) return true;
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    sendError(res, 401, "UNAUTHORIZED", "Missing or invalid Authorization header");
+    return false;
+  }
+
+  const token = authHeader.slice(7);
+  if (token !== apiKey) {
+    sendError(res, 401, "UNAUTHORIZED", "Invalid API key");
+    return false;
+  }
+
+  return true;
+}
+
 /** Parse the request body as JSON. Returns the parsed object or null on failure. */
 export async function parseJsonBody(
   req: IncomingMessage,

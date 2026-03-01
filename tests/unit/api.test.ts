@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import type Database from "better-sqlite3";
@@ -11,6 +11,7 @@ import {
   sendJson,
   sendError,
   checkRateLimit,
+  checkApiKey,
   getRateLimitMapSize,
   MAX_RATE_LIMIT_ENTRIES,
 } from "../../src/api/middleware.js";
@@ -558,6 +559,63 @@ describe("middleware — security", () => {
     expect(res.getHeader("X-XSS-Protection")).toBe("1; mode=block");
     expect(res.getHeader("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
     expect(res.getHeader("Content-Security-Policy")).toBeDefined();
+  });
+});
+
+describe("middleware — API key authentication", () => {
+  const ORIGINAL_KEY = process.env.LIBSCOPE_API_KEY;
+
+  afterEach(() => {
+    if (ORIGINAL_KEY === undefined) {
+      delete process.env.LIBSCOPE_API_KEY;
+    } else {
+      process.env.LIBSCOPE_API_KEY = ORIGINAL_KEY;
+    }
+  });
+
+  it("should allow requests when no API key is configured", () => {
+    delete process.env.LIBSCOPE_API_KEY;
+    const req = createMockReq("GET", "/api/v1/health");
+    const { res } = createMockRes();
+    expect(checkApiKey(req, res)).toBe(true);
+  });
+
+  it("should reject requests without Authorization header", () => {
+    process.env.LIBSCOPE_API_KEY = "test-key";
+    const req = createMockReq("GET", "/api/v1/health");
+    const { res, getStatus, getBody } = createMockRes();
+    expect(checkApiKey(req, res)).toBe(false);
+    expect(getStatus()).toBe(401);
+    const parsed = parseResponse(getBody());
+    expect(parsed.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("should reject requests with wrong API key", () => {
+    process.env.LIBSCOPE_API_KEY = "test-key";
+    const req = createMockReq("GET", "/api/v1/health");
+    req.headers.authorization = "Bearer wrong-key";
+    const { res, getStatus, getBody } = createMockRes();
+    expect(checkApiKey(req, res)).toBe(false);
+    expect(getStatus()).toBe(401);
+    const parsed = parseResponse(getBody());
+    expect(parsed.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("should allow requests with correct API key", () => {
+    process.env.LIBSCOPE_API_KEY = "test-key";
+    const req = createMockReq("GET", "/api/v1/health");
+    req.headers.authorization = "Bearer test-key";
+    const { res } = createMockRes();
+    expect(checkApiKey(req, res)).toBe(true);
+  });
+
+  it("should reject non-Bearer authorization schemes", () => {
+    process.env.LIBSCOPE_API_KEY = "test-key";
+    const req = createMockReq("GET", "/api/v1/health");
+    req.headers.authorization = "Basic dGVzdC1rZXk=";
+    const { res, getStatus } = createMockRes();
+    expect(checkApiKey(req, res)).toBe(false);
+    expect(getStatus()).toBe(401);
   });
 });
 
