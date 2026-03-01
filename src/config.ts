@@ -5,7 +5,7 @@ import { ConfigError } from "./errors.js";
 
 export interface LibScopeConfig {
   embedding: {
-    provider: "local" | "ollama" | "openai";
+    provider: "local" | "ollama" | "openai" | (string & {});
     ollamaUrl?: string;
     ollamaModel?: string;
     openaiApiKey?: string;

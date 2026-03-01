@@ -108,6 +108,74 @@ describe("searchDocuments (FTS5 fallback)", () => {
     expect(page2.totalCount).toBe(3);
     expect(page2.results.length).toBe(1);
   });
+
+  it("should filter by dateFrom", async () => {
+    insertDoc(db, "doc1", "Old Doc", { createdAt: "2023-01-01T00:00:00.000Z" });
+    insertChunk(db, "c1", "doc1", "TypeScript old content");
+
+    insertDoc(db, "doc2", "New Doc", { createdAt: "2024-06-01T00:00:00.000Z" });
+    insertChunk(db, "c2", "doc2", "TypeScript new content");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      dateFrom: "2024-01-01T00:00:00.000Z",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("New Doc");
+  });
+
+  it("should filter by dateTo", async () => {
+    insertDoc(db, "doc1", "Old Doc", { createdAt: "2023-01-01T00:00:00.000Z" });
+    insertChunk(db, "c1", "doc1", "TypeScript old content");
+
+    insertDoc(db, "doc2", "New Doc", { createdAt: "2024-06-01T00:00:00.000Z" });
+    insertChunk(db, "c2", "doc2", "TypeScript new content");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      dateTo: "2023-12-31T23:59:59.000Z",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("Old Doc");
+  });
+
+  it("should filter by date range (dateFrom + dateTo)", async () => {
+    insertDoc(db, "doc1", "Early Doc", { createdAt: "2023-01-01T00:00:00.000Z" });
+    insertChunk(db, "c1", "doc1", "TypeScript early content");
+
+    insertDoc(db, "doc2", "Mid Doc", { createdAt: "2024-03-15T00:00:00.000Z" });
+    insertChunk(db, "c2", "doc2", "TypeScript mid content");
+
+    insertDoc(db, "doc3", "Late Doc", { createdAt: "2025-01-01T00:00:00.000Z" });
+    insertChunk(db, "c3", "doc3", "TypeScript late content");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      dateFrom: "2024-01-01T00:00:00.000Z",
+      dateTo: "2024-12-31T23:59:59.000Z",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("Mid Doc");
+  });
+
+  it("should filter by source type", async () => {
+    insertDoc(db, "doc1", "Library Doc", { sourceType: "library" });
+    insertChunk(db, "c1", "doc1", "TypeScript library documentation");
+
+    insertDoc(db, "doc2", "Manual Doc", { sourceType: "manual" });
+    insertChunk(db, "c2", "doc2", "TypeScript manual documentation");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      source: "library",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].sourceType).toBe("library");
+  });
 });
 
 describe("escapeLikePattern", () => {

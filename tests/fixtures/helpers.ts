@@ -12,12 +12,19 @@ export function insertDoc(
   db: Database.Database,
   id: string,
   title: string,
-  opts: { library?: string; topicId?: string } = {},
+  opts: { library?: string; topicId?: string; sourceType?: string; createdAt?: string } = {},
 ): void {
   db.prepare(
-    `INSERT INTO documents (id, title, content, source_type, library, topic_id)
-     VALUES (?, ?, '', 'manual', ?, ?)`,
-  ).run(id, title, opts.library ?? null, opts.topicId ?? null);
+    `INSERT INTO documents (id, title, content, source_type, library, topic_id, created_at)
+     VALUES (?, ?, '', ?, ?, ?, ?)`,
+  ).run(
+    id,
+    title,
+    opts.sourceType ?? "manual",
+    opts.library ?? null,
+    opts.topicId ?? null,
+    opts.createdAt ?? new Date().toISOString(),
+  );
 }
 
 /** Insert a minimal chunk row for search tests. */

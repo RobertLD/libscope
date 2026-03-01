@@ -30,6 +30,9 @@ export interface SearchOptions {
   library?: string | undefined;
   version?: string | undefined;
   minRating?: number | undefined;
+  dateFrom?: string | undefined;
+  dateTo?: string | undefined;
+  source?: string | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
 }
@@ -128,6 +131,18 @@ export async function searchDocuments(
     if (options.minRating) {
       sql += " AND avg_r.avg_rating >= ?";
       params.push(options.minRating);
+    }
+    if (options.dateFrom) {
+      sql += " AND d.created_at >= ?";
+      params.push(options.dateFrom);
+    }
+    if (options.dateTo) {
+      sql += " AND d.created_at <= ?";
+      params.push(options.dateTo);
+    }
+    if (options.source) {
+      sql += " AND d.source_type = ?";
+      params.push(options.source);
     }
 
     // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
@@ -251,6 +266,18 @@ function keywordSearch(
     sql += " AND (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) >= ?";
     params.push(options.minRating);
   }
+  if (options.dateFrom) {
+    sql += " AND d.created_at >= ?";
+    params.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    sql += " AND d.created_at <= ?";
+    params.push(options.dateTo);
+  }
+  if (options.source) {
+    sql += " AND d.source_type = ?";
+    params.push(options.source);
+  }
 
   // Build count query from base SQL (before adding LIMIT/OFFSET)
   const baseSql = sql;
@@ -356,6 +383,18 @@ function fts5Search(
   if (options.minRating) {
     sql += " AND (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) >= ?";
     params.push(options.minRating);
+  }
+  if (options.dateFrom) {
+    sql += " AND d.created_at >= ?";
+    params.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    sql += " AND d.created_at <= ?";
+    params.push(options.dateTo);
+  }
+  if (options.source) {
+    sql += " AND d.source_type = ?";
+    params.push(options.source);
   }
 
   // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
