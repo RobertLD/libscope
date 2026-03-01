@@ -530,6 +530,80 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: install-pack
+  server.tool(
+    "install-pack",
+    "Install a knowledge pack from the registry or a local file path",
+    {
+      nameOrPath: z.string().describe("Pack name (from registry) or local .json file path"),
+      registryUrl: z.string().optional().describe("Custom registry URL"),
+    },
+    withErrorHandling(async (params) => {
+      const { installPack } = await import("../core/packs.js");
+      const result = await installPack(db, provider, params.nameOrPath, {
+        registryUrl: params.registryUrl,
+      });
+
+      if (result.alreadyInstalled) {
+        return {
+          content: [
+            { type: "text" as const, text: `Pack "${result.packName}" is already installed.` },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`,
+          },
+        ],
+      };
+    }),
+  );
+
+  // Tool: list-packs
+  server.tool(
+    "list-packs",
+    "List installed knowledge packs or available packs from the registry",
+    {
+      available: z
+        .boolean()
+        .optional()
+        .describe("If true, list available packs from registry instead of installed packs"),
+      registryUrl: z.string().optional().describe("Custom registry URL"),
+    },
+    withErrorHandling(async (params) => {
+      if (params.available) {
+        const { listAvailablePacks } = await import("../core/packs.js");
+        const packs = await listAvailablePacks(params.registryUrl);
+        if (packs.length === 0) {
+          return {
+            content: [{ type: "text" as const, text: "No packs available in the registry." }],
+          };
+        }
+        const text = packs
+          .map((p) => `- **${p.name}** v${p.version} — ${p.description} (${p.docCount} docs)`)
+          .join("\n");
+        return { content: [{ type: "text" as const, text: `## Available Packs\n\n${text}` }] };
+      }
+
+      const { listInstalledPacks } = await import("../core/packs.js");
+      const packs = listInstalledPacks(db);
+      if (packs.length === 0) {
+        return { content: [{ type: "text" as const, text: "No packs installed." }] };
+      }
+      const text = packs
+        .map(
+          (p) =>
+            `- **${p.name}** v${p.version} — ${p.description ?? ""} (${p.docCount} docs, installed ${p.installedAt})`,
+        )
+        .join("\n");
+      return { content: [{ type: "text" as const, text: `## Installed Packs\n\n${text}` }] };
+    }),
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
