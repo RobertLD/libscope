@@ -601,6 +601,8 @@ async function main(): Promise<void> {
         )
         .join("\n");
       return { content: [{ type: "text" as const, text: `## Installed Packs\n\n${text}` }] };
+    }),
+  );
 
   // Tool: sync-onenote
   server.tool(
