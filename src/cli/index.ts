@@ -26,6 +26,7 @@ import {
   getSearchTrends,
 } from "../core/analytics.js";
 import { startRepl } from "./repl.js";
+import { confirmAction } from "./confirm.js";
 import {
   addTagsToDocument,
   removeTagFromDocument,
@@ -538,10 +539,20 @@ docsCmd
 docsCmd
   .command("delete <documentId>")
   .description("Delete a document by ID")
-  .action((documentId: string) => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (documentId: string, opts: { yes?: boolean }) => {
     const { db } = initializeApp();
     try {
       const doc = getDocument(db, documentId);
+      if (
+        !(await confirmAction(
+          `Delete document "${doc.title}" (${documentId})? This cannot be undone.`,
+          !!opts.yes,
+        ))
+      ) {
+        console.log("Cancelled.");
+        return;
+      }
       deleteDocument(db, documentId);
       console.log(`✓ Deleted "${doc.title}" (${documentId})`);
     } finally {
@@ -1185,7 +1196,12 @@ workspaceCmd
 workspaceCmd
   .command("delete <name>")
   .description("Delete a workspace")
-  .action((name: string) => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (name: string, opts: { yes?: boolean }) => {
+    if (!(await confirmAction(`Delete workspace "${name}"? This cannot be undone.`, !!opts.yes))) {
+      console.log("Cancelled.");
+      return;
+    }
     deleteWorkspace(name);
     console.log(`✓ Workspace "${name}" deleted.`);
   });
@@ -1214,7 +1230,17 @@ packCmd
 packCmd
   .command("remove <name>")
   .description("Remove a pack and its documents")
-  .action((name: string) => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (name: string, opts: { yes?: boolean }) => {
+    if (
+      !(await confirmAction(
+        `Remove pack "${name}" and its documents? This cannot be undone.`,
+        !!opts.yes,
+      ))
+    ) {
+      console.log("Cancelled.");
+      return;
+    }
     const { db } = initializeApp();
     removePack(db, name);
     console.log(`✓ Pack "${name}" removed.`);
@@ -1399,7 +1425,17 @@ const disconnectCmd = program.command("disconnect").description("Disconnect exte
 disconnectCmd
   .command("onenote")
   .description("Disconnect OneNote and remove its data")
-  .action(() => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (opts: { yes?: boolean }) => {
+    if (
+      !(await confirmAction(
+        "Disconnect OneNote and remove all its data? This cannot be undone.",
+        !!opts.yes,
+      ))
+    ) {
+      console.log("Cancelled.");
+      return;
+    }
     const config = loadConfig();
     const logLevel =
       (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
@@ -1605,7 +1641,17 @@ connectCmd
 disconnectCmd
   .command("obsidian <vault-path>")
   .description("Remove all documents from an Obsidian vault")
-  .action(async (vaultPath: string) => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (vaultPath: string, opts: { yes?: boolean }) => {
+    if (
+      !(await confirmAction(
+        `Disconnect Obsidian vault "${vaultPath}" and remove its documents? This cannot be undone.`,
+        !!opts.yes,
+      ))
+    ) {
+      console.log("Cancelled.");
+      return;
+    }
     const { db } = initializeApp();
 
     const { disconnectVault } = await import("../connectors/obsidian.js");
@@ -1663,7 +1709,17 @@ connectCmd
 disconnectCmd
   .command("notion")
   .description("Remove all Notion documents")
-  .action(async () => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (opts: { yes?: boolean }) => {
+    if (
+      !(await confirmAction(
+        "Disconnect Notion and remove all its documents? This cannot be undone.",
+        !!opts.yes,
+      ))
+    ) {
+      console.log("Cancelled.");
+      return;
+    }
     const { db } = initializeApp();
     const removed = await disconnectNotion(db);
     console.log(`✓ Removed ${removed} Notion documents.`);
@@ -1672,7 +1728,17 @@ disconnectCmd
 disconnectCmd
   .command("slack")
   .description("Remove all Slack data from the knowledge base")
-  .action(() => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (opts: { yes?: boolean }) => {
+    if (
+      !(await confirmAction(
+        "Disconnect Slack and remove all its data? This cannot be undone.",
+        !!opts.yes,
+      ))
+    ) {
+      console.log("Cancelled.");
+      return;
+    }
     const { db } = initializeApp();
     try {
       const count = disconnectSlack(db);
@@ -1685,7 +1751,17 @@ disconnectCmd
 disconnectCmd
   .command("confluence")
   .description("Remove all Confluence-synced content")
-  .action(async () => {
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(async (opts: { yes?: boolean }) => {
+    if (
+      !(await confirmAction(
+        "Disconnect Confluence and remove all synced content? This cannot be undone.",
+        !!opts.yes,
+      ))
+    ) {
+      console.log("Cancelled.");
+      return;
+    }
     const { disconnectConfluence } = await import("../connectors/confluence.js");
     const { db } = initializeApp();
     try {
