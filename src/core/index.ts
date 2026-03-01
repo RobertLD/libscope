@@ -101,3 +101,6 @@ export {
   DEFAULT_WORKSPACE,
 } from "./workspace.js";
 export type { Workspace } from "./workspace.js";
+
+export { buildKnowledgeGraph, detectClusters } from "./graph.js";
+export type { KnowledgeGraph, GraphNode, GraphEdge, GraphOptions } from "./graph.js";

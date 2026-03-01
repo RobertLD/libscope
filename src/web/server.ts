@@ -4,7 +4,8 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { searchDocuments } from "../core/search.js";
 import { getDocument, deleteDocument, listDocuments } from "../core/documents.js";
 import { getTopicStats } from "../core/topics.js";
-import { getDashboardHtml } from "./dashboard.js";
+import { getDashboardHtml, getGraphPageHtml } from "./dashboard.js";
+import { handleGraphRequest } from "./graph-api.js";
 import { DocumentNotFoundError } from "../errors.js";
 import { validateCountRow } from "../utils/db-validation.js";
 
@@ -72,6 +73,19 @@ async function handleRequest(
   if (method === "GET" && pathname === "/") {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(getDashboardHtml());
+    return;
+  }
+
+  // Route: GET /graph
+  if (method === "GET" && pathname === "/graph") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(getGraphPageHtml());
+    return;
+  }
+
+  // Route: GET /api/graph
+  if (method === "GET" && pathname === "/api/graph") {
+    await handleGraphRequest(db, req, res);
     return;
   }
 
