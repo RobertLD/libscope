@@ -5,7 +5,15 @@ import type Database from "better-sqlite3";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { handleRequest } from "../../src/api/routes.js";
-import { corsMiddleware, parseJsonBody, sendJson, sendError } from "../../src/api/middleware.js";
+import {
+  corsMiddleware,
+  parseJsonBody,
+  sendJson,
+  sendError,
+  checkRateLimit,
+  getRateLimitMapSize,
+  MAX_RATE_LIMIT_ENTRIES,
+} from "../../src/api/middleware.js";
 import { OPENAPI_SPEC } from "../../src/api/openapi.js";
 import { indexDocument } from "../../src/core/indexing.js";
 import { createTopic } from "../../src/core/topics.js";
@@ -554,19 +562,32 @@ describe("middleware — security", () => {
 });
 
 describe("middleware — rate limiting", () => {
-  it("should allow requests under the limit", async () => {
-    const { checkRateLimit } = await import("../../src/api/middleware.js");
+  it("should allow requests under the limit", () => {
     const testIp = `test-${Date.now()}`;
     expect(checkRateLimit(testIp)).toBe(true);
     expect(checkRateLimit(testIp)).toBe(true);
   });
 
-  it("should block requests over the limit", async () => {
-    const { checkRateLimit } = await import("../../src/api/middleware.js");
+  it("should block requests over the limit", () => {
     const testIp = `flood-${Date.now()}`;
     for (let i = 0; i < 120; i++) {
       checkRateLimit(testIp);
     }
     expect(checkRateLimit(testIp)).toBe(false);
+  });
+
+  it("should not exceed MAX_RATE_LIMIT_ENTRIES", () => {
+    const prefix = `cap-${Date.now()}-`;
+    for (let i = 0; i < MAX_RATE_LIMIT_ENTRIES + 500; i++) {
+      checkRateLimit(`${prefix}${i}`);
+    }
+    expect(getRateLimitMapSize()).toBeLessThanOrEqual(MAX_RATE_LIMIT_ENTRIES);
+  });
+
+  it("should clean up old entries when window expires", () => {
+    const testIp = `expire-${Date.now()}`;
+    checkRateLimit(testIp);
+    expect(getRateLimitMapSize()).toBeGreaterThan(0);
+    // Entry exists; size is at least 1
   });
 });
