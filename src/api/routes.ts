@@ -86,7 +86,9 @@ export async function handleRequest(
 
     // Health check
     if (pathname === "/api/v1/health" && method === "GET") {
-      const stats = getStats(db);
+      const config = loadConfig();
+      const dbPath = config.database?.path;
+      const stats = getStats(db, dbPath);
       const took = Math.round(performance.now() - start);
       sendJson(
         res,
@@ -280,7 +282,9 @@ export async function handleRequest(
 
     // Stats
     if (pathname === "/api/v1/stats" && method === "GET") {
-      const stats = getStats(db);
+      const config = loadConfig();
+      const dbPath = config.database?.path;
+      const stats = getStats(db, dbPath);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, stats, took);
       return;

@@ -470,6 +470,17 @@ describe("API routes", () => {
       const parsed = parseResponse(getBody());
       expect(typeof parsed.data.totalDocuments).toBe("number");
     });
+
+    it("should return databaseSizeBytes field", async () => {
+      const req = createMockReq("GET", "/api/v1/stats");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      expect(typeof parsed.data.databaseSizeBytes).toBe("number");
+    });
   });
 
   describe("Unknown route", () => {
