@@ -2,6 +2,8 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 import { validateCountRow } from "../utils/db-validation.js";
+import { logSearch } from "./analytics.js";
+import { performance } from "node:perf_hooks";
 
 /** Build SQL clause and params for AND-logic tag filtering on a document alias. */
 function buildTagFilter(
@@ -54,6 +56,7 @@ export interface SearchOptions {
   tags?: string[] | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
+  analyticsEnabled?: boolean | undefined;
 }
 
 export interface SearchResponse {
@@ -94,6 +97,9 @@ export async function searchDocuments(
   const log = withCorrelationId({ operation: "searchDocuments" });
   const limit = options.limit ?? 10;
   const offset = options.offset ?? 0;
+
+  const analyticsEnabled = options.analyticsEnabled ?? true;
+  const startTime = performance.now();
 
   log.info({ query: options.query, limit, offset }, "Searching documents");
 
@@ -194,7 +200,7 @@ export async function searchDocuments(
       avg_rating: number | null;
     }>;
 
-    return {
+    const response: SearchResponse = {
       totalCount,
       results: rows.map((row) => {
         const similarity = 1 - row.distance;
@@ -219,12 +225,36 @@ export async function searchDocuments(
         };
       }),
     };
+
+    if (analyticsEnabled) {
+      logSearch(db, {
+        query: options.query,
+        searchMethod: "vector",
+        resultCount: response.totalCount,
+        latencyMs: performance.now() - startTime,
+        documentIds: response.results.map((r) => r.documentId),
+      });
+    }
+
+    return response;
   } catch (err) {
     if (!isVectorTableError(err)) {
       throw err;
     }
     log.warn({ err }, "Vector table missing, falling back to keyword search");
-    return keywordSearch(db, options, limit, offset);
+    const response = keywordSearch(db, options, limit, offset);
+
+    if (analyticsEnabled) {
+      logSearch(db, {
+        query: options.query,
+        searchMethod: response.results[0]?.scoreExplanation.method ?? "keyword",
+        resultCount: response.totalCount,
+        latencyMs: performance.now() - startTime,
+        documentIds: response.results.map((r) => r.documentId),
+      });
+    }
+
+    return response;
   }
 }
 

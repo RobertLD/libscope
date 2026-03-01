@@ -7,6 +7,23 @@ export type { DedupResult, DedupOptions, DuplicateGroup } from "./dedup.js";
 export { searchDocuments } from "./search.js";
 export type { SearchOptions, SearchResult, SearchMethod, ScoreExplanation } from "./search.js";
 
+export {
+  logSearch,
+  getStats,
+  getPopularDocuments,
+  getStaleDocuments,
+  getTopQueries,
+  getSearchTrends,
+} from "./analytics.js";
+export type {
+  SearchLogEntry,
+  OverviewStats,
+  PopularDocument,
+  StaleDocument,
+  TopQuery,
+  SearchTrend,
+} from "./analytics.js";
+
 export { rateDocument, getDocumentRatings, listRatings } from "./ratings.js";
 export type { RateDocumentInput, Rating, RatingSummary } from "./ratings.js";
 
