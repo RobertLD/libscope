@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { chunkContent } from "../../src/core/indexing.js";
+import {
+  chunkContent,
+  chunkContentStreaming,
+  STREAMING_THRESHOLD,
+} from "../../src/core/indexing.js";
 
 describe("chunkContent", () => {
   it("should split content by markdown headings", () => {
@@ -89,5 +93,72 @@ Fourth level stays with H3.`;
     expect(chunks[2]).toContain("H3");
     expect(chunks[2]).toContain("H4");
     expect(chunks[2]).toContain("<!-- context: H1 > H2 -->");
+  });
+});
+
+describe("chunkContentStreaming", () => {
+  it("should chunk small content the same as chunkContent", () => {
+    const content = `# Title
+Some intro text.
+
+## Section
+More content here.`;
+
+    const regular = chunkContent(content);
+    const streamed = chunkContentStreaming(content);
+
+    expect(streamed.length).toBeGreaterThanOrEqual(regular.length);
+    expect(streamed[0]).toContain("Title");
+  });
+
+  it("should process large content in windows", () => {
+    const lines = Array.from({ length: 2000 }, (_, i) => `Line ${i}: ${"A".repeat(80)}`);
+    const largeContent = lines.join("\n");
+    expect(largeContent.length).toBeGreaterThan(64 * 1024);
+
+    const chunks = chunkContentStreaming(largeContent, { windowSize: 64 * 1024 });
+    expect(chunks.length).toBeGreaterThan(1);
+
+    const joined = chunks.join("\n");
+    expect(joined).toContain("Line 0");
+    expect(joined).toContain("Line 1999");
+  });
+
+  it("should respect maxDocumentSize", () => {
+    const content = "A".repeat(200);
+    expect(() => chunkContentStreaming(content, { maxDocumentSize: 100 })).toThrow(
+      "exceeds maximum allowed size",
+    );
+  });
+
+  it("should handle empty content", () => {
+    const chunks = chunkContentStreaming("");
+    expect(chunks.length).toBe(0);
+  });
+
+  it("should handle content with sentence boundaries at window edges", () => {
+    const sentences = Array.from(
+      { length: 500 },
+      (_, i) => `Sentence number ${i} has some content.`,
+    );
+    const content = sentences.join(" ");
+    const chunks = chunkContentStreaming(content, { windowSize: 1024 });
+    expect(chunks.length).toBeGreaterThan(1);
+  });
+
+  it("should use configurable window size", () => {
+    const lines = Array.from({ length: 500 }, (_, i) => `Line ${i}: content`);
+    const content = lines.join("\n");
+
+    const smallWindow = chunkContentStreaming(content, { windowSize: 1024 });
+    const largeWindow = chunkContentStreaming(content, { windowSize: 8192 });
+
+    expect(smallWindow.length).toBeGreaterThanOrEqual(largeWindow.length);
+  });
+});
+
+describe("STREAMING_THRESHOLD", () => {
+  it("should be 1MB", () => {
+    expect(STREAMING_THRESHOLD).toBe(1024 * 1024);
   });
 });

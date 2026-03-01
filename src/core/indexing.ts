@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
+import type { Readable } from "node:stream";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -84,6 +85,76 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
   return chunks;
 }
 
+/** Size threshold above which streaming chunking is used (1MB). */
+export const STREAMING_THRESHOLD = 1024 * 1024;
+
+/**
+ * Process content in fixed-size windows with overlap to avoid cutting sentences.
+ * Suitable for large documents that shouldn't be loaded into chunkContent all at once.
+ */
+export function chunkContentStreaming(
+  content: string | Readable,
+  options: {
+    maxChunkSize?: number;
+    windowSize?: number;
+    maxDocumentSize?: number;
+  } = {},
+): string[] {
+  const maxChunkSize = options.maxChunkSize ?? 1500;
+  const windowSize = options.windowSize ?? 64 * 1024; // 64KB
+  const maxDocumentSize = options.maxDocumentSize ?? 100 * 1024 * 1024; // 100MB
+
+  if (typeof content !== "string") {
+    throw new ValidationError(
+      "Readable stream must be converted to string before calling chunkContentStreaming",
+    );
+  }
+
+  const text = content;
+
+  if (text.length > maxDocumentSize) {
+    throw new ValidationError(
+      `Document size (${text.length} bytes) exceeds maximum allowed size (${maxDocumentSize} bytes)`,
+    );
+  }
+
+  const overlap = Math.min(Math.floor(windowSize * 0.1), 1024); // 10% overlap, max 1KB
+  const allChunks: string[] = [];
+  let offset = 0;
+
+  while (offset < text.length) {
+    const end = Math.min(offset + windowSize, text.length);
+    let windowEnd = end;
+
+    // If we're not at the end, extend to the next sentence boundary to avoid mid-sentence cuts
+    if (end < text.length) {
+      const sentenceEnd = text.indexOf(".", end);
+      const newlineEnd = text.indexOf("\n", end);
+      let boundary = -1;
+      if (sentenceEnd !== -1 && sentenceEnd - end < 200) boundary = sentenceEnd + 1;
+      if (newlineEnd !== -1 && newlineEnd - end < 200 && (boundary === -1 || newlineEnd < boundary))
+        boundary = newlineEnd + 1;
+      if (boundary !== -1) {
+        windowEnd = boundary;
+      }
+    }
+
+    const window = text.slice(offset, windowEnd);
+
+    // Chunk this window using the existing logic
+    const windowChunks = chunkContent(window, maxChunkSize);
+    allChunks.push(...windowChunks);
+
+    // Advance past window, minus overlap
+    offset = windowEnd - overlap;
+    if (offset <= 0 || windowEnd >= text.length) {
+      offset = windowEnd;
+    }
+  }
+
+  return allChunks;
+}
+
 /** Index a document: validate, chunk, embed, and store. */
 export async function indexDocument(
   db: Database.Database,
@@ -137,9 +208,13 @@ export async function indexDocument(
   }
 
   const docId = randomUUID();
-  const chunks = chunkContent(input.content);
+  const useStreaming = input.content.length > STREAMING_THRESHOLD;
+  const chunks = useStreaming ? chunkContentStreaming(input.content) : chunkContent(input.content);
 
-  log.info({ docId, title: input.title, chunkCount: chunks.length }, "Indexing document");
+  log.info(
+    { docId, title: input.title, chunkCount: chunks.length, streaming: useStreaming },
+    "Indexing document",
+  );
 
   // Generate embeddings for all chunks
   const embeddings = await provider.embedBatch(chunks);
