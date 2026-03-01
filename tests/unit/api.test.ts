@@ -89,6 +89,15 @@ function createMockRes(): MockRes {
     return res;
   };
 
+  res.write = function (chunk: unknown): boolean {
+    if (typeof chunk === "string") {
+      body += chunk;
+    } else if (Buffer.isBuffer(chunk)) {
+      body += chunk.toString("utf-8");
+    }
+    return true;
+  };
+
   res.setHeader = function (
     name: string,
     value: string | number | readonly string[],
@@ -397,6 +406,74 @@ describe("API routes", () => {
       expect(getStatus()).toBe(400);
       const parsed = parseResponse(getBody());
       expect(parsed.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("should return SSE stream when Accept: text/event-stream", async () => {
+      // Mock the LLM and search modules to avoid real calls
+      const ragModule = await import("../../src/core/rag.js");
+      const searchModule = await import("../../src/core/search.js");
+      const configModule = await import("../../src/config.js");
+
+      vi.spyOn(configModule, "loadConfig").mockReturnValue({
+        embedding: { provider: "local" },
+        llm: { provider: "openai", openaiApiKey: "sk-test" },
+        database: { path: ":memory:" },
+        indexing: { maxDocumentSize: 1024 },
+        logging: { level: "silent" },
+      });
+
+      vi.spyOn(searchModule, "searchDocuments").mockResolvedValue({
+        results: [],
+        totalCount: 0,
+      });
+
+      vi.spyOn(ragModule, "createLlmProvider").mockReturnValue({
+        model: "mock-model",
+        complete: vi.fn().mockResolvedValue({ text: "SSE answer", tokensUsed: 10 }),
+      });
+
+      const req = createMockReq("POST", "/api/v1/ask", { question: "What is SSE?" });
+      req.headers["accept"] = "text/event-stream";
+      const { res, getStatus, getBody, getHeaders } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      expect(getHeaders()["Content-Type"]).toBe("text/event-stream");
+      expect(getHeaders()["Cache-Control"]).toBe("no-cache");
+      expect(getHeaders()["Connection"]).toBe("keep-alive");
+
+      const body = getBody();
+      // Should contain at least one token event and a done event
+      expect(body).toContain("data: ");
+      expect(body).toContain('"token"');
+      expect(body).toContain('"done":true');
+      expect(body).toContain('"sources"');
+
+      // Parse individual SSE events
+      const events = body
+        .split("\n\n")
+        .filter((line: string) => line.startsWith("data: "))
+        .map((line: string) => JSON.parse(line.replace("data: ", "")));
+
+      expect(events.length).toBeGreaterThanOrEqual(2);
+      expect(events[0]).toHaveProperty("token");
+      expect(events[events.length - 1]).toMatchObject({ done: true });
+
+      vi.mocked(configModule.loadConfig).mockRestore();
+      vi.mocked(searchModule.searchDocuments).mockRestore();
+      vi.mocked(ragModule.createLlmProvider).mockRestore();
+    });
+
+    it("should return normal JSON when Accept header is not SSE", async () => {
+      const req = createMockReq("POST", "/api/v1/ask", { question: "test" });
+      req.headers["accept"] = "application/json";
+      const { res, getStatus, getHeaders } = createMockRes();
+
+      // This will fail because no LLM is configured, but it should NOT return SSE headers
+      await handleRequest(req, res, db, provider);
+
+      expect(getHeaders()["Content-Type"]).not.toBe("text/event-stream");
     });
   });
 

@@ -35,6 +35,7 @@ export interface LlmProvider {
     prompt: string,
     systemPrompt?: string,
   ): Promise<{ text: string; tokensUsed?: number | undefined }>;
+  completeStream?(prompt: string, systemPrompt?: string): AsyncIterable<string>;
 }
 
 /** Build the context prompt from retrieved search results. */
@@ -198,6 +199,51 @@ function createOllamaProvider(
 
       return { text: data.response, tokensUsed };
     },
+  };
+}
+
+/** SSE event for streaming RAG responses. */
+export type RagStreamEvent =
+  | { token: string }
+  | { done: true; sources: RagSource[]; model: string; tokensUsed?: number };
+
+/**
+ * Perform streaming RAG: retrieve relevant chunks, then stream LLM tokens.
+ * Falls back to returning the full response as a single token event
+ * when the provider does not support completeStream.
+ */
+export async function* askQuestionStream(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  llmProvider: LlmProvider,
+  options: RagOptions,
+): AsyncGenerator<RagStreamEvent> {
+  const topK = options.topK ?? 5;
+
+  const { results } = await searchDocuments(db, embeddingProvider, {
+    query: options.question,
+    topic: options.topic,
+    library: options.library,
+    limit: topK,
+  });
+
+  const contextPrompt = buildContextPrompt(options.question, results);
+  const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+
+  if (llmProvider.completeStream) {
+    for await (const chunk of llmProvider.completeStream(contextPrompt, systemPrompt)) {
+      yield { token: chunk };
+    }
+  } else {
+    // Fallback: get full response and emit as a single token
+    const { text } = await llmProvider.complete(contextPrompt, systemPrompt);
+    yield { token: text };
+  }
+
+  yield {
+    done: true,
+    sources: extractSources(results),
+    model: llmProvider.model,
   };
 }
 

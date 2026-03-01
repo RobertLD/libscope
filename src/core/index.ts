@@ -78,8 +78,14 @@ export type { Tag, TagWithCount, GetDocumentsByTagOptions } from "./tags.js";
 export { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "./watcher.js";
 export type { WatchOptions } from "./watcher.js";
 
-export { askQuestion, createLlmProvider, buildContextPrompt, extractSources } from "./rag.js";
-export type { RagOptions, RagResult, RagSource, LlmProvider } from "./rag.js";
+export {
+  askQuestion,
+  askQuestionStream,
+  createLlmProvider,
+  buildContextPrompt,
+  extractSources,
+} from "./rag.js";
+export type { RagOptions, RagResult, RagSource, RagStreamEvent, LlmProvider } from "./rag.js";
 
 export { reindex } from "./reindex.js";
 export type { ReindexOptions, ReindexResult, ReindexProgress } from "./reindex.js";

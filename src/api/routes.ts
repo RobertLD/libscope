@@ -16,6 +16,7 @@ import {
   getStats,
   fetchAndConvert,
   askQuestion,
+  askQuestionStream,
   createLlmProvider,
 } from "../core/index.js";
 import { loadConfig } from "../config.js";
@@ -223,6 +224,34 @@ export async function handleRequest(
       const config = loadConfig();
       const llm = createLlmProvider(config);
       const topic = typeof b["topic"] === "string" ? b["topic"] : undefined;
+
+      const accept = req.headers["accept"] ?? "";
+      if (accept.includes("text/event-stream")) {
+        // SSE streaming response
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+
+        try {
+          const stream = askQuestionStream(db, provider, llm, {
+            question: b["question"],
+            topic,
+          });
+
+          for await (const event of stream) {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          }
+        } catch (streamErr: unknown) {
+          const message = streamErr instanceof Error ? streamErr.message : "Internal server error";
+          res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+        }
+
+        res.end();
+        return;
+      }
+
       const result = await askQuestion(db, provider, llm, { question: b["question"], topic });
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, result, took);
