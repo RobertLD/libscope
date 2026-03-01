@@ -163,7 +163,6 @@ More content here.`;
     // Create content where overlap will produce duplicate chunks
     const block = "Repeated block of text that appears in the overlap region.\n";
     const content = block.repeat(200);
-    const withoutDedup = content.length;
     const chunks = chunkContentStreaming(content, { windowSize: 1024 });
 
     // All chunks should be unique
