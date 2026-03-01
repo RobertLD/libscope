@@ -35,6 +35,21 @@ function errorResponse(err: unknown): {
   };
 }
 
+type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+/** Wraps a tool handler so that thrown errors are converted to MCP error responses. */
+function withErrorHandling<P>(
+  handler: (params: P) => ToolResult | Promise<ToolResult>,
+): (params: P) => Promise<ToolResult> {
+  return async (params: P) => {
+    try {
+      return await handler(params);
+    } catch (err) {
+      return errorResponse(err);
+    }
+  };
+}
+
 // Start the server
 async function main(): Promise<void> {
   let config;
@@ -100,39 +115,35 @@ async function main(): Promise<void> {
         .optional()
         .describe("Maximum results to return (default: 10)"),
     },
-    async (params) => {
-      try {
-        const results = await searchDocuments(db, provider, {
-          query: params.query,
-          topic: params.topic,
-          library: params.library,
-          version: params.version,
-          minRating: params.minRating,
-          limit: params.limit,
-        });
+    withErrorHandling(async (params) => {
+      const results = await searchDocuments(db, provider, {
+        query: params.query,
+        topic: params.topic,
+        library: params.library,
+        version: params.version,
+        minRating: params.minRating,
+        limit: params.limit,
+      });
 
-        if (results.length === 0) {
-          return {
-            content: [{ type: "text" as const, text: "No documents found matching your query." }],
-          };
-        }
-
-        const text = results
-          .map(
-            (r, i) =>
-              `## Result ${i + 1}: ${r.title}\n` +
-              (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
-              (r.url ? `**Source:** ${r.url}\n` : "") +
-              (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "") +
-              `\n${r.content}\n`,
-          )
-          .join("\n---\n\n");
-
-        return { content: [{ type: "text" as const, text }] };
-      } catch (err) {
-        return errorResponse(err);
+      if (results.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No documents found matching your query." }],
+        };
       }
-    },
+
+      const text = results
+        .map(
+          (r, i) =>
+            `## Result ${i + 1}: ${r.title}\n` +
+            (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
+            (r.url ? `**Source:** ${r.url}\n` : "") +
+            (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "") +
+            `\n${r.content}\n`,
+        )
+        .join("\n---\n\n");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
   );
 
   // Tool: get-document
@@ -142,26 +153,22 @@ async function main(): Promise<void> {
     {
       documentId: z.string().describe("The document ID"),
     },
-    (params) => {
-      try {
-        const doc = getDocument(db, params.documentId);
-        const ratings = getDocumentRatings(db, params.documentId);
+    withErrorHandling((params) => {
+      const doc = getDocument(db, params.documentId);
+      const ratings = getDocumentRatings(db, params.documentId);
 
-        const text =
-          `# ${doc.title}\n\n` +
-          `**Type:** ${doc.sourceType}\n` +
-          (doc.library
-            ? `**Library:** ${doc.library}${doc.version ? ` v${doc.version}` : ""}\n`
-            : "") +
-          (doc.url ? `**Source:** ${doc.url}\n` : "") +
-          `**Rating:** ${ratings.averageRating.toFixed(1)}/5 (${ratings.totalRatings} ratings)\n\n` +
-          doc.content;
+      const text =
+        `# ${doc.title}\n\n` +
+        `**Type:** ${doc.sourceType}\n` +
+        (doc.library
+          ? `**Library:** ${doc.library}${doc.version ? ` v${doc.version}` : ""}\n`
+          : "") +
+        (doc.url ? `**Source:** ${doc.url}\n` : "") +
+        `**Rating:** ${ratings.averageRating.toFixed(1)}/5 (${ratings.totalRatings} ratings)\n\n` +
+        doc.content;
 
-        return { content: [{ type: "text" as const, text }] };
-      } catch (err) {
-        return errorResponse(err);
-      }
-    },
+      return { content: [{ type: "text" as const, text }] };
+    }),
   );
 
   // Tool: rate-document
@@ -178,32 +185,28 @@ async function main(): Promise<void> {
         .optional()
         .describe("Suggested replacement content if the doc is wrong"),
     },
-    (params) => {
-      try {
-        const result = rateDocument(db, {
-          documentId: params.documentId,
-          chunkId: params.chunkId,
-          rating: params.rating,
-          feedback: params.feedback,
-          suggestedCorrection: params.suggestedCorrection,
-          ratedBy: "model",
-        });
+    withErrorHandling((params) => {
+      const result = rateDocument(db, {
+        documentId: params.documentId,
+        chunkId: params.chunkId,
+        rating: params.rating,
+        feedback: params.feedback,
+        suggestedCorrection: params.suggestedCorrection,
+        ratedBy: "model",
+      });
 
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
-                (result.feedback ? `\nFeedback: ${result.feedback}` : "") +
-                (result.suggestedCorrection ? `\nCorrection suggested.` : ""),
-            },
-          ],
-        };
-      } catch (err) {
-        return errorResponse(err);
-      }
-    },
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
+              (result.feedback ? `\nFeedback: ${result.feedback}` : "") +
+              (result.suggestedCorrection ? `\nCorrection suggested.` : ""),
+          },
+        ],
+      };
+    }),
   );
 
   // Tool: submit-document
@@ -233,55 +236,51 @@ async function main(): Promise<void> {
       library: z.string().optional().describe("Library name (for library docs)"),
       version: z.string().optional().describe("Library version"),
     },
-    async (params) => {
-      try {
-        let { title, content } = params;
-        const { url, library, version, topic } = params;
+    withErrorHandling(async (params) => {
+      let { title, content } = params;
+      const { url, library, version, topic } = params;
 
-        // If URL is provided and no content, fetch it
-        if (url && !content) {
-          const fetched = await fetchAndConvert(url);
-          content = fetched.content;
-          title ??= fetched.title;
-        }
-
-        if (!title) {
-          return errorResponse(new ValidationError("A title is required when not providing a URL"));
-        }
-        if (!content) {
-          return errorResponse(new ValidationError("Either content or a URL must be provided"));
-        }
-
-        const sourceType = params.sourceType ?? (library ? "library" : "manual");
-
-        const result = await indexDocument(db, provider, {
-          title,
-          content,
-          sourceType,
-          library,
-          version,
-          topicId: topic,
-          url,
-          submittedBy: "model",
-        });
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                `Document indexed successfully.\n` +
-                `Title: ${title}\n` +
-                `ID: ${result.id}\n` +
-                `Chunks: ${result.chunkCount}` +
-                (url ? `\nSource: ${url}` : ""),
-            },
-          ],
-        };
-      } catch (err) {
-        return errorResponse(err);
+      // If URL is provided and no content, fetch it
+      if (url && !content) {
+        const fetched = await fetchAndConvert(url);
+        content = fetched.content;
+        title ??= fetched.title;
       }
-    },
+
+      if (!title) {
+        throw new ValidationError("A title is required when not providing a URL");
+      }
+      if (!content) {
+        throw new ValidationError("Either content or a URL must be provided");
+      }
+
+      const sourceType = params.sourceType ?? (library ? "library" : "manual");
+
+      const result = await indexDocument(db, provider, {
+        title,
+        content,
+        sourceType,
+        library,
+        version,
+        topicId: topic,
+        url,
+        submittedBy: "model",
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              `Document indexed successfully.\n` +
+              `Title: ${title}\n` +
+              `ID: ${result.id}\n` +
+              `Chunks: ${result.chunkCount}` +
+              (url ? `\nSource: ${url}` : ""),
+          },
+        ],
+      };
+    }),
   );
 
   // Tool: list-topics
@@ -291,25 +290,21 @@ async function main(): Promise<void> {
     {
       parentId: z.string().optional().describe("Filter by parent topic ID for subtopics"),
     },
-    (params) => {
-      try {
-        const topics = listTopics(db, params.parentId);
+    withErrorHandling((params) => {
+      const topics = listTopics(db, params.parentId);
 
-        if (topics.length === 0) {
-          return {
-            content: [{ type: "text" as const, text: "No topics found." }],
-          };
-        }
-
-        const text = topics
-          .map((t) => `- **${t.name}** (\`${t.id}\`)${t.description ? `: ${t.description}` : ""}`)
-          .join("\n");
-
-        return { content: [{ type: "text" as const, text: `## Topics\n\n${text}` }] };
-      } catch (err) {
-        return errorResponse(err);
+      if (topics.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No topics found." }],
+        };
       }
-    },
+
+      const text = topics
+        .map((t) => `- **${t.name}** (\`${t.id}\`)${t.description ? `: ${t.description}` : ""}`)
+        .join("\n");
+
+      return { content: [{ type: "text" as const, text: `## Topics\n\n${text}` }] };
+    }),
   );
 
   // Tool: list-documents
@@ -325,36 +320,32 @@ async function main(): Promise<void> {
         .describe("Filter by source type"),
       limit: z.number().min(1).max(100).optional().describe("Maximum results (default: 50)"),
     },
-    (params) => {
-      try {
-        const docs = listDocuments(db, {
-          library: params.library,
-          topicId: params.topic,
-          sourceType: params.sourceType,
-          limit: params.limit,
-        });
+    withErrorHandling((params) => {
+      const docs = listDocuments(db, {
+        library: params.library,
+        topicId: params.topic,
+        sourceType: params.sourceType,
+        limit: params.limit,
+      });
 
-        if (docs.length === 0) {
-          return { content: [{ type: "text" as const, text: "No documents found." }] };
-        }
-
-        const text = docs
-          .map(
-            (d) =>
-              `- **${d.title}** (\`${d.id}\`)` +
-              (d.library ? ` — ${d.library}${d.version ? ` v${d.version}` : ""}` : "") +
-              (d.url ? ` — [source](${d.url})` : "") +
-              ` (${d.sourceType})`,
-          )
-          .join("\n");
-
-        return {
-          content: [{ type: "text" as const, text: `## Documents (${docs.length})\n\n${text}` }],
-        };
-      } catch (err) {
-        return errorResponse(err);
+      if (docs.length === 0) {
+        return { content: [{ type: "text" as const, text: "No documents found." }] };
       }
-    },
+
+      const text = docs
+        .map(
+          (d) =>
+            `- **${d.title}** (\`${d.id}\`)` +
+            (d.library ? ` — ${d.library}${d.version ? ` v${d.version}` : ""}` : "") +
+            (d.url ? ` — [source](${d.url})` : "") +
+            ` (${d.sourceType})`,
+        )
+        .join("\n");
+
+      return {
+        content: [{ type: "text" as const, text: `## Documents (${docs.length})\n\n${text}` }],
+      };
+    }),
   );
 
   const transport = new StdioServerTransport();
