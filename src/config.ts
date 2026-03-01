@@ -14,6 +14,9 @@ export interface LibScopeConfig {
   database: {
     path: string;
   };
+  indexing: {
+    maxDocumentSize: number;
+  };
   logging: {
     level: "debug" | "info" | "warn" | "error" | "silent";
   };
@@ -28,6 +31,9 @@ const DEFAULT_CONFIG: LibScopeConfig = {
   },
   database: {
     path: join(homedir(), ".libscope", "libscope.db"),
+  },
+  indexing: {
+    maxDocumentSize: 100 * 1024 * 1024, // 100MB
   },
   logging: {
     level: "info",
@@ -95,6 +101,11 @@ export function loadConfig(): LibScopeConfig {
       ...userConfig.database,
       ...projectConfig.database,
     },
+    indexing: {
+      ...DEFAULT_CONFIG.indexing,
+      ...userConfig.indexing,
+      ...projectConfig.indexing,
+    },
     logging: {
       ...DEFAULT_CONFIG.logging,
       ...userConfig.logging,
@@ -120,6 +131,11 @@ export function saveUserConfig(config: Partial<LibScopeConfig>): void {
       ...DEFAULT_CONFIG.database,
       ...existing.database,
       ...config.database,
+    },
+    indexing: {
+      ...DEFAULT_CONFIG.indexing,
+      ...existing.indexing,
+      ...config.indexing,
     },
     logging: {
       ...DEFAULT_CONFIG.logging,
