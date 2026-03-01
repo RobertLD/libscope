@@ -322,6 +322,7 @@ describe("askQuestionStream", () => {
 
   it("uses completeStream when provider supports it", async () => {
     async function* fakeStream(): AsyncIterable<string> {
+      await Promise.resolve();
       yield "Hello ";
       yield "world!";
     }
