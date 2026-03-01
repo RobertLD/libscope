@@ -15,6 +15,7 @@ import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
 import { batchImport } from "../core/batch.js";
+import { startRepl } from "./repl.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -541,5 +542,19 @@ function findFiles(dir: string, extensions: Set<string>): string[] {
   walk(dir);
   return results.sort();
 }
+
+// repl (interactive search)
+program
+  .command("repl")
+  .description("Start an interactive search REPL")
+  .option("--limit <n>", "Max results per search", "5")
+  .action(async (opts: { limit: string }) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    try {
+      await startRepl({ db, provider, limit: parseInt(opts.limit, 10) });
+    } finally {
+      closeDatabase();
+    }
+  });
 
 program.parse();
