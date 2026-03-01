@@ -59,6 +59,12 @@ import {
 import { loadConnectorConfig, saveConnectorConfig } from "../connectors/index.js";
 import { syncNotion, disconnectNotion } from "../connectors/notion.js";
 import type { NotionConfig } from "../connectors/notion.js";
+import { syncSlack, disconnectSlack, type SlackConfig } from "../connectors/slack.js";
+import {
+  saveNamedConnectorConfig,
+  loadNamedConnectorConfig,
+  hasNamedConnectorConfig,
+} from "../connectors/index.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -1450,6 +1456,81 @@ connectCmd
         for (const e of result.errors) {
           console.log(`    - ${e.file}: ${e.error}`);
         }
+
+        connectCmd
+          .command("slack")
+          .description("Connect a Slack workspace")
+          .option("--token <token>", "Slack bot or user token (xoxb-... or xoxp-...)")
+          .option("--channels <channels>", "Comma-separated channel names or IDs, or 'all'", "all")
+          .option("--exclude <channels>", "Comma-separated channel names to exclude")
+          .option(
+            "--thread-mode <mode>",
+            "Thread handling: aggregate (full thread as one doc) or separate",
+            "aggregate",
+          )
+          .option("--sync", "Sync using saved configuration")
+          .action(
+            async (opts: {
+              token?: string;
+              channels: string;
+              exclude?: string;
+              threadMode: string;
+              sync?: boolean;
+            }) => {
+              const { db, provider } = initializeAppWithEmbedding();
+              try {
+                let slackConfig: SlackConfig;
+
+                if (opts.sync) {
+                  if (!hasNamedConnectorConfig("slack")) {
+                    console.error(
+                      "No Slack configuration found. Run 'libscope connect slack --token ...' first.",
+                    );
+                    process.exit(1);
+                  }
+                  slackConfig = loadNamedConnectorConfig<SlackConfig>("slack");
+                } else {
+                  if (!opts.token) {
+                    console.error("--token is required for initial Slack connection.");
+                    process.exit(1);
+                  }
+                  slackConfig = {
+                    token: opts.token,
+                    channels: opts.channels.split(",").map((c) => c.trim()),
+                    threadMode: opts.threadMode === "separate" ? "separate" : "aggregate",
+                  };
+                  if (opts.exclude) {
+                    slackConfig = {
+                      ...slackConfig,
+                      excludeChannels: opts.exclude.split(",").map((c) => c.trim()),
+                    };
+                  }
+                }
+
+                console.log("Syncing Slack messages...");
+                const result = await syncSlack(db, provider, slackConfig);
+
+                const updatedConfig: SlackConfig = {
+                  ...slackConfig,
+                  lastSync: new Date().toISOString(),
+                };
+                saveNamedConnectorConfig("slack", updatedConfig);
+
+                console.log(`✓ Slack sync complete:`);
+                console.log(`  Channels: ${result.channels}`);
+                console.log(`  Messages indexed: ${result.messagesIndexed}`);
+                console.log(`  Threads indexed: ${result.threadsIndexed}`);
+                if (result.errors.length > 0) {
+                  console.log(`  Errors: ${result.errors.length}`);
+                  for (const err of result.errors) {
+                    console.log(`    - #${err.channel}: ${err.error}`);
+                  }
+                }
+              } finally {
+                closeDatabase();
+              }
+            },
+          );
       }
     },
   );
@@ -1518,6 +1599,19 @@ disconnectCmd
         const { db } = initializeApp();
         const removed = await disconnectNotion(db);
         console.log(`✓ Removed ${removed} Notion documents.`);
+      });
+
+    disconnectCmd
+      .command("slack")
+      .description("Remove all Slack data from the knowledge base")
+      .action(() => {
+        const { db } = initializeApp();
+        try {
+          const count = disconnectSlack(db);
+          console.log(`✓ Removed ${count} Slack documents from the knowledge base.`);
+        } finally {
+          closeDatabase();
+        }
       });
   });
 

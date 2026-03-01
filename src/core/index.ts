@@ -143,11 +143,19 @@ export type { ApiServerOptions } from "../api/server.js";
 
 export { syncNotion, convertNotionBlocks, disconnectNotion } from "../connectors/notion.js";
 export type { NotionConfig, NotionSyncResult, NotionBlock } from "../connectors/notion.js";
+
+export { syncSlack, convertSlackMrkdwn, disconnectSlack } from "../connectors/slack.js";
+export type { SlackConfig, SlackSyncResult } from "../connectors/slack.js";
+
 export {
   saveDbConnectorConfig,
   loadDbConnectorConfig,
   deleteDbConnectorConfig,
   loadConnectorConfig,
   saveConnectorConfig,
+  saveNamedConnectorConfig,
+  loadNamedConnectorConfig,
+  hasNamedConnectorConfig,
+  deleteConnectorDocuments,
 } from "../connectors/index.js";
 export type { ConnectorConfig } from "../connectors/index.js";

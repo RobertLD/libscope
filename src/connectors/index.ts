@@ -69,5 +69,64 @@ export function deleteDbConnectorConfig(db: Database.Database, type: string): bo
   return result.changes > 0;
 }
 
+const CONNECTORS_DIR = join(homedir(), ".libscope", "connectors");
+
+function ensureConnectorsDir(): void {
+  if (!existsSync(CONNECTORS_DIR)) {
+    mkdirSync(CONNECTORS_DIR, { recursive: true });
+  }
+}
+
+/** Save a named connector config to ~/.libscope/connectors/<name>.json */
+export function saveNamedConnectorConfig(name: string, config: object): void {
+  ensureConnectorsDir();
+  const filePath = join(CONNECTORS_DIR, `${name}.json`);
+  writeFileSync(filePath, JSON.stringify(config, null, 2), "utf-8");
+  getLogger().info({ connector: name }, "Connector config saved");
+}
+
+/** Load a named connector config from ~/.libscope/connectors/<name>.json */
+export function loadNamedConnectorConfig<T>(name: string): T {
+  const filePath = join(CONNECTORS_DIR, `${name}.json`);
+  if (!existsSync(filePath)) {
+    throw new ConfigError(
+      `No connector config found for "${name}". Run 'libscope connect ${name}' first.`,
+    );
+  }
+  const raw = readFileSync(filePath, "utf-8");
+  return JSON.parse(raw) as T;
+}
+
+/** Check if a named connector config exists */
+export function hasNamedConnectorConfig(name: string): boolean {
+  const filePath = join(CONNECTORS_DIR, `${name}.json`);
+  return existsSync(filePath);
+}
+
+/** Delete documents with a given source_type from the database. Returns count deleted. */
+export function deleteConnectorDocuments(db: Database.Database, sourceType: string): number {
+  const rows = db
+    .prepare("SELECT id FROM documents WHERE source_type = ?")
+    .all(sourceType) as Array<{ id: string }>;
+  if (rows.length === 0) return 0;
+
+  const deleteChunksFts = db.prepare(
+    "DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
+  );
+  const deleteChunks = db.prepare("DELETE FROM chunks WHERE document_id = ?");
+  const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ?");
+
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      deleteChunksFts.run(row.id);
+      deleteChunks.run(row.id);
+      deleteDoc.run(row.id);
+    }
+  });
+  tx();
+
+  return rows.length;
+}
+
 export { syncNotion, convertNotionBlocks, disconnectNotion } from "./notion.js";
 export type { NotionConfig, NotionSyncResult, NotionBlock } from "./notion.js";
