@@ -130,3 +130,11 @@ export function deleteConnectorDocuments(db: Database.Database, sourceType: stri
 
 export { syncNotion, convertNotionBlocks, disconnectNotion } from "./notion.js";
 export type { NotionConfig, NotionSyncResult, NotionBlock } from "./notion.js";
+
+export {
+  syncConfluence,
+  convertConfluenceStorage,
+  disconnectConfluence,
+  buildAuthHeader,
+} from "./confluence.js";
+export type { ConfluenceConfig, ConfluenceSyncResult } from "./confluence.js";
