@@ -8,7 +8,21 @@ export interface FetchedDocument {
   content: string;
 }
 
-const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+/** Options to configure URL fetching behaviour. */
+export interface FetchOptions {
+  /** Request timeout in milliseconds (default: 30 000). */
+  timeout?: number;
+  /** Maximum number of HTTP redirects to follow (default: 5). */
+  maxRedirects?: number;
+  /** Maximum response body size in bytes (default: 10 MB). */
+  maxBodySize?: number;
+}
+
+export const DEFAULT_FETCH_OPTIONS: Required<FetchOptions> = {
+  timeout: 30_000,
+  maxRedirects: 5,
+  maxBodySize: 10 * 1024 * 1024, // 10 MB
+} as const;
 
 /** Check whether an IP address belongs to a private/reserved range. */
 export function isPrivateIP(ip: string): boolean {
@@ -111,26 +125,59 @@ async function readBodyWithLimit(response: Response, limit: number): Promise<str
   return new TextDecoder().decode(combined);
 }
 
-/**
- * Fetch a URL and convert its HTML content to clean markdown-like text.
- * Strips tags, preserves code blocks and headings.
- */
-export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
-  const log = getLogger();
-  log.info({ url }, "Fetching URL");
-
-  try {
-    await validateUrl(url);
-
-    // redirect: "follow" uses the browser/Node default of ~20 redirects
-    const response = await fetch(url, {
+/** Follow redirects manually so we can enforce a configurable limit. */
+async function fetchWithRedirects(
+  url: string,
+  timeout: number,
+  maxRedirects: number,
+): Promise<Response> {
+  let current = url;
+  for (let i = 0; i <= maxRedirects; i++) {
+    const response = await fetch(current, {
       headers: {
         "User-Agent": "LibScope/0.1.0 (documentation indexer)",
         Accept: "text/html, text/markdown, text/plain, */*",
       },
-      signal: AbortSignal.timeout(30_000),
-      redirect: "follow",
+      signal: AbortSignal.timeout(timeout),
+      redirect: "manual",
     });
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new FetchError(`Redirect ${response.status} with no Location header`);
+      }
+      current = new URL(location, current).href;
+      await validateUrl(current);
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new FetchError(`Too many redirects (max ${maxRedirects})`);
+}
+
+/**
+ * Fetch a URL and convert its HTML content to clean markdown-like text.
+ * Strips tags, preserves code blocks and headings.
+ */
+export async function fetchAndConvert(
+  url: string,
+  options?: FetchOptions,
+): Promise<FetchedDocument> {
+  const log = getLogger();
+  log.info({ url }, "Fetching URL");
+
+  const { timeout, maxRedirects, maxBodySize } = {
+    ...DEFAULT_FETCH_OPTIONS,
+    ...options,
+  };
+
+  try {
+    await validateUrl(url);
+
+    const response = await fetchWithRedirects(url, timeout, maxRedirects);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -138,7 +185,7 @@ export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
 
     const contentType = response.headers.get("content-type") ?? "";
     // Stream the body while enforcing actual byte-size limit
-    const body = await readBodyWithLimit(response, MAX_BODY_SIZE);
+    const body = await readBodyWithLimit(response, maxBodySize);
 
     // If it's already markdown or plain text, return as-is
     if (contentType.includes("text/markdown") || contentType.includes("text/plain")) {

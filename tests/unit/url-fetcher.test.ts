@@ -15,7 +15,8 @@ vi.mock("node:dns", () => ({
 }));
 
 // Import after mocking fetch and dns
-const { fetchAndConvert, isPrivateIP } = await import("../../src/core/url-fetcher.js");
+const { fetchAndConvert, isPrivateIP, DEFAULT_FETCH_OPTIONS } =
+  await import("../../src/core/url-fetcher.js");
 
 /** Helper: create a readable stream from a string. */
 function bodyStream(text: string): ReadableStream<Uint8Array> {
@@ -289,5 +290,118 @@ describe("streaming body size limit", () => {
 
     const result = await fetchAndConvert("https://example.com/small");
     expect(result.content).toBe("Small body");
+  });
+});
+
+describe("FetchOptions configuration", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockResolve4.mockReset();
+    mockResolve6.mockReset();
+    mockResolve4.mockResolvedValue(["93.184.216.34"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
+  });
+
+  it("should expose sensible DEFAULT_FETCH_OPTIONS", () => {
+    expect(DEFAULT_FETCH_OPTIONS).toEqual({
+      timeout: 30_000,
+      maxRedirects: 5,
+      maxBodySize: 10 * 1024 * 1024,
+    });
+  });
+
+  it("should respect a custom timeout passed via options", async () => {
+    const txt = "ok";
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/plain" }),
+      body: bodyStream(txt),
+      text: () => Promise.resolve(txt),
+    });
+
+    await fetchAndConvert("https://example.com/page", { timeout: 5000 });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://example.com/page",
+      expect.objectContaining({
+        signal: expect.any(AbortSignal) as AbortSignal,
+      }),
+    );
+  });
+
+  it("should enforce custom maxBodySize", async () => {
+    const bigChunk = new Uint8Array(200);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bigChunk);
+        controller.close();
+      },
+    });
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/plain" }),
+      body: stream,
+    });
+
+    await expect(fetchAndConvert("https://example.com/big", { maxBodySize: 100 })).rejects.toThrow(
+      /Response body too large/,
+    );
+  });
+
+  it("should enforce custom maxRedirects", async () => {
+    mockFetch.mockImplementation((url: string) => {
+      return Promise.resolve({
+        status: 302,
+        headers: new Headers({ location: `${url}/next` }),
+      });
+    });
+
+    await expect(fetchAndConvert("https://example.com/loop", { maxRedirects: 2 })).rejects.toThrow(
+      /Too many redirects/,
+    );
+
+    // 1 original + 2 redirects = 3 calls
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("should follow redirects up to the limit and succeed", async () => {
+    const txt = "final";
+    let callCount = 0;
+    mockFetch.mockImplementation(() => {
+      callCount++;
+      if (callCount < 3) {
+        return Promise.resolve({
+          status: 302,
+          headers: new Headers({ location: "https://example.com/dest" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/plain" }),
+        body: bodyStream(txt),
+        text: () => Promise.resolve(txt),
+      });
+    });
+
+    const result = await fetchAndConvert("https://example.com/start", { maxRedirects: 5 });
+    expect(result.content).toBe("final");
+  });
+
+  it("should validate redirect targets for SSRF", async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 302,
+      headers: new Headers({ location: "https://internal.local/secret" }),
+    });
+
+    // Make the redirect target resolve to a private IP
+    mockResolve4
+      .mockResolvedValueOnce(["93.184.216.34"]) // original URL is fine
+      .mockResolvedValueOnce(["10.0.0.1"]); // redirect target is private
+
+    await expect(fetchAndConvert("https://example.com/redir", { maxRedirects: 3 })).rejects.toThrow(
+      /private\/internal IP/,
+    );
   });
 });
