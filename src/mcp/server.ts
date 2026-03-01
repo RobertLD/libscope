@@ -5,6 +5,7 @@ import { loadConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
+import { askQuestion, createLlmProvider, type LlmProvider } from "../core/rag.js";
 import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
   }
 
   let provider;
+  let llmProvider: LlmProvider | undefined;
   try {
     provider = createEmbeddingProvider(config);
     createVectorTable(db, provider.dimensions);
@@ -82,6 +84,12 @@ async function main(): Promise<void> {
     );
     db.close();
     process.exit(1);
+  }
+
+  try {
+    llmProvider = createLlmProvider(config);
+  } catch {
+    // LLM provider is optional; ask-question tool will report the error
   }
 
   process.on("SIGINT", () => {
@@ -423,6 +431,54 @@ async function main(): Promise<void> {
 
       return {
         content: [{ type: "text" as const, text: `## Documents (${docs.length})\n\n${text}` }],
+      };
+    }),
+  );
+
+  // Tool: ask-question (RAG)
+  server.tool(
+    "ask-question",
+    "Ask a question and get an LLM-synthesized answer based on indexed documentation (RAG)",
+    {
+      question: z.string().describe("The question to answer"),
+      topK: z
+        .number()
+        .min(1)
+        .max(20)
+        .optional()
+        .describe("Number of chunks to retrieve for context (default: 5)"),
+      topic: z.string().optional().describe("Filter by topic ID"),
+      library: z.string().optional().describe("Filter by library name"),
+    },
+    withErrorHandling(async (params) => {
+      if (!llmProvider) {
+        throw new Error(
+          "No LLM provider configured. Set llm.provider to 'openai' or 'ollama' in your config.",
+        );
+      }
+
+      const result = await askQuestion(db, provider, llmProvider, {
+        question: params.question,
+        topK: params.topK,
+        topic: params.topic,
+        library: params.library,
+      });
+
+      const sourcesText =
+        result.sources.length > 0
+          ? "\n\n**Sources:**\n" +
+            result.sources
+              .map((s) => `- ${s.title} (score: ${s.score.toFixed(2)}) [${s.documentId}]`)
+              .join("\n")
+          : "";
+
+      const metaText =
+        result.tokensUsed != null
+          ? `\n\n_Model: ${result.model} | Tokens: ${result.tokensUsed}_`
+          : "";
+
+      return {
+        content: [{ type: "text" as const, text: result.answer + sourcesText + metaText }],
       };
     }),
   );

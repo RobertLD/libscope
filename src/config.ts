@@ -11,6 +11,12 @@ export interface LibScopeConfig {
     openaiApiKey?: string;
     openaiModel?: string;
   };
+  llm?: {
+    provider?: "openai" | "ollama";
+    model?: string;
+    ollamaUrl?: string;
+    openaiApiKey?: string;
+  };
   database: {
     path: string;
   };
@@ -80,6 +86,16 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
   if (ollamaUrl) {
     overrides.embedding = { ...(overrides.embedding ?? DEFAULT_CONFIG.embedding), ollamaUrl };
   }
+
+  const llmProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
+  const llmModel = process.env["LIBSCOPE_LLM_MODEL"];
+  if (llmProvider === "openai" || llmProvider === "ollama" || llmModel) {
+    overrides.llm = {
+      ...(llmProvider === "openai" || llmProvider === "ollama" ? { provider: llmProvider } : {}),
+      ...(llmModel ? { model: llmModel } : {}),
+    };
+  }
+
   return overrides;
 }
 
@@ -95,6 +111,11 @@ export function loadConfig(): LibScopeConfig {
       ...userConfig.embedding,
       ...projectConfig.embedding,
       ...envOverrides.embedding,
+    },
+    llm: {
+      ...userConfig.llm,
+      ...projectConfig.llm,
+      ...envOverrides.llm,
     },
     database: {
       ...DEFAULT_CONFIG.database,
@@ -126,6 +147,10 @@ export function saveUserConfig(config: Partial<LibScopeConfig>): void {
       ...DEFAULT_CONFIG.embedding,
       ...existing.embedding,
       ...config.embedding,
+    },
+    llm: {
+      ...existing.llm,
+      ...config.llm,
     },
     database: {
       ...DEFAULT_CONFIG.database,
