@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -118,6 +118,22 @@ const MIGRATIONS: Record<number, string> = {
     CREATE INDEX IF NOT EXISTS idx_document_tags_tag ON document_tags(tag_id);
 
     INSERT INTO schema_version (version) VALUES (5);
+  `,
+  6: `
+    CREATE TABLE IF NOT EXISTS document_versions (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      title TEXT,
+      content TEXT NOT NULL,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_doc_versions_doc ON document_versions(document_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_versions_unique ON document_versions(document_id, version);
+
+    INSERT INTO schema_version (version) VALUES (6);
   `,
 };
 

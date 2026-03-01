@@ -9,6 +9,7 @@ import { searchDocuments } from "../core/search.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
+import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
@@ -504,8 +505,34 @@ tagCmd
       } else {
         for (const t of allTags) {
           console.log(`  ${t.name} (${t.documentCount} doc${t.documentCount !== 1 ? "s" : ""})`);
+docsCmd
+  .command("history <documentId>")
+  .description("Show version history of a document")
+  .action((documentId: string) => {
+    const { db } = initializeApp();
+    try {
+      const versions = getVersionHistory(db, documentId);
+      if (versions.length === 0) {
+        console.log("No version history found.");
+      } else {
+        console.log(`Version history for ${documentId}:\n`);
+        for (const v of versions) {
+          console.log(`  v${v.version}  ${v.title}  (${v.createdAt})`);
         }
       }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+docsCmd
+  .command("rollback <documentId> <version>")
+  .description("Rollback a document to a specific version")
+  .action(async (documentId: string, version: string) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    try {
+      const restored = await rollbackToVersion(db, provider, documentId, parseInt(version, 10));
+      console.log(`✓ Rolled back to version ${version}, saved as v${restored.version}`);
     } finally {
       closeDatabase();
     }

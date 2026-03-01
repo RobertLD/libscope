@@ -14,6 +14,16 @@ export { getDocument, deleteDocument, listDocuments } from "./documents.js";
 export type { Document } from "./documents.js";
 
 export {
+  saveVersion,
+  getVersionHistory,
+  getVersion,
+  rollbackToVersion,
+  pruneVersions,
+  MAX_VERSIONS_DEFAULT,
+} from "./versioning.js";
+export type { DocumentVersion } from "./versioning.js";
+
+export {
   createTopic,
   listTopics,
   getTopic,
