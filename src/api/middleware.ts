@@ -41,34 +41,61 @@ export function setSecurityHeaders(res: ServerResponse): void {
 /** Maximum request body size in bytes (default 1 MB). */
 const MAX_BODY_SIZE = 1 * 1024 * 1024;
 
+/** Sliding window counter entry for rate limiting. */
+interface RateLimitEntry {
+  count: number;
+  windowStart: number;
+}
+
 /** Simple in-memory rate limiter per IP address. */
-const rateLimitMap = new Map<string, number[]>();
+export const MAX_RATE_LIMIT_ENTRIES = 10_000;
+const rateLimitMap = new Map<string, RateLimitEntry>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 120;
 
 /** Check rate limit for a given IP. Returns true if request is allowed. */
 export function checkRateLimit(ip: string): boolean {
   const now = Date.now();
-  const timestamps = rateLimitMap.get(ip) ?? [];
-  const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-  if (recent.length >= RATE_LIMIT_MAX_REQUESTS) {
-    rateLimitMap.set(ip, recent);
-    return false;
+  const entry = rateLimitMap.get(ip);
+
+  if (entry) {
+    if (now - entry.windowStart < RATE_LIMIT_WINDOW_MS) {
+      entry.count++;
+      if (entry.count > RATE_LIMIT_MAX_REQUESTS) {
+        return false;
+      }
+      return true;
+    }
+    // Window expired — reset
+    entry.count = 1;
+    entry.windowStart = now;
+    return true;
   }
-  recent.push(now);
-  rateLimitMap.set(ip, recent);
+
+  // New IP — evict oldest entries if map is full
+  if (rateLimitMap.size >= MAX_RATE_LIMIT_ENTRIES) {
+    const iter = rateLimitMap.keys();
+    for (let i = 0; i < 1000; i++) {
+      const key = iter.next().value;
+      if (key !== undefined) rateLimitMap.delete(key);
+    }
+  }
+
+  rateLimitMap.set(ip, { count: 1, windowStart: now });
   return true;
+}
+
+/** Expose map size for testing. */
+export function getRateLimitMapSize(): number {
+  return rateLimitMap.size;
 }
 
 /** Periodically clean up stale rate-limit entries (every 5 minutes). */
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, timestamps] of rateLimitMap) {
-    const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-    if (recent.length === 0) {
+  for (const [ip, entry] of rateLimitMap) {
+    if (now - entry.windowStart >= RATE_LIMIT_WINDOW_MS) {
       rateLimitMap.delete(ip);
-    } else {
-      rateLimitMap.set(ip, recent);
     }
   }
 }, 5 * 60_000).unref();
