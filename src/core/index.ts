@@ -61,6 +61,9 @@ export type { Tag, TagWithCount, GetDocumentsByTagOptions } from "./tags.js";
 export { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "./watcher.js";
 export type { WatchOptions } from "./watcher.js";
 
+export { askQuestion, createLlmProvider, buildContextPrompt, extractSources } from "./rag.js";
+export type { RagOptions, RagResult, RagSource, LlmProvider } from "./rag.js";
+
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";

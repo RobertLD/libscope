@@ -6,6 +6,7 @@ import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "..
 import { createEmbeddingProvider } from "../providers/index.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
+import { askQuestion, createLlmProvider } from "../core/rag.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
@@ -294,6 +295,64 @@ program
             if (r.url) console.log(`  Source: ${r.url}`);
             console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
           }
+        }
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
+
+// ask (RAG question answering)
+program
+  .command("ask <question>")
+  .description("Ask a question and get an LLM-synthesized answer using RAG")
+  .option("--top-k <n>", "Number of chunks to retrieve", "5")
+  .option("--topic <topic>", "Filter by topic")
+  .option("--library <lib>", "Filter by library")
+  .option("--model <model>", "Override LLM model")
+  .action(
+    async (
+      question: string,
+      opts: { topK: string; topic?: string; library?: string; model?: string },
+    ) => {
+      const { config, db, provider } = initializeAppWithEmbedding();
+      try {
+        let llmProvider;
+        try {
+          if (opts.model) {
+            config.llm = { ...config.llm, model: opts.model };
+          }
+          llmProvider = createLlmProvider(config);
+        } catch (err) {
+          console.error(
+            `\u2717 ${err instanceof Error ? err.message : String(err)}\n\n` +
+              `To configure an LLM provider, run:\n` +
+              `  libscope config set llm.provider openai   # or ollama\n` +
+              `  export LIBSCOPE_LLM_PROVIDER=openai\n`,
+          );
+          process.exit(1);
+        }
+
+        const result = await askQuestion(db, provider, llmProvider, {
+          question,
+          topK: parseInt(opts.topK, 10),
+          topic: opts.topic,
+          library: opts.library,
+        });
+
+        console.log(`\n${result.answer}\n`);
+
+        if (result.sources.length > 0) {
+          console.log("\u2500\u2500 Sources \u2500\u2500");
+          for (const src of result.sources) {
+            console.log(
+              `  \u2022 ${src.title} (score: ${src.score.toFixed(2)}) [${src.documentId}]`,
+            );
+          }
+        }
+
+        if (result.tokensUsed != null) {
+          console.log(`\n  Model: ${result.model} | Tokens: ${result.tokensUsed}`);
         }
       } finally {
         closeDatabase();
