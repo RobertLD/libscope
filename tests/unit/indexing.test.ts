@@ -56,6 +56,19 @@ But no headings at all.`;
     expect(chunks.length).toBe(0);
   });
 
+  it("should scale linearly (not O(n²)) for large inputs", () => {
+    // 10k lines without headings — worst case for the old join-per-line approach
+    const lines = Array.from({ length: 10_000 }, (_, i) => `Line ${i}: ${"x".repeat(20)}`);
+    const content = lines.join("\n");
+    const start = performance.now();
+    const chunks = chunkContent(content, 1500);
+    const elapsed = performance.now() - start;
+
+    expect(chunks.length).toBeGreaterThan(1);
+    // Should complete well under 500ms even on slow CI; O(n²) would take seconds
+    expect(elapsed).toBeLessThan(500);
+  });
+
   it("should preserve code blocks within chunks", () => {
     const content = `## API Example
 

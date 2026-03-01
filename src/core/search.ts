@@ -2,6 +2,27 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 
+/** Errors that indicate the vector table is missing or unusable – safe to fall back from. */
+const VECTOR_TABLE_MISSING_PATTERNS = [
+  "no such table: chunk_embeddings",
+  "no such module: vec",
+  "no such column: distance",
+];
+
+function isVectorTableError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return VECTOR_TABLE_MISSING_PATTERNS.some((p) => msg.includes(p));
+}
+
+/** Escape LIKE special characters so user input is treated literally. */
+export function escapeLikePattern(input: string): string {
+  return input
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[");
+}
+
 export interface SearchOptions {
   query: string;
   topic?: string | undefined;
@@ -141,7 +162,10 @@ export async function searchDocuments(
       })),
     };
   } catch (err) {
-    log.warn({ err }, "Vector search unavailable, falling back to keyword search");
+    if (!isVectorTableError(err)) {
+      throw err;
+    }
+    log.warn({ err }, "Vector table missing, falling back to keyword search");
     return keywordSearch(db, options, limit, offset);
   }
 }
@@ -166,8 +190,8 @@ function keywordSearch(
   const words = options.query.split(/\s+/).filter((w) => w.length > 2);
   if (words.length === 0) return { results: [], totalCount: 0 };
 
-  const likeConditions = words.map(() => "c.content LIKE ?").join(" OR ");
-  const params: unknown[] = words.map((w) => `%${w}%`);
+  const likeConditions = words.map(() => "c.content LIKE ? ESCAPE '\\'").join(" OR ");
+  const params: unknown[] = words.map((w) => `%${escapeLikePattern(w)}%`);
 
   let sql = `
     SELECT

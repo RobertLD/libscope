@@ -20,8 +20,10 @@ export function isPrivateIP(ip: string): boolean {
   if (normalized.includes(":")) {
     const lower = normalized.toLowerCase();
     if (lower === "::1") return true;
-    if (/^f[cd]/i.test(lower)) return true; // fc00::/7
-    if (/^fe[89ab]/i.test(lower)) return true; // fe80::/10
+    // fc00::/7 → fc.. or fd..
+    if (/^f[cd]/i.test(lower)) return true;
+    // fe80::/10 → link-local
+    if (/^fe[89ab]/i.test(lower)) return true;
     return false;
   }
 
@@ -45,11 +47,13 @@ export function isPrivateIP(ip: string): boolean {
 async function validateUrl(url: string): Promise<void> {
   const parsed = new URL(url);
 
+  // Only allow http and https schemes
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new FetchError(`Blocked scheme: ${parsed.protocol} — only http and https are allowed`);
   }
 
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  // Resolve hostname and check every returned address
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
   const { resolve4, resolve6 } = dns;
   const results = await Promise.allSettled([resolve4(hostname), resolve6(hostname)]);
 
@@ -75,6 +79,7 @@ async function validateUrl(url: string): Promise<void> {
 async function readBodyWithLimit(response: Response, limit: number): Promise<string> {
   const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
   if (!reader) {
+    // Fallback: body is not streamable
     const text = await response.text();
     if (new TextEncoder().encode(text).byteLength > limit) {
       throw new FetchError(`Response body too large (max ${limit} bytes)`);
@@ -117,6 +122,7 @@ export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
   try {
     await validateUrl(url);
 
+    // redirect: "follow" uses the browser/Node default of ~20 redirects
     const response = await fetch(url, {
       headers: {
         "User-Agent": "LibScope/0.1.0 (documentation indexer)",
@@ -131,6 +137,7 @@ export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
     }
 
     const contentType = response.headers.get("content-type") ?? "";
+    // Stream the body while enforcing actual byte-size limit
     const body = await readBodyWithLimit(response, MAX_BODY_SIZE);
 
     // If it's already markdown or plain text, return as-is
