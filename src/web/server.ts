@@ -92,7 +92,8 @@ async function handleRequest(
   // Route: GET /api/search
   if (method === "GET" && pathname === "/api/search") {
     const query = url.searchParams.get("q") ?? "";
-    const limit = parseInt(url.searchParams.get("limit") ?? "10", 10);
+    const rawLimit = parseInt(url.searchParams.get("limit") ?? "10", 10);
+    const limit = Number.isNaN(rawLimit) ? 10 : Math.max(1, Math.min(100, rawLimit));
     const topic = url.searchParams.get("topic") ?? undefined;
 
     if (!query) {
@@ -107,7 +108,8 @@ async function handleRequest(
 
   // Route: GET /api/documents
   if (method === "GET" && pathname === "/api/documents") {
-    const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const rawLimit2 = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const limit = Number.isNaN(rawLimit2) ? 50 : Math.max(1, Math.min(500, rawLimit2));
     const topic = url.searchParams.get("topic") ?? undefined;
     const docs = listDocuments(db, { limit, topicId: topic });
     sendJson(res, 200, docs);
@@ -186,4 +188,8 @@ function setCorsHeaders(res: ServerResponse): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 }

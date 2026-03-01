@@ -10,10 +10,14 @@ export async function handleGraphRequest(
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
-  const threshold = parseFloat(url.searchParams.get("threshold") ?? "0.85");
-  const maxNodes = parseInt(url.searchParams.get("maxNodes") ?? "200", 10);
+  const rawThreshold = parseFloat(url.searchParams.get("threshold") ?? "0.85");
+  const rawMaxNodes = parseInt(url.searchParams.get("maxNodes") ?? "200", 10);
   const topic = url.searchParams.get("topic") ?? undefined;
   const tag = url.searchParams.get("tag") ?? undefined;
+
+  // Clamp parameters to safe bounds
+  const threshold = Number.isNaN(rawThreshold) ? 0.85 : Math.max(0, Math.min(1, rawThreshold));
+  const maxNodes = Number.isNaN(rawMaxNodes) ? 200 : Math.max(1, Math.min(5000, rawMaxNodes));
 
   const graph = await buildKnowledgeGraph(db, {
     similarityThreshold: threshold,

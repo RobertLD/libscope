@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
-import { corsMiddleware } from "./middleware.js";
+import { corsMiddleware, checkRateLimit } from "./middleware.js";
 import { handleRequest } from "./routes.js";
 
 export interface ApiServerOptions {
@@ -22,6 +22,17 @@ export async function startApiServer(
   const corsOrigins = options?.corsOrigins ?? ["*"];
 
   const server = createServer((req, res) => {
+    // Rate limiting
+    const ip =
+      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??
+      req.socket.remoteAddress ??
+      "unknown";
+    if (!checkRateLimit(ip)) {
+      res.writeHead(429, { "Content-Type": "application/json", "Retry-After": "60" });
+      res.end(JSON.stringify({ error: { code: "RATE_LIMITED", message: "Too many requests" } }));
+      return;
+    }
+
     if (corsMiddleware(req, res, corsOrigins)) return;
     handleRequest(req, res, db, provider).catch((err: unknown) => {
       log.error({ err }, "Unhandled error in request handler");

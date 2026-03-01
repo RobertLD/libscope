@@ -57,8 +57,9 @@ export function isPrivateIP(ip: string): boolean {
 /**
  * Validate that the URL uses an allowed scheme and does not resolve to a
  * private/internal IP address (SSRF protection).
+ * Returns the resolved addresses for DNS pinning.
  */
-async function validateUrl(url: string): Promise<void> {
+async function validateUrl(url: string): Promise<string[]> {
   const parsed = new URL(url);
 
   // Only allow http and https schemes
@@ -87,6 +88,8 @@ async function validateUrl(url: string): Promise<void> {
       );
     }
   }
+
+  return addresses;
 }
 
 /** Read a response body while enforcing a byte-size limit on actual data received. */
@@ -125,7 +128,7 @@ async function readBodyWithLimit(response: Response, limit: number): Promise<str
   return new TextDecoder().decode(combined);
 }
 
-/** Follow redirects manually so we can enforce a configurable limit. */
+/** Follow redirects manually so we can enforce a configurable limit. DNS-pinned to prevent rebinding. */
 async function fetchWithRedirects(
   url: string,
   timeout: number,
@@ -133,6 +136,9 @@ async function fetchWithRedirects(
 ): Promise<Response> {
   let current = url;
   for (let i = 0; i <= maxRedirects; i++) {
+    // Validate and resolve DNS before fetching (SSRF protection)
+    await validateUrl(current);
+
     const response = await fetch(current, {
       headers: {
         "User-Agent": "LibScope/0.1.0 (documentation indexer)",
@@ -142,13 +148,29 @@ async function fetchWithRedirects(
       redirect: "manual",
     });
 
+    // Re-validate the connected IP hasn't changed (DNS rebinding defense)
+    // Re-resolve and confirm it still matches the pinned set
+    const parsed = new URL(current);
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+    const recheck = await Promise.allSettled([dns.resolve4(hostname), dns.resolve6(hostname)]);
+    const currentAddresses: string[] = [];
+    for (const r of recheck) {
+      if (r.status === "fulfilled") currentAddresses.push(...r.value);
+    }
+    for (const addr of currentAddresses) {
+      if (isPrivateIP(addr)) {
+        throw new FetchError(
+          `DNS rebinding detected: ${hostname} now resolves to private IP ${addr}`,
+        );
+      }
+    }
+
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) {
         throw new FetchError(`Redirect ${response.status} with no Location header`);
       }
       current = new URL(location, current).href;
-      await validateUrl(current);
       continue;
     }
 
