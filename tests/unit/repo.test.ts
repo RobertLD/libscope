@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ValidationError } from "../../src/errors.js";
+import { FetchError, ValidationError } from "../../src/errors.js";
+import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
+import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 
 // Mock dns.promises so validateHost does not do real DNS lookups
 vi.mock("node:dns", () => ({
@@ -9,7 +11,7 @@ vi.mock("node:dns", () => ({
   },
 }));
 
-const { parseRepoUrl, shouldIncludeFile, fetchRepoContents } =
+const { parseRepoUrl, shouldIncludeFile, fetchRepoContents, indexRepository } =
   await import("../../src/core/repo.js");
 
 describe("parseRepoUrl", () => {
@@ -203,5 +205,486 @@ describe("fetchRepoContents", () => {
 
     expect(files).toHaveLength(1);
     expect(files[0]!.path).toBe("docs/guide.md");
+  });
+
+  it("should pass token as Authorization header", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ tree: [], truncated: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await fetchRepoContents({
+      url: "https://github.com/test/repo",
+      token: "ghp_testtoken123",
+      extensions: [".md"],
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+    const callHeaders = mockFetch.mock.calls[0]![1]!.headers;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    expect(callHeaders["Authorization"]).toBe("Bearer ghp_testtoken123");
+  });
+
+  it("should handle truncated GitHub tree", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          tree: [{ path: "README.md", type: "blob", size: 100 }],
+          truncated: true,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    mockFetch.mockResolvedValueOnce(new Response("# README", { status: 200 }));
+
+    const files = await fetchRepoContents({
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(files).toHaveLength(1);
+  });
+
+  it("should skip files that fail to fetch content", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          tree: [
+            { path: "good.md", type: "blob", size: 100 },
+            { path: "bad.md", type: "blob", size: 200 },
+          ],
+          truncated: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    // First file succeeds
+    mockFetch.mockResolvedValueOnce(new Response("# Good", { status: 200 }));
+    // Second file fails with a non-ok status
+    mockFetch.mockResolvedValueOnce(
+      new Response("Not Found", { status: 404, statusText: "Not Found" }),
+    );
+
+    const files = await fetchRepoContents({
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]!.path).toBe("good.md");
+  });
+
+  it("should throw FetchError on HTTP error response", async () => {
+    mockFetch.mockResolvedValue(
+      new Response("Server Error", { status: 500, statusText: "Internal Server Error" }),
+    );
+
+    await expect(
+      fetchRepoContents({
+        url: "https://github.com/test/repo",
+        extensions: [".md"],
+      }),
+    ).rejects.toThrow(FetchError);
+  });
+
+  it("should throw FetchError when rate limit exceeded (403 + remaining=0)", async () => {
+    mockFetch.mockResolvedValue(
+      new Response("Rate limit exceeded", {
+        status: 403,
+        statusText: "Forbidden",
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1700000000" },
+      }),
+    );
+
+    await expect(
+      fetchRepoContents({
+        url: "https://github.com/test/repo",
+        extensions: [".md"],
+      }),
+    ).rejects.toThrow("rate limit exceeded");
+  });
+
+  it("should retry on 429 rate limit and continue", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    // First call: 429 rate limited
+    mockFetch.mockResolvedValueOnce(
+      new Response("Too Many Requests", {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 2),
+        },
+      }),
+    );
+
+    // Second call: success with tree
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ tree: [], truncated: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const result = await fetchRepoContents({
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(result).toHaveLength(0);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it("should back off when rate limit remaining is low", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ tree: [], truncated: false }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-ratelimit-remaining": "5",
+          "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 2),
+        },
+      }),
+    );
+
+    const files = await fetchRepoContents({
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(files).toHaveLength(0);
+
+    vi.useRealTimers();
+  });
+
+  it("should retry on network errors and eventually throw FetchError", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(
+      fetchRepoContents({
+        url: "https://github.com/test/repo",
+        extensions: [".md"],
+      }),
+    ).rejects.toThrow(FetchError);
+
+    expect(mockFetch.mock.calls.length).toBe(3); // MAX_RETRIES = 3
+
+    vi.useRealTimers();
+  });
+
+  it("should throw FetchError when DNS resolution fails", async () => {
+    const dnsModule = await import("node:dns");
+    vi.mocked(dnsModule.promises.resolve4).mockRejectedValue(new Error("ENOTFOUND"));
+    vi.mocked(dnsModule.promises.resolve6).mockRejectedValue(new Error("ENOTFOUND"));
+
+    await expect(
+      fetchRepoContents({
+        url: "https://github.com/test/repo",
+        extensions: [".md"],
+      }),
+    ).rejects.toThrow("DNS resolution failed");
+  });
+
+  it("should throw FetchError when hostname resolves to private IP", async () => {
+    const dnsModule = await import("node:dns");
+    vi.mocked(dnsModule.promises.resolve4).mockResolvedValue(["127.0.0.1"]);
+    vi.mocked(dnsModule.promises.resolve6).mockRejectedValue(new Error("no AAAA"));
+
+    await expect(
+      fetchRepoContents({
+        url: "https://github.com/test/repo",
+        extensions: [".md"],
+      }),
+    ).rejects.toThrow("private/internal IP");
+  });
+
+  it("should fetch GitLab tree and file contents", async () => {
+    // GitLab tree response
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { path: "README.md", type: "blob" },
+          { path: "docs/guide.md", type: "blob" },
+          { path: "src", type: "tree" },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    // File contents
+    mockFetch.mockResolvedValueOnce(new Response("# GitLab README", { status: 200 }));
+    mockFetch.mockResolvedValueOnce(new Response("# GitLab Guide", { status: 200 }));
+
+    const files = await fetchRepoContents({
+      url: "https://gitlab.com/owner/repo",
+      extensions: [".md"],
+    });
+
+    expect(files).toHaveLength(2);
+    expect(files[0]!.path).toBe("README.md");
+    expect(files[0]!.content).toBe("# GitLab README");
+    expect(files[1]!.path).toBe("docs/guide.md");
+  });
+
+  it("should use branch from URL for GitLab", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify([{ path: "doc.md", type: "blob" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    mockFetch.mockResolvedValueOnce(new Response("content", { status: 200 }));
+
+    await fetchRepoContents({
+      url: "https://gitlab.com/owner/repo/-/tree/develop",
+      extensions: [".md"],
+    });
+
+    // Verify the tree URL contains the branch
+    const treeCallUrl = mockFetch.mock.calls[0]![0] as string;
+    expect(treeCallUrl).toContain("ref=develop");
+  });
+
+  it("should skip files that fail to fetch on GitLab", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { path: "good.md", type: "blob" },
+          { path: "bad.md", type: "blob" },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    mockFetch.mockResolvedValueOnce(new Response("# Good", { status: 200 }));
+    mockFetch.mockResolvedValueOnce(
+      new Response("Not Found", { status: 404, statusText: "Not Found" }),
+    );
+
+    const files = await fetchRepoContents({
+      url: "https://gitlab.com/owner/repo",
+      extensions: [".md"],
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]!.path).toBe("good.md");
+  });
+
+  it("should filter GitLab files by path prefix", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { path: "README.md", type: "blob" },
+          { path: "docs/guide.md", type: "blob" },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    mockFetch.mockResolvedValueOnce(new Response("# Guide", { status: 200 }));
+
+    const files = await fetchRepoContents({
+      url: "https://gitlab.com/owner/repo",
+      paths: ["docs"],
+      extensions: [".md"],
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]!.path).toBe("docs/guide.md");
+  });
+
+  it("should report progress via onProgress callback", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          tree: [{ path: "README.md", type: "blob", size: 100 }],
+          truncated: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    mockFetch.mockResolvedValueOnce(new Response("# README", { status: 200 }));
+
+    const progress: string[] = [];
+    await fetchRepoContents({ url: "https://github.com/test/repo", extensions: [".md"] }, (msg) =>
+      progress.push(msg),
+    );
+
+    expect(progress).toContain("Fetching tree...");
+    expect(progress.some((m) => m.includes("Found 1 docs"))).toBe(true);
+    expect(progress.some((m) => m.includes("README.md"))).toBe(true);
+  });
+});
+
+describe("indexRepository", () => {
+  const mockFetch = vi.fn();
+  let db: ReturnType<typeof createTestDb>;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(async () => {
+    mockFetch.mockReset();
+    globalThis.fetch = mockFetch;
+    db = createTestDbWithVec();
+    provider = new MockEmbeddingProvider();
+
+    const dnsModule = await import("node:dns");
+    vi.mocked(dnsModule.promises.resolve4).mockResolvedValue(["140.82.121.3"]);
+    vi.mocked(dnsModule.promises.resolve6).mockRejectedValue(new Error("no AAAA"));
+  });
+
+  function mockGitHubTree(files: Array<{ path: string }>) {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          tree: files.map((f) => ({ path: f.path, type: "blob", size: 100 })),
+          truncated: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+  }
+
+  it("should index files from a repository", async () => {
+    mockGitHubTree([{ path: "README.md" }, { path: "docs/guide.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# README content", { status: 200 }));
+    mockFetch.mockResolvedValueOnce(new Response("# Guide content", { status: 200 }));
+
+    const result = await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(result.indexed).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("should skip files with unchanged content hash", async () => {
+    // First indexing
+    mockGitHubTree([{ path: "README.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# README", { status: 200 }));
+
+    await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    // Second indexing with same content
+    mockGitHubTree([{ path: "README.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# README", { status: 200 }));
+
+    const result = await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(result.skipped).toBe(1);
+    expect(result.indexed).toBe(0);
+  });
+
+  it("should re-index files with changed content hash", async () => {
+    // First indexing
+    mockGitHubTree([{ path: "README.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# Version 1", { status: 200 }));
+
+    await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    // Second indexing with different content
+    mockGitHubTree([{ path: "README.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# Version 2", { status: 200 }));
+
+    const result = await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(result.indexed).toBe(1);
+    expect(result.skipped).toBe(0);
+  });
+
+  it("should record errors for files that fail to index", async () => {
+    mockGitHubTree([{ path: "README.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# README", { status: 200 }));
+
+    // Make indexDocument fail by closing the db
+    const brokenDb = createTestDbWithVec();
+    brokenDb.close();
+
+    const result = await indexRepository(brokenDb, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain("README.md");
+  });
+
+  it("should report progress during indexing", async () => {
+    mockGitHubTree([{ path: "README.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# README", { status: 200 }));
+
+    const progress: string[] = [];
+    await indexRepository(
+      db,
+      provider,
+      { url: "https://github.com/test/repo", extensions: [".md"] },
+      (msg) => progress.push(msg),
+    );
+
+    expect(progress.some((m) => m.includes("Indexing"))).toBe(true);
+  });
+
+  it("should use branch from options over URL branch", async () => {
+    mockGitHubTree([{ path: "doc.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("content", { status: 200 }));
+
+    await indexRepository(db, provider, {
+      url: "https://github.com/test/repo/tree/main",
+      branch: "develop",
+      extensions: [".md"],
+    });
+
+    const treeCallUrl = mockFetch.mock.calls[0]![0] as string;
+    expect(treeCallUrl).toContain("develop");
+  });
+
+  it("should default to main branch when none specified", async () => {
+    mockGitHubTree([{ path: "doc.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("content", { status: 200 }));
+
+    await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    const treeCallUrl = mockFetch.mock.calls[0]![0] as string;
+    expect(treeCallUrl).toContain("main");
+  });
+
+  it("should derive title from filename by stripping extension", async () => {
+    mockGitHubTree([{ path: "docs/getting-started.md" }]);
+    mockFetch.mockResolvedValueOnce(new Response("# Getting Started", { status: 200 }));
+
+    await indexRepository(db, provider, {
+      url: "https://github.com/test/repo",
+      extensions: [".md"],
+    });
+
+    const doc = db.prepare("SELECT title FROM documents LIMIT 1").get() as { title: string };
+    expect(doc.title).toBe("getting-started");
   });
 });
