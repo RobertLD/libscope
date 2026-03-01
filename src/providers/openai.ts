@@ -32,7 +32,10 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       return embedding;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
-      throw new EmbeddingError(`OpenAI embedding failed: ${String(err)}`, err);
+      throw new EmbeddingError(
+        `Failed to generate embedding: ${err instanceof Error ? err.message : String(err)}`,
+        err,
+      );
     }
   }
 
@@ -50,7 +53,10 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       return response.data.map((d) => d.embedding);
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
-      throw new EmbeddingError(`OpenAI batch embedding failed: ${String(err)}`, err);
+      throw new EmbeddingError(
+        `Failed to generate embedding: ${err instanceof Error ? err.message : String(err)}`,
+        err,
+      );
     }
   }
 }
