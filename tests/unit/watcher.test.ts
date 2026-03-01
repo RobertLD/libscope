@@ -47,6 +47,7 @@ describe("FileWatcher", () => {
   let closeFn: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.useFakeTimers();
     closeFn = vi.fn();
 
