@@ -2,27 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
+import { insertDoc, insertChunk } from "../fixtures/helpers.js";
 import { searchDocuments } from "../../src/core/search.js";
-
-function insertDoc(
-  db: Database.Database,
-  id: string,
-  title: string,
-  opts: { library?: string; topicId?: string } = {},
-): void {
-  db.prepare(
-    `INSERT INTO documents (id, title, content, source_type, library, topic_id)
-     VALUES (?, ?, '', 'manual', ?, ?)`,
-  ).run(id, title, opts.library ?? null, opts.topicId ?? null);
-}
-
-function insertChunk(db: Database.Database, id: string, documentId: string, content: string): void {
-  db.prepare(`INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, 0)`).run(
-    id,
-    documentId,
-    content,
-  );
-}
 
 describe("searchDocuments (FTS5 fallback)", () => {
   let db: Database.Database;

@@ -15,8 +15,19 @@ export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvid
   switch (config.embedding.provider) {
     case "local":
       return new LocalEmbeddingProvider();
-    case "ollama":
+    case "ollama": {
+      if (!config.embedding.ollamaUrl) {
+        throw new ConfigError(
+          "Ollama URL is required. Set LIBSCOPE_OLLAMA_URL or configure in ~/.libscope/config.json",
+        );
+      }
+      if (!config.embedding.ollamaModel) {
+        throw new ConfigError(
+          "Ollama model is required. Set LIBSCOPE_OLLAMA_MODEL or configure in ~/.libscope/config.json",
+        );
+      }
       return new OllamaEmbeddingProvider(config.embedding.ollamaUrl, config.embedding.ollamaModel);
+    }
     case "openai": {
       const apiKey = config.embedding.openaiApiKey;
       if (!apiKey) {
