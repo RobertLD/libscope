@@ -604,6 +604,40 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: sync-onenote
+  server.tool(
+    "sync-onenote",
+    "Sync OneNote notebooks via Microsoft Graph API",
+    {
+      accessToken: z.string().describe("Microsoft Graph API access token"),
+      notebookName: z.string().optional().describe("Specific notebook name to sync (default: all)"),
+    },
+    withErrorHandling(async (params) => {
+      const { syncOneNote } = await import("../connectors/onenote.js");
+
+      const result = await syncOneNote(db, provider, {
+        clientId: "",
+        tenantId: "common",
+        accessToken: params.accessToken,
+        notebooks: params.notebookName ? [params.notebookName] : ["all"],
+        excludeSections: [],
+      });
+
+      const text =
+        `OneNote sync complete.\n` +
+        `Notebooks: ${result.notebooks}\n` +
+        `Sections: ${result.sections}\n` +
+        `Pages added: ${result.pagesAdded}\n` +
+        `Pages updated: ${result.pagesUpdated}\n` +
+        `Pages deleted: ${result.pagesDeleted}` +
+        (result.errors.length > 0
+          ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join("; ")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
