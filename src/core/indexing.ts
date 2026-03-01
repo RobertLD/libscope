@@ -41,22 +41,25 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
       }
 
       // Update heading stack
-      const level = headingMatch[1]!.length;
+      const level = (headingMatch[1] ?? "").length;
       // Remove headings at same or deeper level
-      while (headingStack.length > 0 && headingStack[headingStack.length - 1]!.level >= level) {
+      while (
+        headingStack.length > 0 &&
+        (headingStack[headingStack.length - 1]?.level ?? 0) >= level
+      ) {
         headingStack.pop();
       }
 
       // Build breadcrumb from parent headings
       const breadcrumb = headingStack.map((h) => h.text).join(" > ");
-      headingStack.push({ level, text: headingMatch[2]!.trim() });
+      headingStack.push({ level, text: (headingMatch[2] ?? "").trim() });
 
       currentChunk = breadcrumb ? [`<!-- context: ${breadcrumb} -->`, line] : [line];
     } else {
       if (headingMatch) {
         // First heading in the document
-        const level = headingMatch[1]!.length;
-        headingStack.push({ level, text: headingMatch[2]!.trim() });
+        const level = (headingMatch[1] ?? "").length;
+        headingStack.push({ level, text: (headingMatch[2] ?? "").trim() });
       }
       currentChunk.push(line);
     }
@@ -158,8 +161,8 @@ export async function indexDocument(
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkId = randomUUID();
-      const chunkContent = chunks[i]!;
-      const embedding = embeddings[i]!;
+      const chunkContent = chunks[i] ?? "";
+      const embedding = embeddings[i] ?? [];
 
       insertChunk.run(chunkId, docId, chunkContent, i);
 
