@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -93,6 +93,11 @@ const MIGRATIONS: Record<number, string> = {
     CREATE INDEX IF NOT EXISTS idx_documents_url ON documents(url);
 
     INSERT INTO schema_version (version) VALUES (3);
+  `,
+  4: `
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_topics_name ON topics(name);
+
+    INSERT INTO schema_version (version) VALUES (4);
   `,
 };
 

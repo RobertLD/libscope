@@ -37,9 +37,11 @@ describe("topics", () => {
       expect(() => createTopic(db, { name: "   " })).toThrow("Topic name is required");
     });
 
-    it("should reject duplicate topic", () => {
-      createTopic(db, { name: "Testing" });
-      expect(() => createTopic(db, { name: "Testing" })).toThrow("already exists");
+    it("should return existing topic on duplicate name", () => {
+      const first = createTopic(db, { name: "Testing" });
+      const second = createTopic(db, { name: "Testing" });
+      expect(second.id).toBe(first.id);
+      expect(second.name).toBe("Testing");
     });
 
     it("should support parent topics", () => {
