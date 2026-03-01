@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import { loadConfig, saveUserConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
-import { createEmbeddingProvider } from "../providers/index.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
 import { askQuestion, createLlmProvider } from "../core/rag.js";
@@ -735,7 +735,10 @@ function setupLogging(opts: ProgramOpts): void {
 }
 
 /** Shared CLI initialization: loadConfig → setupLogging → getDatabase → runMigrations. */
-function initializeApp() {
+function initializeApp(): {
+  config: ReturnType<typeof loadConfig>;
+  db: ReturnType<typeof getDatabase>;
+} {
   const config = loadConfig();
   const opts = program.opts<ProgramOpts>();
   setupLogging(opts);
@@ -752,7 +755,11 @@ function initializeApp() {
 }
 
 /** Initialization with an embedding provider and vector table. */
-function initializeAppWithEmbedding() {
+function initializeAppWithEmbedding(): {
+  config: ReturnType<typeof loadConfig>;
+  db: ReturnType<typeof getDatabase>;
+  provider: EmbeddingProvider;
+} {
   const { config, db } = initializeApp();
   const provider = createEmbeddingProvider(config);
   createVectorTable(db, provider.dimensions);
@@ -829,9 +836,15 @@ program
       directory,
       extensions,
       debounceMs,
-      onIndex: (path) => console.log(`  ✓ Indexed: ${path}`),
-      onRemove: (path) => console.log(`  ✗ Removed: ${path}`),
-      onError: (err) => console.error(`  ⚠ Error: ${err.message}`),
+      onIndex: (path: string): void => {
+        console.log(`  ✓ Indexed: ${path}`);
+      },
+      onRemove: (path: string): void => {
+        console.log(`  ✗ Removed: ${path}`);
+      },
+      onError: (err: Error): void => {
+        console.error(`  ⚠ Error: ${err.message}`);
+      },
     });
 
     const cleanup = (): void => {
