@@ -10,8 +10,23 @@ import { LocalEmbeddingProvider } from "./local.js";
 import { OllamaEmbeddingProvider } from "./ollama.js";
 import { OpenAIEmbeddingProvider } from "./openai.js";
 
+/** Factory function that creates an EmbeddingProvider from config. */
+export type ProviderFactory = (config: LibScopeConfig) => EmbeddingProvider;
+
+const providerRegistry = new Map<string, ProviderFactory>();
+
+/** Register a custom embedding provider factory. */
+export function registerProvider(name: string, factory: ProviderFactory): void {
+  providerRegistry.set(name, factory);
+}
+
 /** Create an embedding provider based on config. */
 export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvider {
+  const registered = providerRegistry.get(config.embedding.provider);
+  if (registered) {
+    return registered(config);
+  }
+
   switch (config.embedding.provider) {
     case "local":
       return new LocalEmbeddingProvider();
