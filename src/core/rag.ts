@@ -174,8 +174,15 @@ function createOllamaProvider(
       });
 
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`Ollama API error (${res.status}): ${body}`);
+        const status = res.status;
+        const genericMessages: Record<number, string> = {
+          400: "Bad request",
+          404: "Model not found",
+          500: "Ollama internal server error",
+          503: "Ollama service unavailable",
+        };
+        const message = genericMessages[status] ?? `HTTP ${status}`;
+        throw new Error(`Ollama API error: ${message}`);
       }
 
       const data = (await res.json()) as {

@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { readFileSync, writeFileSync } from "node:fs";
+import { resolve as pathResolve, isAbsolute as pathIsAbsolute } from "node:path";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -57,6 +58,31 @@ export interface CreatePackOptions {
 }
 
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/libscope/packs/main/registry.json";
+
+/** Validate that a registry URL uses https and is not a private IP. */
+function validateRegistryUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ValidationError("Invalid registry URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new ValidationError("Registry URL must use https");
+  }
+  const host = parsed.hostname;
+  if (
+    host === "localhost" ||
+    host.startsWith("127.") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host.startsWith("169.254.")
+  ) {
+    throw new ValidationError("Registry URL must not point to a private/internal address");
+  }
+}
 
 function validatePack(data: unknown): KnowledgePack {
   if (typeof data !== "object" || data === null) {
@@ -125,6 +151,8 @@ export async function listAvailablePacks(registryUrl?: string): Promise<PackInfo
   const url = registryUrl ?? DEFAULT_REGISTRY_URL;
   const log = getLogger();
 
+  validateRegistryUrl(url);
+
   try {
     const response = await fetch(url);
     if (!response.ok) {
@@ -168,8 +196,13 @@ export async function installPack(
 
   // Try loading as a local file first
   if (packNameOrPath.endsWith(".json")) {
+    const resolved = pathResolve(packNameOrPath);
+    // Prevent path traversal: if a relative path is given, ensure it resolves within CWD
+    if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
+      throw new ValidationError("Pack file path must be within the current working directory");
+    }
     try {
-      const raw = readFileSync(packNameOrPath, "utf-8");
+      const raw = readFileSync(resolved, "utf-8");
       const parsed: unknown = JSON.parse(raw);
       pack = validatePack(parsed);
     } catch (err) {
@@ -181,6 +214,7 @@ export async function installPack(
   } else {
     // Fetch from registry
     const registryUrl = options?.registryUrl ?? DEFAULT_REGISTRY_URL;
+    validateRegistryUrl(registryUrl);
     const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
     const packUrl = `${baseUrl}/${packNameOrPath}.json`;
     try {

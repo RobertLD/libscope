@@ -172,7 +172,7 @@ export function getDashboardHtml(): string {
         return;
       }
       $content.innerHTML = docs.map(d =>
-        '<div class="card" onclick="showDocument(\\'' + d.id + '\\')">' +
+        '<div class="card" data-doc-id="' + escAttr(d.id) + '">' +
           '<h4>' + esc(d.title) + '</h4>' +
           '<div class="meta">' +
             '<span>' + d.sourceType + '</span>' +
@@ -214,7 +214,7 @@ export function getDashboardHtml(): string {
         return;
       }
       $content.innerHTML = data.results.map(r =>
-        '<div class="card" onclick="showDocument(\\'' + r.documentId + '\\')">' +
+        '<div class="card" data-doc-id="' + escAttr(r.documentId) + '">' +
           '<h4>' + esc(r.title) + ' <span class="score">' + r.score.toFixed(2) + '</span></h4>' +
           '<div class="preview">' + esc(r.content.slice(0, 200)) + '</div>' +
           '<div class="meta">' +
@@ -237,11 +237,11 @@ export function getDashboardHtml(): string {
         '<div class="detail">' +
           '<div class="actions">' +
             '<button class="btn-back" onclick="goBack()">← Back</button>' +
-            '<button class="btn-danger" onclick="deleteDoc(\\'' + id + '\\')">Delete</button>' +
+            '<button class="btn-danger" data-delete-id="' + escAttr(id) + '">Delete</button>' +
           '</div>' +
           '<h2>' + esc(d.title) + '</h2>' +
           '<div class="meta">' +
-            '<span>ID: ' + d.id + '</span>' +
+            '<span>ID: ' + esc(d.id) + '</span>' +
             '<span>Type: ' + d.sourceType + '</span>' +
             (d.library ? '<span>Library: ' + esc(d.library) + (d.version ? ' v' + esc(d.version) : '') + '</span>' : '') +
             (d.url ? '<span>URL: <a href="' + esc(d.url) + '" target="_blank">' + esc(d.url) + '</a></span>' : '') +
@@ -275,6 +275,19 @@ export function getDashboardHtml(): string {
     d.textContent = s;
     return d.innerHTML;
   }
+
+  function escAttr(s) {
+    if (!s) return '';
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Event delegation for cards and delete buttons
+  document.addEventListener('click', function(e) {
+    const card = e.target.closest('.card[data-doc-id]');
+    if (card) { showDocument(card.getAttribute('data-doc-id')); return; }
+    const delBtn = e.target.closest('[data-delete-id]');
+    if (delBtn) { deleteDoc(delBtn.getAttribute('data-delete-id')); return; }
+  });
 
   $searchInput.addEventListener('input', () => {
     clearTimeout(searchTimeout);

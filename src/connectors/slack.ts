@@ -424,14 +424,26 @@ export function disconnectSlack(db: Database.Database): number {
   if (rows.length === 0) return 0;
 
   const deleteChunksFts = db.prepare(
-    "DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
+    "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?))",
+  );
+  const deleteEmbeddings = db.prepare(
+    "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
   );
   const deleteChunks = db.prepare("DELETE FROM chunks WHERE document_id = ?");
   const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ?");
 
   const tx = db.transaction(() => {
     for (const row of rows) {
-      deleteChunksFts.run(row.id);
+      try {
+        deleteChunksFts.run(row.id);
+      } catch {
+        // FTS table may not exist
+      }
+      try {
+        deleteEmbeddings.run(row.id);
+      } catch {
+        // chunk_embeddings table may not exist
+      }
       deleteChunks.run(row.id);
       deleteDoc.run(row.id);
     }

@@ -246,6 +246,7 @@ export function createVectorTable(db: Database.Database, dimensions: number): vo
   }
   const log = getLogger();
   try {
+    // dimensions is validated as a positive integer above, so interpolation is safe here
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
         chunk_id TEXT PRIMARY KEY,

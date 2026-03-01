@@ -77,8 +77,15 @@ function ensureConnectorsDir(): void {
   }
 }
 
+function validateConnectorName(name: string): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new ConfigError(`Invalid connector name "${name}": must match /^[a-zA-Z0-9_-]+$/`);
+  }
+}
+
 /** Save a named connector config to ~/.libscope/connectors/<name>.json */
 export function saveNamedConnectorConfig(name: string, config: object): void {
+  validateConnectorName(name);
   ensureConnectorsDir();
   const filePath = join(CONNECTORS_DIR, `${name}.json`);
   writeFileSync(filePath, JSON.stringify(config, null, 2), "utf-8");
@@ -87,6 +94,7 @@ export function saveNamedConnectorConfig(name: string, config: object): void {
 
 /** Load a named connector config from ~/.libscope/connectors/<name>.json */
 export function loadNamedConnectorConfig<T>(name: string): T {
+  validateConnectorName(name);
   const filePath = join(CONNECTORS_DIR, `${name}.json`);
   if (!existsSync(filePath)) {
     throw new ConfigError(
@@ -99,6 +107,7 @@ export function loadNamedConnectorConfig<T>(name: string): T {
 
 /** Check if a named connector config exists */
 export function hasNamedConnectorConfig(name: string): boolean {
+  validateConnectorName(name);
   const filePath = join(CONNECTORS_DIR, `${name}.json`);
   return existsSync(filePath);
 }
@@ -111,14 +120,26 @@ export function deleteConnectorDocuments(db: Database.Database, sourceType: stri
   if (rows.length === 0) return 0;
 
   const deleteChunksFts = db.prepare(
-    "DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
+    "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?))",
+  );
+  const deleteEmbeddings = db.prepare(
+    "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
   );
   const deleteChunks = db.prepare("DELETE FROM chunks WHERE document_id = ?");
   const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ?");
 
   const tx = db.transaction(() => {
     for (const row of rows) {
-      deleteChunksFts.run(row.id);
+      try {
+        deleteChunksFts.run(row.id);
+      } catch {
+        // FTS table may not exist
+      }
+      try {
+        deleteEmbeddings.run(row.id);
+      } catch {
+        // chunk_embeddings table may not exist
+      }
       deleteChunks.run(row.id);
       deleteDoc.run(row.id);
     }

@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import type Database from "better-sqlite3";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
-import { installPack, removePack, listInstalledPacks, createPack } from "../../src/core/packs.js";
+import {
+  installPack,
+  removePack,
+  listInstalledPacks,
+  createPack,
+  listAvailablePacks,
+} from "../../src/core/packs.js";
 import type { KnowledgePack } from "../../src/core/packs.js";
 import { indexDocument } from "../../src/core/indexing.js";
 
@@ -263,6 +269,50 @@ describe("knowledge packs", () => {
       writeFileSync(packPath, JSON.stringify(bad), "utf-8");
 
       await expect(installPack(db, provider, packPath)).rejects.toThrow(/not an object/);
+    });
+  });
+
+  describe("security validations", () => {
+    it("should reject relative path traversal", async () => {
+      await expect(installPack(db, provider, "../../etc/passwd.json")).rejects.toThrow(
+        /must be within the current working directory/,
+      );
+    });
+
+    it("should reject http registry URLs", async () => {
+      await expect(
+        installPack(db, provider, "some-pack", {
+          registryUrl: "http://evil.com/registry.json",
+        }),
+      ).rejects.toThrow(/must use https/);
+    });
+
+    it("should reject private IP registry URLs", async () => {
+      await expect(
+        installPack(db, provider, "some-pack", {
+          registryUrl: "https://127.0.0.1/registry.json",
+        }),
+      ).rejects.toThrow(/private/);
+    });
+
+    it("should reject localhost registry URLs", async () => {
+      await expect(
+        installPack(db, provider, "some-pack", {
+          registryUrl: "https://localhost/registry.json",
+        }),
+      ).rejects.toThrow(/private/);
+    });
+
+    it("should reject http registry URL in listAvailablePacks", async () => {
+      await expect(listAvailablePacks("http://evil.com/registry.json")).rejects.toThrow(
+        /must use https/,
+      );
+    });
+
+    it("should reject private IP in listAvailablePacks", async () => {
+      await expect(listAvailablePacks("https://192.168.1.1/registry.json")).rejects.toThrow(
+        /private/,
+      );
     });
   });
 });
