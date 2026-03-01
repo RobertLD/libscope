@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, dirname, basename, extname } from "node:path";
+import { join, relative, dirname, basename, extname, resolve } from "node:path";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "../core/indexing.js";
@@ -259,6 +259,9 @@ function resolveEmbeds(
       _visited.add(target);
       try {
         const filePath = join(vaultPath, target);
+        if (!resolve(filePath).startsWith(resolve(vaultPath))) {
+          return display ?? `[${link}]`;
+        }
         const content = readFileSync(filePath, "utf-8");
         // Strip frontmatter from embedded content
         const fmEnd = /^---\r?\n[\s\S]*?\r?\n---/.exec(content);

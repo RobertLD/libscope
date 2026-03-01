@@ -8,6 +8,7 @@ import { getDashboardHtml, getGraphPageHtml } from "./dashboard.js";
 import { handleGraphRequest } from "./graph-api.js";
 import { DocumentNotFoundError } from "../errors.js";
 import { validateCountRow } from "../utils/db-validation.js";
+import { checkRateLimit } from "../api/middleware.js";
 
 export interface WebServerOptions {
   port?: number;
@@ -27,6 +28,12 @@ export function startWebServer(
 
   return new Promise((resolve, reject) => {
     server = createServer((req, res) => {
+      const ip = req.socket.remoteAddress ?? "unknown";
+      if (!checkRateLimit(ip)) {
+        res.writeHead(429, { "Content-Type": "application/json", "Retry-After": "60" });
+        res.end(JSON.stringify({ error: "Too many requests" }));
+        return;
+      }
       handleRequest(db, provider, req, res).catch((err) => {
         sendJson(res, 500, { error: String(err) });
       });

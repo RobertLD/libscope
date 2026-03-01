@@ -320,7 +320,7 @@ export async function handleRequest(
       return;
     }
 
-    const message = err instanceof Error ? err.message : "Internal server error";
-    sendError(res, 500, "INTERNAL_ERROR", message);
+    log.error({ err }, "Unhandled error in request handler");
+    sendError(res, 500, "INTERNAL_ERROR", "Internal server error");
   }
 }
