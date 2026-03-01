@@ -41,7 +41,6 @@ import {
   getWorkspacePath,
 } from "../core/workspace.js";
 
-
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 
 // Graceful shutdown
