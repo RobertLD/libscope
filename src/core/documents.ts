@@ -1,5 +1,9 @@
 import type Database from "better-sqlite3";
-import { DocumentNotFoundError } from "../errors.js";
+import { createHash, randomUUID } from "node:crypto";
+import type { EmbeddingProvider } from "../providers/embedding.js";
+import { DocumentNotFoundError, ValidationError } from "../errors.js";
+import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import { getLogger } from "../logger.js";
 
 export interface Document {
   id: string;
@@ -144,4 +148,112 @@ export function listDocuments(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
+}
+
+export interface UpdateDocumentInput {
+  title?: string | undefined;
+  content?: string | undefined;
+  metadata?:
+    | {
+        library?: string | null | undefined;
+        version?: string | null | undefined;
+        url?: string | null | undefined;
+        topicId?: string | null | undefined;
+      }
+    | undefined;
+}
+
+/** Update a document by ID. Re-chunks and re-indexes embeddings when content changes. */
+export async function updateDocument(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  documentId: string,
+  input: UpdateDocumentInput,
+): Promise<Document> {
+  const log = getLogger();
+
+  // Verify document exists
+  const existing = getDocument(db, documentId);
+
+  if (input.title !== undefined && !input.title.trim()) {
+    throw new ValidationError("Document title cannot be empty");
+  }
+  if (input.content !== undefined && !input.content.trim()) {
+    throw new ValidationError("Document content cannot be empty");
+  }
+
+  const newTitle = input.title ?? existing.title;
+  const newContent = input.content ?? existing.content;
+  const newLibrary =
+    input.metadata?.library !== undefined ? input.metadata.library : existing.library;
+  const newVersion =
+    input.metadata?.version !== undefined ? input.metadata.version : existing.version;
+  const newUrl = input.metadata?.url !== undefined ? input.metadata.url : existing.url;
+  const newTopicId =
+    input.metadata?.topicId !== undefined ? input.metadata.topicId : existing.topicId;
+
+  const contentChanged = input.content !== undefined && input.content !== existing.content;
+  const contentHash = contentChanged
+    ? createHash("sha256").update(newContent).digest("hex")
+    : existing.contentHash;
+
+  if (contentChanged) {
+    log.info({ docId: documentId }, "Content changed, re-chunking and re-indexing embeddings");
+
+    const useStreaming = newContent.length > STREAMING_THRESHOLD;
+    const chunks = useStreaming ? chunkContentStreaming(newContent) : chunkContent(newContent);
+    const embeddings = await provider.embedBatch(chunks);
+
+    const transaction = db.transaction(() => {
+      try {
+        db.prepare(
+          "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
+        ).run(documentId);
+      } catch {
+        // chunk_embeddings table may not exist
+      }
+
+      db.prepare("DELETE FROM chunks WHERE document_id = ?").run(documentId);
+
+      db.prepare(
+        `UPDATE documents SET title = ?, content = ?, library = ?, version = ?, url = ?, topic_id = ?, content_hash = ?, updated_at = datetime('now') WHERE id = ?`,
+      ).run(
+        newTitle,
+        newContent,
+        newLibrary,
+        newVersion,
+        newUrl,
+        newTopicId,
+        contentHash,
+        documentId,
+      );
+
+      const insertChunk = db.prepare(
+        "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",
+      );
+      const insertEmbedding = db.prepare(
+        "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)",
+      );
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkId = randomUUID();
+        insertChunk.run(chunkId, documentId, chunks[i] ?? "", i);
+
+        try {
+          const vecBuffer = Buffer.from(new Float32Array(embeddings[i] ?? []).buffer);
+          insertEmbedding.run(chunkId, vecBuffer);
+        } catch {
+          // chunk_embeddings table may not exist
+        }
+      }
+    });
+
+    transaction();
+  } else {
+    db.prepare(
+      `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = datetime('now') WHERE id = ?`,
+    ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, documentId);
+  }
+
+  return getDocument(db, documentId);
 }
