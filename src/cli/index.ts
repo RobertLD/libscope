@@ -24,6 +24,8 @@ import {
   getDocumentTags,
 } from "../core/tags.js";
 
+import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
+
 // Graceful shutdown
 process.on("SIGINT", () => {
   closeDatabase();
@@ -624,6 +626,74 @@ function findFiles(dir: string, extensions: Set<string>): string[] {
   walk(dir);
   return results.sort();
 }
+
+// watch
+program
+  .command("watch <directory>")
+  .description("Watch a directory for file changes and automatically re-index")
+  .option(
+    "--extensions <exts>",
+    "Comma-separated file extensions to watch",
+    DEFAULT_WATCH_EXTENSIONS.join(","),
+  )
+  .option("--debounce <ms>", "Debounce interval in milliseconds", "300")
+  .action(async (directory: string, opts: { extensions: string; debounce: string }) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    const extensions = opts.extensions.split(",").map((e) => e.trim().toLowerCase());
+    const debounceMs = parseInt(opts.debounce, 10);
+
+    // Initial scan
+    const extensionSet = new Set(extensions);
+    const files = findFiles(directory, extensionSet);
+    console.log(`Found ${files.length} matching files in ${directory}`);
+
+    let indexed = 0;
+    let skipped = 0;
+    for (const file of files) {
+      try {
+        const content = readFileSync(file, "utf-8");
+        const title = basename(file).replace(/\.[^.]+$/, "");
+        const result = await indexDocument(db, provider, {
+          title,
+          content,
+          sourceType: "manual",
+          url: file,
+        });
+        if (result.chunkCount > 0) {
+          indexed++;
+        } else {
+          skipped++;
+        }
+      } catch {
+        skipped++;
+      }
+    }
+    console.log(`Initial scan: ${indexed} indexed, ${skipped} skipped (unchanged or failed)`);
+    console.log(`\nWatching for changes (extensions: ${extensions.join(", ")})...\n`);
+
+    const watcher = new FileWatcher(db, provider, {
+      directory,
+      extensions,
+      debounceMs,
+      onIndex: (path) => console.log(`  ✓ Indexed: ${path}`),
+      onRemove: (path) => console.log(`  ✗ Removed: ${path}`),
+      onError: (err) => console.error(`  ⚠ Error: ${err.message}`),
+    });
+
+    const cleanup = (): void => {
+      watcher.stop();
+      closeDatabase();
+      process.exit(0);
+    };
+
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
+
+    watcher.start();
+
+    // Keep the process alive
+    await new Promise(() => {});
+  });
 
 // repl (interactive search)
 program

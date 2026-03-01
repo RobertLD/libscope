@@ -48,6 +48,9 @@ export {
 } from "./tags.js";
 export type { Tag, TagWithCount, GetDocumentsByTagOptions } from "./tags.js";
 
+export { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "./watcher.js";
+export type { WatchOptions } from "./watcher.js";
+
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";
