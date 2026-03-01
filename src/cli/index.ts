@@ -43,6 +43,12 @@ import {
 
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
+import {
+  activateLicense,
+  deactivateLicense,
+  getLicenseStatus,
+  getTierName,
+} from "../licensing/index.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -1140,6 +1146,44 @@ workspaceCmd
   .action((name: string) => {
     deleteWorkspace(name);
     console.log(`✓ Workspace "${name}" deleted.`);
+  });
+
+// License management
+const licenseCmd = program.command("license").description("Manage license key");
+
+licenseCmd
+  .command("activate <key>")
+  .description("Activate a license key")
+  .action((key: string) => {
+    setupLogging(program.opts<ProgramOpts>());
+    const result = activateLicense(key);
+    if (result.success) {
+      console.log(`✓ License activated: ${getTierName(result.tier)} tier`);
+    } else {
+      console.error(`✗ Activation failed: ${result.error}`);
+      process.exit(1);
+    }
+  });
+
+licenseCmd
+  .command("status")
+  .description("Show current license status")
+  .action(() => {
+    setupLogging(program.opts<ProgramOpts>());
+    const status = getLicenseStatus();
+    console.log(`Tier: ${getTierName(status.tier)}`);
+    if (status.org) console.log(`Organization: ${status.org}`);
+    if (status.expiresAt) console.log(`Expires: ${status.expiresAt}`);
+    console.log(`Features: ${status.features.join(", ")}`);
+  });
+
+licenseCmd
+  .command("deactivate")
+  .description("Remove stored license key")
+  .action(() => {
+    setupLogging(program.opts<ProgramOpts>());
+    deactivateLicense();
+    console.log("✓ License deactivated. Reverted to free tier.");
   });
 
 program.parse();
