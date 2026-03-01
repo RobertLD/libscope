@@ -41,15 +41,18 @@ program
   .description("Initialize the LibScope database")
   .action(() => {
     const { config, db } = initializeApp();
-    // Only create vector table if provider can be initialized without download
     try {
-      const provider = createEmbeddingProvider(config);
-      createVectorTable(db, provider.dimensions);
-    } catch {
-      console.log("  ℹ Vector table skipped (embedding provider not available)");
+      // Only create vector table if provider can be initialized without download
+      try {
+        const provider = createEmbeddingProvider(config);
+        createVectorTable(db, provider.dimensions);
+      } catch {
+        console.log("  ℹ Vector table skipped (embedding provider not available)");
+      }
+      console.log(`✓ Database initialized at ${config.database.path}`);
+    } finally {
+      closeDatabase();
     }
-    console.log(`✓ Database initialized at ${config.database.path}`);
-    closeDatabase();
   });
 
 // add
@@ -66,35 +69,37 @@ program
       opts: { topic?: string; library?: string; version?: string; title?: string },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
+      try {
+        let content: string;
+        let title: string;
+        let url: string | undefined;
 
-      let content: string;
-      let title: string;
-      let url: string | undefined;
+        if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
+          console.log(`Fetching ${fileOrUrl}...`);
+          const fetched = await fetchAndConvert(fileOrUrl);
+          content = fetched.content;
+          title = opts.title ?? fetched.title;
+          url = fileOrUrl;
+        } else {
+          content = readFileSync(fileOrUrl, "utf-8");
+          title = opts.title ?? basename(fileOrUrl).replace(/\.[^.]+$/, "");
+        }
 
-      if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
-        console.log(`Fetching ${fileOrUrl}...`);
-        const fetched = await fetchAndConvert(fileOrUrl);
-        content = fetched.content;
-        title = opts.title ?? fetched.title;
-        url = fileOrUrl;
-      } else {
-        content = readFileSync(fileOrUrl, "utf-8");
-        title = opts.title ?? basename(fileOrUrl).replace(/\.[^.]+$/, "");
+        const result = await indexDocument(db, provider, {
+          title,
+          content,
+          sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+          library: opts.library,
+          version: opts.version,
+          topicId: opts.topic,
+          url,
+        });
+
+        console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
+        console.log(`  ID: ${result.id}`);
+      } finally {
+        closeDatabase();
       }
-
-      const result = await indexDocument(db, provider, {
-        title,
-        content,
-        sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
-        library: opts.library,
-        version: opts.version,
-        topicId: opts.topic,
-        url,
-      });
-
-      console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
-      console.log(`  ID: ${result.id}`);
-      closeDatabase();
     },
   );
 
@@ -112,50 +117,51 @@ program
       opts: { topic?: string; library?: string; version?: string; extensions: string },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
+      try {
+        const extensions = new Set(opts.extensions.split(",").map((e) => e.trim().toLowerCase()));
+        const files = findFiles(directory, extensions);
 
-      const extensions = new Set(opts.extensions.split(",").map((e) => e.trim().toLowerCase()));
-      const files = findFiles(directory, extensions);
-
-      if (files.length === 0) {
-        console.log(`No matching files found in ${directory}`);
-        closeDatabase();
-        return;
-      }
-
-      console.log(`Found ${files.length} files to import...`);
-      const startTime = Date.now();
-      let indexed = 0;
-      let failed = 0;
-
-      for (const file of files) {
-        try {
-          const content = readFileSync(file, "utf-8");
-          const title = basename(file).replace(/\.[^.]+$/, "");
-
-          const result = await indexDocument(db, provider, {
-            title,
-            content,
-            sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
-            library: opts.library,
-            version: opts.version,
-            topicId: opts.topic,
-          });
-
-          indexed++;
-          console.log(
-            `  [${indexed + failed}/${files.length}] ✓ ${file} (${result.chunkCount} chunks)`,
-          );
-        } catch (err) {
-          failed++;
-          console.error(
-            `  [${indexed + failed}/${files.length}] ✗ ${file}: ${err instanceof Error ? err.message : String(err)}`,
-          );
+        if (files.length === 0) {
+          console.log(`No matching files found in ${directory}`);
+          return;
         }
-      }
 
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`\nDone: ${indexed} indexed, ${failed} failed in ${elapsed}s`);
-      closeDatabase();
+        console.log(`Found ${files.length} files to import...`);
+        const startTime = Date.now();
+        let indexed = 0;
+        let failed = 0;
+
+        for (const file of files) {
+          try {
+            const content = readFileSync(file, "utf-8");
+            const title = basename(file).replace(/\.[^.]+$/, "");
+
+            const result = await indexDocument(db, provider, {
+              title,
+              content,
+              sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+              library: opts.library,
+              version: opts.version,
+              topicId: opts.topic,
+            });
+
+            indexed++;
+            console.log(
+              `  [${indexed + failed}/${files.length}] ✓ ${file} (${result.chunkCount} chunks)`,
+            );
+          } catch (err) {
+            failed++;
+            console.error(
+              `  [${indexed + failed}/${files.length}] ✗ ${file}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`\nDone: ${indexed} indexed, ${failed} failed in ${elapsed}s`);
+      } finally {
+        closeDatabase();
+      }
     },
   );
 
@@ -182,56 +188,55 @@ program
       },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
+      try {
+        const { globSync } = await import("node:fs");
+        const files = globSync(opts.filter, { cwd: directory }).map((f: string) =>
+          join(directory, f),
+        );
+        files.sort();
 
-      const { globSync } = await import("node:fs");
-      const files = globSync(opts.filter, { cwd: directory }).map((f: string) =>
-        join(directory, f),
-      );
-      files.sort();
-
-      if (files.length === 0) {
-        console.log(`No files matching "${opts.filter}" found in ${directory}`);
-        closeDatabase();
-        return;
-      }
-
-      if (opts.dryRun) {
-        console.log(`Found ${files.length} files (dry run):\n`);
-        for (const f of files) {
-          console.log(`  ${f}`);
+        if (files.length === 0) {
+          console.log(`No files matching "${opts.filter}" found in ${directory}`);
+          return;
         }
-        closeDatabase();
-        return;
-      }
 
-      console.log(`Importing ${files.length} files (concurrency: ${opts.concurrency})...`);
-      const startTime = Date.now();
+        if (opts.dryRun) {
+          console.log(`Found ${files.length} files (dry run):\n`);
+          for (const f of files) {
+            console.log(`  ${f}`);
+          }
+          return;
+        }
 
-      const result = await batchImport(db, provider, files, {
-        concurrency: parseInt(opts.concurrency, 10),
-        library: opts.library,
-        version: opts.version,
-        topicId: opts.topic,
-        onProgress: (progress) => {
-          const done = progress.completed + progress.failed;
-          const file = progress.currentFile ?? "";
-          console.log(`  [${done}/${progress.total}] ${file}`);
-        },
-      });
+        console.log(`Importing ${files.length} files (concurrency: ${opts.concurrency})...`);
+        const startTime = Date.now();
 
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`\nDone: ${result.completed} indexed, ${result.failed} failed in ${elapsed}s`);
+        const result = await batchImport(db, provider, files, {
+          concurrency: parseInt(opts.concurrency, 10),
+          library: opts.library,
+          version: opts.version,
+          topicId: opts.topic,
+          onProgress: (progress) => {
+            const done = progress.completed + progress.failed;
+            const file = progress.currentFile ?? "";
+            console.log(`  [${done}/${progress.total}] ${file}`);
+          },
+        });
 
-      if (result.failed > 0) {
-        console.log("\nFailed files:");
-        for (const r of result.results) {
-          if (!r.success) {
-            console.log(`  ✗ ${r.file}: ${r.error}`);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`\nDone: ${result.completed} indexed, ${result.failed} failed in ${elapsed}s`);
+
+        if (result.failed > 0) {
+          console.log("\nFailed files:");
+          for (const r of result.results) {
+            if (!r.success) {
+              console.log(`  ✗ ${r.file}: ${r.error}`);
+            }
           }
         }
+      } finally {
+        closeDatabase();
       }
-
-      closeDatabase();
     },
   );
 
@@ -249,27 +254,29 @@ program
       opts: { topic?: string; library?: string; limit: string; offset: string },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
+      try {
+        const { results, totalCount } = await searchDocuments(db, provider, {
+          query,
+          topic: opts.topic,
+          library: opts.library,
+          limit: parseInt(opts.limit, 10),
+          offset: parseInt(opts.offset, 10),
+        });
 
-      const { results, totalCount } = await searchDocuments(db, provider, {
-        query,
-        topic: opts.topic,
-        library: opts.library,
-        limit: parseInt(opts.limit, 10),
-        offset: parseInt(opts.offset, 10),
-      });
-
-      if (results.length === 0) {
-        console.log("No results found.");
-      } else {
-        console.log(`\nShowing ${results.length} of ${totalCount} results:\n`);
-        for (const r of results) {
-          console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
-          if (r.library) console.log(`  Library: ${r.library}`);
-          if (r.url) console.log(`  Source: ${r.url}`);
-          console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+        if (results.length === 0) {
+          console.log("No results found.");
+        } else {
+          console.log(`\nShowing ${results.length} of ${totalCount} results:\n`);
+          for (const r of results) {
+            console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
+            if (r.library) console.log(`  Library: ${r.library}`);
+            if (r.url) console.log(`  Source: ${r.url}`);
+            console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+          }
         }
+      } finally {
+        closeDatabase();
       }
-      closeDatabase();
     },
   );
 
@@ -281,16 +288,18 @@ topicsCmd
   .description("List all topics")
   .action(() => {
     const { db } = initializeApp();
-
-    const topics = listTopics(db);
-    if (topics.length === 0) {
-      console.log("No topics found. Create one with: libscope topics create <name>");
-    } else {
-      for (const t of topics) {
-        console.log(`  ${t.id} — ${t.name}${t.description ? ` (${t.description})` : ""}`);
+    try {
+      const topics = listTopics(db);
+      if (topics.length === 0) {
+        console.log("No topics found. Create one with: libscope topics create <name>");
+      } else {
+        for (const t of topics) {
+          console.log(`  ${t.id} — ${t.name}${t.description ? ` (${t.description})` : ""}`);
+        }
       }
+    } finally {
+      closeDatabase();
     }
-    closeDatabase();
   });
 
 topicsCmd
@@ -300,14 +309,16 @@ topicsCmd
   .option("--parent <parentId>", "Parent topic ID")
   .action((name: string, opts: { description?: string; parent?: string }) => {
     const { db } = initializeApp();
-
-    const topic = createTopic(db, {
-      name,
-      description: opts.description,
-      parentId: opts.parent,
-    });
-    console.log(`✓ Topic created: ${topic.id} (${topic.name})`);
-    closeDatabase();
+    try {
+      const topic = createTopic(db, {
+        name,
+        description: opts.description,
+        parentId: opts.parent,
+      });
+      console.log(`✓ Topic created: ${topic.id} (${topic.name})`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 // ratings
@@ -318,24 +329,26 @@ ratingsCmd
   .description("Show ratings for a document")
   .action((documentId: string) => {
     const { db } = initializeApp();
+    try {
+      const doc = getDocument(db, documentId);
+      const summary = getDocumentRatings(db, documentId);
+      const ratings = listRatings(db, documentId);
 
-    const doc = getDocument(db, documentId);
-    const summary = getDocumentRatings(db, documentId);
-    const ratings = listRatings(db, documentId);
+      console.log(`\nRatings for: ${doc.title}`);
+      console.log(
+        `  Average: ${summary.averageRating.toFixed(1)}/5 (${summary.totalRatings} ratings)`,
+      );
+      console.log(`  Corrections suggested: ${summary.corrections}`);
 
-    console.log(`\nRatings for: ${doc.title}`);
-    console.log(
-      `  Average: ${summary.averageRating.toFixed(1)}/5 (${summary.totalRatings} ratings)`,
-    );
-    console.log(`  Corrections suggested: ${summary.corrections}`);
-
-    if (ratings.length > 0) {
-      console.log("\nRecent ratings:");
-      for (const r of ratings.slice(0, 10)) {
-        console.log(`  ${r.rating}/5 by ${r.ratedBy} — ${r.feedback ?? "(no feedback)"}`);
+      if (ratings.length > 0) {
+        console.log("\nRecent ratings:");
+        for (const r of ratings.slice(0, 10)) {
+          console.log(`  ${r.rating}/5 by ${r.ratedBy} — ${r.feedback ?? "(no feedback)"}`);
+        }
       }
+    } finally {
+      closeDatabase();
     }
-    closeDatabase();
   });
 
 // docs
@@ -350,27 +363,30 @@ docsCmd
   .option("--limit <n>", "Max results", "50")
   .action((opts: { library?: string; topic?: string; sourceType?: string; limit: string }) => {
     const { db } = initializeApp();
+    try {
+      const docs = listDocuments(db, {
+        library: opts.library,
+        topicId: opts.topic,
+        sourceType: opts.sourceType,
+        limit: parseInt(opts.limit, 10),
+      });
 
-    const docs = listDocuments(db, {
-      library: opts.library,
-      topicId: opts.topic,
-      sourceType: opts.sourceType,
-      limit: parseInt(opts.limit, 10),
-    });
-
-    if (docs.length === 0) {
-      console.log("No documents found.");
-    } else {
-      console.log(`Found ${docs.length} documents:\n`);
-      for (const d of docs) {
-        console.log(`  ${d.id}  ${d.title}`);
-        if (d.library) console.log(`    Library: ${d.library}${d.version ? ` v${d.version}` : ""}`);
-        if (d.url) console.log(`    URL: ${d.url}`);
-        console.log(`    Type: ${d.sourceType}  |  Updated: ${d.updatedAt}`);
-        console.log();
+      if (docs.length === 0) {
+        console.log("No documents found.");
+      } else {
+        console.log(`Found ${docs.length} documents:\n`);
+        for (const d of docs) {
+          console.log(`  ${d.id}  ${d.title}`);
+          if (d.library)
+            console.log(`    Library: ${d.library}${d.version ? ` v${d.version}` : ""}`);
+          if (d.url) console.log(`    URL: ${d.url}`);
+          console.log(`    Type: ${d.sourceType}  |  Updated: ${d.updatedAt}`);
+          console.log();
+        }
       }
+    } finally {
+      closeDatabase();
     }
-    closeDatabase();
   });
 
 docsCmd
@@ -378,19 +394,22 @@ docsCmd
   .description("Show a specific document")
   .action((documentId: string) => {
     const { db } = initializeApp();
-
-    const doc = getDocument(db, documentId);
-    console.log(`\n# ${doc.title}\n`);
-    console.log(`ID: ${doc.id}`);
-    console.log(`Type: ${doc.sourceType}`);
-    if (doc.library) console.log(`Library: ${doc.library}${doc.version ? ` v${doc.version}` : ""}`);
-    if (doc.url) console.log(`URL: ${doc.url}`);
-    console.log(`Submitted by: ${doc.submittedBy}`);
-    console.log(`Created: ${doc.createdAt}`);
-    console.log(`Updated: ${doc.updatedAt}`);
-    console.log(`\n---\n`);
-    console.log(doc.content);
-    closeDatabase();
+    try {
+      const doc = getDocument(db, documentId);
+      console.log(`\n# ${doc.title}\n`);
+      console.log(`ID: ${doc.id}`);
+      console.log(`Type: ${doc.sourceType}`);
+      if (doc.library)
+        console.log(`Library: ${doc.library}${doc.version ? ` v${doc.version}` : ""}`);
+      if (doc.url) console.log(`URL: ${doc.url}`);
+      console.log(`Submitted by: ${doc.submittedBy}`);
+      console.log(`Created: ${doc.createdAt}`);
+      console.log(`Updated: ${doc.updatedAt}`);
+      console.log(`\n---\n`);
+      console.log(doc.content);
+    } finally {
+      closeDatabase();
+    }
   });
 
 docsCmd
@@ -398,11 +417,13 @@ docsCmd
   .description("Delete a document by ID")
   .action((documentId: string) => {
     const { db } = initializeApp();
-
-    const doc = getDocument(db, documentId);
-    deleteDocument(db, documentId);
-    console.log(`✓ Deleted "${doc.title}" (${documentId})`);
-    closeDatabase();
+    try {
+      const doc = getDocument(db, documentId);
+      deleteDocument(db, documentId);
+      console.log(`✓ Deleted "${doc.title}" (${documentId})`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 // export
@@ -411,9 +432,12 @@ program
   .description("Export the knowledge base to a JSON file")
   .action((outputPath: string) => {
     const { db } = initializeApp();
-    const data = exportKnowledgeBase(db, outputPath);
-    console.log(`✓ Exported ${data.metadata.counts.documents} documents to ${outputPath}`);
-    closeDatabase();
+    try {
+      const data = exportKnowledgeBase(db, outputPath);
+      console.log(`✓ Exported ${data.metadata.counts.documents} documents to ${outputPath}`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 // import-backup
@@ -422,9 +446,12 @@ program
   .description("Import knowledge base data from a backup file")
   .action((backupPath: string) => {
     const { db } = initializeApp();
-    const data = importFromBackup(db, backupPath);
-    console.log(`✓ Imported ${data.metadata.counts.documents} documents from ${backupPath}`);
-    closeDatabase();
+    try {
+      const data = importFromBackup(db, backupPath);
+      console.log(`✓ Imported ${data.metadata.counts.documents} documents from ${backupPath}`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 // serve
