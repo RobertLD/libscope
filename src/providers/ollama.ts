@@ -18,6 +18,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    if (!text.trim()) {
+      throw new EmbeddingError("Input text must not be empty");
+    }
     try {
       const response = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
@@ -34,6 +37,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       if (!embedding) {
         throw new Error("Ollama returned empty embeddings");
       }
+      if (embedding.length !== this.dimensions) {
+        throw new EmbeddingError(
+          `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
+        );
+      }
       return embedding;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
@@ -45,6 +53,14 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) {
+      throw new EmbeddingError("Input texts array must not be empty");
+    }
+    for (const t of texts) {
+      if (!t.trim()) {
+        throw new EmbeddingError("Input text must not be empty");
+      }
+    }
     // Ollama supports batch input
     try {
       const response = await fetch(`${this.baseUrl}/api/embed`, {
@@ -62,6 +78,13 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         throw new EmbeddingError(
           `Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`,
         );
+      }
+      for (const emb of data.embeddings) {
+        if (emb.length !== this.dimensions) {
+          throw new EmbeddingError(
+            `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
+          );
+        }
       }
       return data.embeddings;
     } catch (err) {
