@@ -266,7 +266,7 @@ describe("createLlmProvider", () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
-      text: async () => '{"error":{"message":"Invalid API key: sk-test****"}}',
+      text: () => Promise.resolve('{"error":{"message":"Invalid API key: sk-test****"}}'),
     });
 
     try {
