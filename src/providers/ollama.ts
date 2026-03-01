@@ -37,6 +37,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         }
 
         const data = (await response.json()) as { embeddings: number[][] };
+        if (!data.embeddings || !Array.isArray(data.embeddings)) {
+          throw new EmbeddingError(
+            `Unexpected Ollama response shape: ${JSON.stringify(Object.keys(data))}`,
+          );
+        }
         const embedding = data.embeddings[0];
         if (!embedding) {
           throw new Error("Ollama returned empty embeddings");
@@ -81,6 +86,11 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         }
 
         const data = (await response.json()) as { embeddings: number[][] };
+        if (!data.embeddings || !Array.isArray(data.embeddings)) {
+          throw new EmbeddingError(
+            `Unexpected Ollama response shape: ${JSON.stringify(Object.keys(data))}`,
+          );
+        }
         if (data.embeddings.length !== texts.length) {
           throw new EmbeddingError(
             `Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`,
