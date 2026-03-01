@@ -9,7 +9,7 @@ class LibscopeError(Exception):
         super().__init__(message)
 
 
-class ConnectionError(LibscopeError):
+class LibscopeConnectionError(LibscopeError):
     """Raised when the SDK cannot connect to the libscope server."""
 
     def __init__(self, message: str = "Could not connect to libscope server") -> None:

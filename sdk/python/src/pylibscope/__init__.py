@@ -1,14 +1,14 @@
 """Python SDK for the libscope AI knowledge base."""
 
-from libscope.client import AsyncLibscopeClient, LibscopeClient
-from libscope.exceptions import (
-    ConnectionError,
+from pylibscope.client import AsyncLibscopeClient, LibscopeClient
+from pylibscope.exceptions import (
+    LibscopeConnectionError,
     LibscopeError,
     NotFoundError,
     ServerError,
     ValidationError,
 )
-from libscope.models import (
+from pylibscope.models import (
     Analytics,
     AskResult,
     Document,
@@ -35,7 +35,7 @@ __all__ = [
     "GraphEdge",
     "SyncResult",
     "LibscopeError",
-    "ConnectionError",
+    "LibscopeConnectionError",
     "NotFoundError",
     "ValidationError",
     "ServerError",
