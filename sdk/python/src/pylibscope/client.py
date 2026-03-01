@@ -6,15 +6,15 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from libscope.connectors import build_connector_config
-from libscope.exceptions import (
-    ConnectionError,
+from pylibscope.connectors import build_connector_config
+from pylibscope.exceptions import (
+    LibscopeConnectionError,
     LibscopeError,
     NotFoundError,
     ServerError,
     ValidationError,
 )
-from libscope.models import (
+from pylibscope.models import (
     Analytics,
     AskResult,
     Document,
@@ -156,7 +156,7 @@ class LibscopeClient:
         try:
             resp = self._client.request(method, self._url(path), **kwargs)
         except httpx.ConnectError as exc:
-            raise ConnectionError(str(exc)) from exc
+            raise LibscopeConnectionError(str(exc)) from exc
         _raise_for_error(resp)
         return resp
 
@@ -386,7 +386,7 @@ class AsyncLibscopeClient:
         try:
             resp = await self._client.request(method, self._url(path), **kwargs)
         except httpx.ConnectError as exc:
-            raise ConnectionError(str(exc)) from exc
+            raise LibscopeConnectionError(str(exc)) from exc
         _raise_for_error(resp)
         return resp
 

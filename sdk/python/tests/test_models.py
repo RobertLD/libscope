@@ -1,6 +1,6 @@
 """Tests for libscope Pydantic models."""
 
-from libscope.models import (
+from pylibscope.models import (
     Analytics,
     AskResult,
     Document,

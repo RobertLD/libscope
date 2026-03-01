@@ -4,14 +4,14 @@ import httpx
 import pytest
 import respx
 
-from libscope.client import AsyncLibscopeClient, LibscopeClient
-from libscope.exceptions import (
-    ConnectionError,
+from pylibscope.client import AsyncLibscopeClient, LibscopeClient
+from pylibscope.exceptions import (
+    LibscopeConnectionError,
     NotFoundError,
     ServerError,
     ValidationError,
 )
-from libscope.models import Analytics, AskResult, Document, SearchResult, Topic
+from pylibscope.models import Analytics, AskResult, Document, SearchResult, Topic
 
 BASE = "http://localhost:3378"
 API = f"{BASE}/api/v1"
@@ -264,7 +264,7 @@ class TestLibscopeClientErrors:
 
     def test_connection_refused(self):
         client = LibscopeClient(base_url="http://localhost:19999")
-        with pytest.raises(ConnectionError):
+        with pytest.raises(LibscopeConnectionError):
             client.search("hello")
         client.close()
 

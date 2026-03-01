@@ -1,6 +1,6 @@
 """Quick-start example for the libscope Python SDK."""
 
-from libscope import LibscopeClient
+from pylibscope import LibscopeClient
 
 # Connect to a local libscope server (default: http://localhost:3378)
 with LibscopeClient() as client:
