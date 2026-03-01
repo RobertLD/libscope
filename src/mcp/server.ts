@@ -5,7 +5,7 @@ import { loadConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
-import { getDocument, listDocuments } from "../core/documents.js";
+import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
 import { listTopics } from "../core/topics.js";
@@ -172,6 +172,27 @@ async function main(): Promise<void> {
         doc.content;
 
       return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
+  // Tool: delete-document
+  server.tool(
+    "delete-document",
+    "Delete a document from the knowledge base by its ID",
+    {
+      documentId: z.string().describe("The document ID to delete"),
+    },
+    withErrorHandling((params) => {
+      deleteDocument(db, params.documentId);
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Document ${params.documentId} has been deleted successfully.`,
+          },
+        ],
+      };
     }),
   );
 
