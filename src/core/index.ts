@@ -4,6 +4,9 @@ export type { IndexDocumentInput, IndexedDocument } from "./indexing.js";
 export { checkDuplicate, findDuplicates } from "./dedup.js";
 export type { DedupResult, DedupOptions, DuplicateGroup } from "./dedup.js";
 
+export { reindexEmbeddings } from "./reindex.js";
+export type { ReindexOptions, ReindexResult } from "./reindex.js";
+
 export { searchDocuments } from "./search.js";
 export type { SearchOptions, SearchResult, SearchMethod, ScoreExplanation } from "./search.js";
 
@@ -87,3 +90,15 @@ export type { ReindexOptions, ReindexResult, ReindexProgress } from "./reindex.j
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";
+
+export {
+  createWorkspace,
+  deleteWorkspace,
+  listWorkspaces,
+  getWorkspacePath,
+  getWorkspacesDir,
+  getActiveWorkspace,
+  setActiveWorkspace,
+  DEFAULT_WORKSPACE,
+} from "./workspace.js";
+export type { Workspace } from "./workspace.js";
