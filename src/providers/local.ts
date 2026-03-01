@@ -33,18 +33,35 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    if (!text.trim()) {
+      throw new EmbeddingError("Input text must not be empty");
+    }
     await this.ensureInitialized();
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       const output = await (this.pipeline as any)(text, { pooling: "mean", normalize: true });
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      return Array.from(output.data as Float32Array);
+      const embedding = Array.from(output.data as Float32Array);
+      if (embedding.length !== this.dimensions) {
+        throw new EmbeddingError(
+          `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
+        );
+      }
+      return embedding;
     } catch (err) {
       throw new EmbeddingError(`Failed to generate embedding: ${String(err)}`, err);
     }
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) {
+      throw new EmbeddingError("Input texts array must not be empty");
+    }
+    for (const t of texts) {
+      if (!t.trim()) {
+        throw new EmbeddingError("Input text must not be empty");
+      }
+    }
     // Process sequentially to avoid memory issues with local model
     const results: number[][] = [];
     for (const text of texts) {

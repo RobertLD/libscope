@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { loadConfig, saveUserConfig, type LibScopeConfig } from "../config.js";
+import { loadConfig, saveUserConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
-import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
+import { createEmbeddingProvider } from "../providers/index.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
 import { initLogger, type LogLevel } from "../logger.js";
-import type Database from "better-sqlite3";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
@@ -370,7 +369,7 @@ function setupLogging(opts: ProgramOpts): void {
 }
 
 /** Shared CLI initialization: loadConfig → setupLogging → getDatabase → runMigrations. */
-function initializeApp(): { config: LibScopeConfig; db: Database.Database } {
+function initializeApp() {
   const config = loadConfig();
   setupLogging(program.opts());
   const db = getDatabase(config.database.path);
@@ -379,11 +378,7 @@ function initializeApp(): { config: LibScopeConfig; db: Database.Database } {
 }
 
 /** Initialization with an embedding provider and vector table. */
-function initializeAppWithEmbedding(): {
-  config: LibScopeConfig;
-  db: Database.Database;
-  provider: EmbeddingProvider;
-} {
+function initializeAppWithEmbedding() {
   const { config, db } = initializeApp();
   const provider = createEmbeddingProvider(config);
   createVectorTable(db, provider.dimensions);

@@ -20,6 +20,9 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    if (!text.trim()) {
+      throw new EmbeddingError("Input text must not be empty");
+    }
     try {
       const response = await this.client.embeddings.create({
         model: this.model,
@@ -28,6 +31,11 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       const embedding = response.data[0]?.embedding;
       if (!embedding) {
         throw new Error("OpenAI returned empty embedding");
+      }
+      if (embedding.length !== this.dimensions) {
+        throw new EmbeddingError(
+          `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
+        );
       }
       return embedding;
     } catch (err) {
@@ -40,6 +48,14 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) {
+      throw new EmbeddingError("Input texts array must not be empty");
+    }
+    for (const t of texts) {
+      if (!t.trim()) {
+        throw new EmbeddingError("Input text must not be empty");
+      }
+    }
     try {
       const response = await this.client.embeddings.create({
         model: this.model,
@@ -50,7 +66,15 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
           `OpenAI returned ${response.data.length} embeddings for ${texts.length} inputs`,
         );
       }
-      return response.data.map((d) => d.embedding);
+      const embeddings = response.data.map((d) => d.embedding);
+      for (const emb of embeddings) {
+        if (emb.length !== this.dimensions) {
+          throw new EmbeddingError(
+            `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
+          );
+        }
+      }
+      return embeddings;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(
