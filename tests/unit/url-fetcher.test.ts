@@ -4,22 +4,74 @@ import { FetchError } from "../../src/errors.js";
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-// Import after mocking fetch
-const { fetchAndConvert } = await import("../../src/core/url-fetcher.js");
+const mockResolve4 = vi.fn();
+const mockResolve6 = vi.fn();
+vi.mock("node:dns", () => ({
+  promises: {
+    resolve4: (...args: unknown[]): Promise<string[]> => mockResolve4(...args) as Promise<string[]>,
+    resolve6: (...args: unknown[]): Promise<string[]> => mockResolve6(...args) as Promise<string[]>,
+  },
+}));
+
+// Import after mocking fetch and dns
+const { fetchAndConvert, isPrivateIP } = await import("../../src/core/url-fetcher.js");
+
+/** Helper: create a readable stream from a string. */
+function bodyStream(text: string): ReadableStream<Uint8Array> {
+  const encoded = new TextEncoder().encode(text);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoded);
+      controller.close();
+    },
+  });
+}
+
+describe("isPrivateIP", () => {
+  it.each([
+    "127.0.0.1",
+    "127.255.255.255",
+    "10.0.0.1",
+    "10.255.255.255",
+    "172.16.0.1",
+    "172.31.255.255",
+    "192.168.0.1",
+    "192.168.255.255",
+    "169.254.1.1",
+    "0.0.0.0",
+    "::1",
+    "fc00::1",
+    "fd12::1",
+    "fe80::1",
+  ])("should detect %s as private", (ip) => {
+    expect(isPrivateIP(ip)).toBe(true);
+  });
+
+  it.each(["8.8.8.8", "1.1.1.1", "93.184.216.34", "2607:f8b0:4004:800::200e"])(
+    "should detect %s as public",
+    (ip) => {
+      expect(isPrivateIP(ip)).toBe(false);
+    },
+  );
+});
 
 describe("fetchAndConvert", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockResolve4.mockReset();
+    mockResolve6.mockReset();
+    mockResolve4.mockResolvedValue(["93.184.216.34"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
   });
 
   it("should fetch HTML and convert to text with title from <title> tag", async () => {
+    const html =
+      "<html><head><title>My Page</title></head><body><h1>Hello</h1><p>World</p></body></html>";
     mockFetch.mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "text/html" }),
-      text: () =>
-        Promise.resolve(
-          "<html><head><title>My Page</title></head><body><h1>Hello</h1><p>World</p></body></html>",
-        ),
+      body: bodyStream(html),
+      text: () => Promise.resolve(html),
     });
 
     const result = await fetchAndConvert("https://example.com/page");
@@ -29,10 +81,12 @@ describe("fetchAndConvert", () => {
   });
 
   it("should return markdown/plain text as-is", async () => {
+    const md = "# Markdown Title\n\nSome content here.";
     mockFetch.mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "text/markdown" }),
-      text: () => Promise.resolve("# Markdown Title\n\nSome content here."),
+      body: bodyStream(md),
+      text: () => Promise.resolve(md),
     });
 
     const result = await fetchAndConvert("https://example.com/readme.md");
@@ -41,10 +95,12 @@ describe("fetchAndConvert", () => {
   });
 
   it("should return plain text as-is", async () => {
+    const txt = "Just plain text without headings.";
     mockFetch.mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "text/plain" }),
-      text: () => Promise.resolve("Just plain text without headings."),
+      body: bodyStream(txt),
+      text: () => Promise.resolve(txt),
     });
 
     const result = await fetchAndConvert("https://example.com/notes.txt");
@@ -70,10 +126,12 @@ describe("fetchAndConvert", () => {
   });
 
   it("should extract title from first markdown heading", async () => {
+    const md = "Some preamble\n# The Real Title\n\nBody text.";
     mockFetch.mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "text/markdown" }),
-      text: () => Promise.resolve("Some preamble\n# The Real Title\n\nBody text."),
+      body: bodyStream(md),
+      text: () => Promise.resolve(md),
     });
 
     const result = await fetchAndConvert("https://example.com/doc");
@@ -81,10 +139,12 @@ describe("fetchAndConvert", () => {
   });
 
   it("should fall back to URL path for title when no heading or title tag", async () => {
+    const txt = "No headings here at all.";
     mockFetch.mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "text/plain" }),
-      text: () => Promise.resolve("No headings here at all."),
+      body: bodyStream(txt),
+      text: () => Promise.resolve(txt),
     });
 
     const result = await fetchAndConvert("https://example.com/my-doc-page");
@@ -103,6 +163,7 @@ describe("fetchAndConvert", () => {
     mockFetch.mockResolvedValue({
       ok: true,
       headers: new Headers({ "content-type": "text/html" }),
+      body: bodyStream(html),
       text: () => Promise.resolve(html),
     });
 
@@ -112,5 +173,118 @@ describe("fetchAndConvert", () => {
     expect(result.content).toContain("const x = 1;");
     expect(result.content).toContain("Item one");
     expect(result.content).toContain("[Click here](https://link.com)");
+  });
+});
+
+describe("SSRF protection", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockResolve4.mockReset();
+    mockResolve6.mockReset();
+  });
+
+  it("should block file:// URLs", async () => {
+    await expect(fetchAndConvert("file:///etc/passwd")).rejects.toThrow(/Blocked scheme/);
+  });
+
+  it("should block ftp:// URLs", async () => {
+    await expect(fetchAndConvert("ftp://evil.com/data")).rejects.toThrow(/Blocked scheme/);
+  });
+
+  it("should block requests resolving to 127.0.0.1", async () => {
+    mockResolve4.mockResolvedValue(["127.0.0.1"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
+
+    await expect(fetchAndConvert("https://evil.com/steal")).rejects.toThrow(/private\/internal IP/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("should block requests resolving to 10.x.x.x", async () => {
+    mockResolve4.mockResolvedValue(["10.0.0.5"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
+
+    await expect(fetchAndConvert("https://sneaky.com/")).rejects.toThrow(/private\/internal IP/);
+  });
+
+  it("should block requests resolving to 192.168.x.x", async () => {
+    mockResolve4.mockResolvedValue(["192.168.1.1"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
+
+    await expect(fetchAndConvert("https://internal.com/")).rejects.toThrow(/private\/internal IP/);
+  });
+
+  it("should block requests resolving to ::1", async () => {
+    mockResolve4.mockRejectedValue(new Error("no A"));
+    mockResolve6.mockResolvedValue(["::1"]);
+
+    await expect(fetchAndConvert("https://ipv6loop.com/")).rejects.toThrow(/private\/internal IP/);
+  });
+
+  it("should allow requests resolving to public IPs", async () => {
+    mockResolve4.mockResolvedValue(["93.184.216.34"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
+
+    const txt = "safe content";
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/plain" }),
+      body: bodyStream(txt),
+      text: () => Promise.resolve(txt),
+    });
+
+    const result = await fetchAndConvert("https://example.com/page");
+    expect(result.content).toBe("safe content");
+  });
+
+  it("should throw if DNS resolution fails completely", async () => {
+    mockResolve4.mockRejectedValue(new Error("ENOTFOUND"));
+    mockResolve6.mockRejectedValue(new Error("ENOTFOUND"));
+
+    await expect(fetchAndConvert("https://nonexistent.invalid/")).rejects.toThrow(
+      /DNS resolution failed/,
+    );
+  });
+});
+
+describe("streaming body size limit", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockResolve4.mockReset();
+    mockResolve6.mockReset();
+    mockResolve4.mockResolvedValue(["93.184.216.34"]);
+    mockResolve6.mockRejectedValue(new Error("no AAAA"));
+  });
+
+  it("should abort when streamed body exceeds 10 MB regardless of Content-Length header", async () => {
+    const bigChunk = new Uint8Array(11 * 1024 * 1024); // 11 MB
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bigChunk);
+        controller.close();
+      },
+    });
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/plain", "content-length": "100" }),
+      body: stream,
+    });
+
+    await expect(fetchAndConvert("https://example.com/big")).rejects.toThrow(
+      /Response body too large/,
+    );
+  });
+
+  it("should accept body under the limit", async () => {
+    const txt = "Small body";
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/plain" }),
+      body: bodyStream(txt),
+      text: () => Promise.resolve(txt),
+    });
+
+    const result = await fetchAndConvert("https://example.com/small");
+    expect(result.content).toBe("Small body");
   });
 });
