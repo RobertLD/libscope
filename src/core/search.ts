@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { withCorrelationId, createChildLogger } from "../logger.js";
+import { validateCountRow } from "../utils/db-validation.js";
 
 /** Errors that indicate the vector table is missing or unusable – safe to fall back from. */
 const VECTOR_TABLE_MISSING_PATTERNS = [
@@ -119,17 +120,17 @@ export async function searchDocuments(
       params.push(options.minRating);
     }
 
+    // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
+    const baseSql = sql;
+    const baseParams = [...params];
+    const totalCount = validateCountRow(
+      db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
+      "vector search count",
+    );
+
     sql += ` ORDER BY candidates.distance LIMIT ? OFFSET ?`;
     params.push(limit);
     params.push(offset);
-
-    // Count total results (without LIMIT/OFFSET)
-    const countSql = sql.replace(/ORDER BY candidates\.distance LIMIT \? OFFSET \?/, "");
-    const countParams = params.slice(0, -2);
-    const countRow = db
-      .prepare(`SELECT COUNT(*) AS cnt FROM (${countSql})`)
-      .get(...countParams) as { cnt: number };
-    const totalCount = countRow.cnt;
 
     const rows = db.prepare(sql).all(...params) as Array<{
       chunk_id: string;
@@ -232,17 +233,17 @@ function keywordSearch(
     params.push(options.minRating);
   }
 
+  // Build count query from base SQL (before adding LIMIT/OFFSET)
+  const baseSql = sql;
+  const baseParams = [...params];
+  const totalCount = validateCountRow(
+    db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
+    "keyword search count",
+  );
+
   sql += " LIMIT ? OFFSET ?";
   params.push(limit);
   params.push(offset);
-
-  // Count total results
-  const countSql = sql.replace(/ LIMIT \? OFFSET \?$/, "");
-  const countParams = params.slice(0, -2);
-  const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM (${countSql})`).get(...countParams) as {
-    cnt: number;
-  };
-  const totalCount = countRow.cnt;
 
   const rows = db.prepare(sql).all(...params) as Array<{
     chunk_id: string;
@@ -329,17 +330,17 @@ function fts5Search(
     params.push(options.minRating);
   }
 
+  // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
+  const baseSql = sql;
+  const baseParams = [...params];
+  const totalCount = validateCountRow(
+    db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
+    "FTS5 search count",
+  );
+
   sql += " ORDER BY rank LIMIT ? OFFSET ?";
   params.push(limit);
   params.push(offset);
-
-  // Count total results
-  const countSql = sql.replace(/ ORDER BY rank LIMIT \? OFFSET \?$/, "");
-  const countParams = params.slice(0, -2);
-  const countRow = db.prepare(`SELECT COUNT(*) AS cnt FROM (${countSql})`).get(...countParams) as {
-    cnt: number;
-  };
-  const totalCount = countRow.cnt;
 
   const rows = db.prepare(sql).all(...params) as Array<{
     chunk_id: string;

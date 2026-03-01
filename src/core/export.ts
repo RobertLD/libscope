@@ -64,9 +64,22 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
 
   try {
     const raw = readFileSync(backupPath, "utf-8");
-    const data = JSON.parse(raw) as ExportData;
+    const data = JSON.parse(raw) as unknown;
 
-    if (!data.metadata?.version) {
+    if (data == null || typeof data !== "object") {
+      throw new DatabaseError("Invalid backup file: expected an object");
+    }
+
+    const record = data as Record<string, unknown>;
+    const requiredKeys = ["metadata", "topics", "documents", "chunks", "ratings"];
+    for (const key of requiredKeys) {
+      if (!(key in record)) {
+        throw new DatabaseError(`Invalid backup file: missing ${key}`);
+      }
+    }
+    const parsed = data as ExportData;
+
+    if (!parsed.metadata?.version) {
       throw new DatabaseError("Invalid backup file: missing metadata");
     }
 
@@ -91,20 +104,20 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
     );
 
     const importAll = db.transaction(() => {
-      for (const topic of data.topics) insertTopic.run(topic);
-      for (const doc of data.documents) {
+      for (const topic of parsed.topics) insertTopic.run(topic);
+      for (const doc of parsed.documents) {
         // Handle older backups that don't include content_hash
         if (doc.content_hash === undefined) doc.content_hash = null;
         insertDocument.run(doc);
       }
-      for (const chunk of data.chunks) insertChunk.run(chunk);
-      for (const rating of data.ratings) insertRating.run(rating);
+      for (const chunk of parsed.chunks) insertChunk.run(chunk);
+      for (const rating of parsed.ratings) insertRating.run(rating);
     });
 
     importAll();
 
-    log.info({ backupPath, counts: data.metadata.counts }, "Knowledge base imported from backup");
-    return data;
+    log.info({ backupPath, counts: parsed.metadata.counts }, "Knowledge base imported from backup");
+    return parsed;
   } catch (err) {
     if (err instanceof DatabaseError) throw err;
     throw new DatabaseError("Failed to import from backup", err);
