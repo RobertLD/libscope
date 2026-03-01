@@ -4,11 +4,14 @@ import { createTestDb } from "../fixtures/test-db.js";
 import { insertDoc, insertChunk } from "../fixtures/helpers.js";
 import {
   logSearch,
+  recordSearchQuery,
   getStats,
   getPopularDocuments,
   getStaleDocuments,
   getTopQueries,
   getSearchTrends,
+  getSearchAnalytics,
+  getKnowledgeGaps,
 } from "../../src/core/analytics.js";
 
 describe("analytics", () => {
@@ -175,6 +178,127 @@ describe("analytics", () => {
       const today = trends[trends.length - 1]!;
       expect(today.count).toBe(2);
       expect(today.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+  });
+
+  describe("recordSearchQuery", () => {
+    it("should insert a row into search_queries", () => {
+      recordSearchQuery(db, {
+        query: "react hooks",
+        resultCount: 5,
+        topScore: 0.95,
+        searchType: "vector",
+      });
+
+      const row = db
+        .prepare("SELECT * FROM search_queries WHERE query = ?")
+        .get("react hooks") as Record<string, unknown>;
+      expect(row.query).toBe("react hooks");
+      expect(row.result_count).toBe(5);
+      expect(row.top_score).toBe(0.95);
+      expect(row.search_type).toBe("vector");
+    });
+
+    it("should not throw when table is missing", () => {
+      db.exec("DROP TABLE IF EXISTS search_queries");
+      expect(() =>
+        recordSearchQuery(db, {
+          query: "test",
+          resultCount: 0,
+          topScore: null,
+          searchType: "fts5",
+        }),
+      ).not.toThrow();
+    });
+  });
+
+  describe("getSearchAnalytics", () => {
+    it("should return aggregated search analytics", () => {
+      recordSearchQuery(db, {
+        query: "react",
+        resultCount: 3,
+        topScore: 0.9,
+        searchType: "vector",
+      });
+      recordSearchQuery(db, {
+        query: "react",
+        resultCount: 5,
+        topScore: 0.95,
+        searchType: "vector",
+      });
+      recordSearchQuery(db, { query: "vue", resultCount: 0, topScore: null, searchType: "fts5" });
+      recordSearchQuery(db, {
+        query: "angular",
+        resultCount: 0,
+        topScore: null,
+        searchType: "fts5",
+      });
+
+      const analytics = getSearchAnalytics(db, 30);
+      expect(analytics.totalSearches).toBe(4);
+      expect(analytics.avgResultCount).toBe(2);
+      expect(analytics.topQueries).toHaveLength(3);
+      expect(analytics.topQueries[0]!.query).toBe("react");
+      expect(analytics.topQueries[0]!.count).toBe(2);
+      expect(analytics.zeroResultQueries).toHaveLength(2);
+      expect(analytics.queriesPerDay.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should return empty analytics when no data", () => {
+      const analytics = getSearchAnalytics(db, 30);
+      expect(analytics.totalSearches).toBe(0);
+      expect(analytics.avgResultCount).toBe(0);
+      expect(analytics.topQueries).toHaveLength(0);
+      expect(analytics.zeroResultQueries).toHaveLength(0);
+      expect(analytics.queriesPerDay).toHaveLength(0);
+    });
+  });
+
+  describe("getKnowledgeGaps", () => {
+    it("should identify queries with zero results", () => {
+      recordSearchQuery(db, {
+        query: "react",
+        resultCount: 3,
+        topScore: 0.9,
+        searchType: "vector",
+      });
+      recordSearchQuery(db, {
+        query: "missing topic",
+        resultCount: 0,
+        topScore: null,
+        searchType: "fts5",
+      });
+      recordSearchQuery(db, {
+        query: "missing topic",
+        resultCount: 0,
+        topScore: null,
+        searchType: "fts5",
+      });
+      recordSearchQuery(db, {
+        query: "another gap",
+        resultCount: 0,
+        topScore: null,
+        searchType: "keyword",
+      });
+
+      const gaps = getKnowledgeGaps(db, 30);
+      expect(gaps).toHaveLength(2);
+      expect(gaps[0]!.query).toBe("missing topic");
+      expect(gaps[0]!.count).toBe(2);
+      expect(gaps[0]!.lastSearched).toBeTruthy();
+      expect(gaps[1]!.query).toBe("another gap");
+      expect(gaps[1]!.count).toBe(1);
+    });
+
+    it("should return empty when all queries have results", () => {
+      recordSearchQuery(db, {
+        query: "react",
+        resultCount: 5,
+        topScore: 0.9,
+        searchType: "vector",
+      });
+      const gaps = getKnowledgeGaps(db, 30);
+      expect(gaps).toHaveLength(0);
     });
   });
 });

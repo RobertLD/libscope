@@ -784,6 +784,37 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: search-analytics
+  server.tool(
+    "search-analytics",
+    "View search analytics dashboard and knowledge gap detection",
+    {
+      days: z.number().optional().describe("Look-back period in days (default: 30)"),
+    },
+    withErrorHandling(async (params) => {
+      const { getSearchAnalytics, getKnowledgeGaps } = await import("../core/analytics.js");
+      const days = params.days ?? 30;
+      const analytics = getSearchAnalytics(db, days);
+      const gaps = getKnowledgeGaps(db, days);
+
+      const lines: string[] = [
+        `Search Analytics (last ${days} days)`,
+        `Total searches: ${analytics.totalSearches}`,
+        `Avg result count: ${analytics.avgResultCount}`,
+        "",
+        "Top queries:",
+        ...analytics.topQueries.map((q) => `  ${q.count}x  ${q.query}`),
+        "",
+        "Zero-result queries:",
+        ...analytics.zeroResultQueries.map((q) => `  ${q.count}x  ${q.query}`),
+        "",
+        "Knowledge gaps:",
+        ...gaps.map((g) => `  ${g.count}x  ${g.query} (last: ${g.lastSearched})`),
+      ];
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    }),
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
