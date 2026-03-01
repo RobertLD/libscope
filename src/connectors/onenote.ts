@@ -7,6 +7,7 @@ import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
+import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -386,135 +387,149 @@ export async function syncOneNote(
     throw new LibScopeError("No access token provided", "ONENOTE_AUTH_ERROR");
   }
 
-  const result: OneNoteSyncResult = {
-    notebooks: 0,
-    sections: 0,
-    pagesAdded: 0,
-    pagesUpdated: 0,
-    pagesDeleted: 0,
-    errors: [],
-  };
+  const syncId = startSync(db, "onenote", "onenote");
 
-  log.info("Starting OneNote sync");
+  try {
+    const result: OneNoteSyncResult = {
+      notebooks: 0,
+      sections: 0,
+      pagesAdded: 0,
+      pagesUpdated: 0,
+      pagesDeleted: 0,
+      errors: [],
+    };
 
-  const allNotebooks = await listNotebooks(token);
-  const targetNotebooks =
-    config.notebooks.length === 1 && config.notebooks[0] === "all"
-      ? allNotebooks
-      : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
+    log.info("Starting OneNote sync");
 
-  result.notebooks = targetNotebooks.length;
+    const allNotebooks = await listNotebooks(token);
+    const targetNotebooks =
+      config.notebooks.length === 1 && config.notebooks[0] === "all"
+        ? allNotebooks
+        : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
 
-  // Track which source URLs we see this sync for deletion detection
-  const seenSourceUrls = new Set<string>();
+    result.notebooks = targetNotebooks.length;
 
-  for (const notebook of targetNotebooks) {
-    const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
+    // Track which source URLs we see this sync for deletion detection
+    const seenSourceUrls = new Set<string>();
 
-    let sections: GraphSection[];
-    try {
-      sections = await listSections(token, notebook.id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result.errors.push({ page: `${notebook.displayName}/*`, error: msg });
-      continue;
-    }
+    for (const notebook of targetNotebooks) {
+      const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
 
-    const filteredSections = sections.filter(
-      (s) => !config.excludeSections.includes(s.displayName),
-    );
-
-    result.sections += filteredSections.length;
-
-    for (const section of filteredSections) {
-      const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
-
-      let pages: GraphPage[];
+      let sections: GraphSection[];
       try {
-        pages = await listPages(token, section.id);
+        sections = await listSections(token, notebook.id);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        result.errors.push({
-          page: `${notebook.displayName}/${section.displayName}/*`,
-          error: msg,
-        });
+        result.errors.push({ page: `${notebook.displayName}/*`, error: msg });
         continue;
       }
 
-      for (const page of pages) {
-        const sourceUrl = buildSourceUrl(notebook.displayName, section.displayName, page.title);
-        seenSourceUrls.add(sourceUrl);
+      const filteredSections = sections.filter(
+        (s) => !config.excludeSections.includes(s.displayName),
+      );
 
-        // Incremental sync: skip unchanged pages
-        if (config.lastSync && page.lastModifiedDateTime <= config.lastSync) {
+      result.sections += filteredSections.length;
+
+      for (const section of filteredSections) {
+        const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
+
+        let pages: GraphPage[];
+        try {
+          pages = await listPages(token, section.id);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          result.errors.push({
+            page: `${notebook.displayName}/${section.displayName}/*`,
+            error: msg,
+          });
           continue;
         }
 
-        try {
-          const html = await getPageContent(token, page.id);
-          const markdown = convertOneNoteHtml(html);
+        for (const page of pages) {
+          const sourceUrl = buildSourceUrl(notebook.displayName, section.displayName, page.title);
+          seenSourceUrls.add(sourceUrl);
 
-          // Check if page already exists (update vs add)
-          const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(sourceUrl) as
-            | { id: string }
-            | undefined;
-
-          if (existing) {
-            deleteDocument(db, existing.id);
-            result.pagesUpdated++;
-          } else {
-            result.pagesAdded++;
+          // Incremental sync: skip unchanged pages
+          if (config.lastSync && page.lastModifiedDateTime <= config.lastSync) {
+            continue;
           }
 
-          await indexDocument(db, provider, {
-            title: page.title,
-            content: markdown,
-            sourceType: "topic",
-            topicId: sectionTopicId,
-            url: sourceUrl,
-            submittedBy: "crawler",
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.error({ page: page.title, err }, "Failed to sync page");
-          result.errors.push({ page: page.title, error: msg });
+          try {
+            const html = await getPageContent(token, page.id);
+            const markdown = convertOneNoteHtml(html);
+
+            // Check if page already exists (update vs add)
+            const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(sourceUrl) as
+              | { id: string }
+              | undefined;
+
+            if (existing) {
+              deleteDocument(db, existing.id);
+              result.pagesUpdated++;
+            } else {
+              result.pagesAdded++;
+            }
+
+            await indexDocument(db, provider, {
+              title: page.title,
+              content: markdown,
+              sourceType: "topic",
+              topicId: sectionTopicId,
+              url: sourceUrl,
+              submittedBy: "crawler",
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error({ page: page.title, err }, "Failed to sync page");
+            result.errors.push({ page: page.title, error: msg });
+          }
         }
       }
     }
-  }
 
-  // Delete pages that no longer exist in OneNote
-  const existingOneNoteDocs = db
-    .prepare("SELECT id, url FROM documents WHERE url LIKE 'onenote://%'")
-    .all() as Array<{ id: string; url: string }>;
+    // Delete pages that no longer exist in OneNote
+    const existingOneNoteDocs = db
+      .prepare("SELECT id, url FROM documents WHERE url LIKE 'onenote://%'")
+      .all() as Array<{ id: string; url: string }>;
 
-  for (const doc of existingOneNoteDocs) {
-    if (!seenSourceUrls.has(doc.url)) {
-      deleteDocument(db, doc.id);
-      result.pagesDeleted++;
+    for (const doc of existingOneNoteDocs) {
+      if (!seenSourceUrls.has(doc.url)) {
+        deleteDocument(db, doc.id);
+        result.pagesDeleted++;
+      }
     }
+
+    // Save sync timestamp
+    const connConfig = loadConnectorConfig();
+    const onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
+    onenoteConf.lastSync = new Date().toISOString();
+    connConfig.onenote = onenoteConf;
+    saveConnectorConfig(connConfig);
+
+    log.info(
+      {
+        notebooks: result.notebooks,
+        sections: result.sections,
+        pagesAdded: result.pagesAdded,
+        pagesUpdated: result.pagesUpdated,
+        pagesDeleted: result.pagesDeleted,
+        errors: result.errors.length,
+      },
+      "OneNote sync complete",
+    );
+
+    completeSync(db, syncId, {
+      added: result.pagesAdded,
+      updated: result.pagesUpdated,
+      deleted: result.pagesDeleted,
+      errored: result.errors.length,
+    });
+
+    return result;
+  } catch (err) {
+    failSync(db, syncId, err instanceof Error ? err.message : String(err));
+    throw err;
   }
-
-  // Save sync timestamp
-  const connConfig = loadConnectorConfig();
-  const onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
-  onenoteConf.lastSync = new Date().toISOString();
-  connConfig.onenote = onenoteConf;
-  saveConnectorConfig(connConfig);
-
-  log.info(
-    {
-      notebooks: result.notebooks,
-      sections: result.sections,
-      pagesAdded: result.pagesAdded,
-      pagesUpdated: result.pagesUpdated,
-      pagesDeleted: result.pagesDeleted,
-      errors: result.errors.length,
-    },
-    "OneNote sync complete",
-  );
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------

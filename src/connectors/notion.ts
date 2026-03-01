@@ -5,6 +5,7 @@ import { ValidationError, FetchError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
+import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
 const NOTION_API_BASE = "https://api.notion.com";
 const NOTION_VERSION = "2022-06-28";
@@ -385,112 +386,126 @@ export async function syncNotion(
     throw new ValidationError("Notion token must start with 'secret_' or 'ntn_'");
   }
 
-  const result: NotionSyncResult = {
-    pagesIndexed: 0,
-    databasesIndexed: 0,
-    errors: [],
-  };
+  const syncId = startSync(db, "notion", "notion");
 
-  const excludeSet = new Set(config.excludePages ?? []);
+  try {
+    const result: NotionSyncResult = {
+      pagesIndexed: 0,
+      databasesIndexed: 0,
+      errors: [],
+    };
 
-  log.info({ lastSync: config.lastSync }, "Starting Notion sync");
-  const searchResults = await searchNotion(config.token, config.lastSync);
-  log.info({ count: searchResults.length }, "Found Notion objects");
+    const excludeSet = new Set(config.excludePages ?? []);
 
-  for (const item of searchResults) {
-    if (excludeSet.has(item.id)) {
-      log.debug({ id: item.id }, "Skipping excluded page");
-      continue;
-    }
+    log.info({ lastSync: config.lastSync }, "Starting Notion sync");
+    const searchResults = await searchNotion(config.token, config.lastSync);
+    log.info({ count: searchResults.length }, "Found Notion objects");
 
-    try {
-      if (item.object === "page") {
-        // Check if this page is a database row (has a database parent)
-        // Database rows are indexed when their parent database is processed
-        if (item.parent?.type === "database_id") {
-          continue;
-        }
+    for (const item of searchResults) {
+      if (excludeSet.has(item.id)) {
+        log.debug({ id: item.id }, "Skipping excluded page");
+        continue;
+      }
 
-        const title = extractTitle(item);
-        const blocks = await fetchBlockChildren(config.token, item.id);
-        const content = convertNotionBlocks(blocks);
+      try {
+        if (item.object === "page") {
+          // Check if this page is a database row (has a database parent)
+          // Database rows are indexed when their parent database is processed
+          if (item.parent?.type === "database_id") {
+            continue;
+          }
 
-        if (!content.trim()) {
-          log.debug({ id: item.id, title }, "Skipping empty page");
-          continue;
-        }
-
-        // Delete existing document for this Notion page before re-indexing
-        const existingDocs = db
-          .prepare("SELECT id FROM documents WHERE url = ?")
-          .all(`notion://page/${item.id}`) as Array<{ id: string }>;
-        for (const doc of existingDocs) {
-          deleteDocument(db, doc.id);
-        }
-
-        await indexDocument(db, provider, {
-          title,
-          content,
-          sourceType: "manual",
-          url: `notion://page/${item.id}`,
-          submittedBy: "crawler",
-        });
-
-        result.pagesIndexed++;
-        log.debug({ id: item.id, title }, "Indexed Notion page");
-      } else if (item.object === "database") {
-        const dbTitle = extractTitle(item);
-        const rows = await queryDatabase(config.token, item.id);
-
-        for (const row of rows) {
-          if (excludeSet.has(row.id)) continue;
-
-          const rowTitle = extractTitle(row);
-          const tags = row.properties ? extractPropertyMetadata(row.properties) : [];
-          const metadataSection = tags.length > 0 ? `\n\nMetadata: ${tags.join(", ")}` : "";
-
-          // Fetch row page content
-          const blocks = await fetchBlockChildren(config.token, row.id);
+          const title = extractTitle(item);
+          const blocks = await fetchBlockChildren(config.token, item.id);
           const content = convertNotionBlocks(blocks);
-          const fullContent = `# ${rowTitle}${metadataSection}\n\n${content}`;
 
+          if (!content.trim()) {
+            log.debug({ id: item.id, title }, "Skipping empty page");
+            continue;
+          }
+
+          // Delete existing document for this Notion page before re-indexing
           const existingDocs = db
             .prepare("SELECT id FROM documents WHERE url = ?")
-            .all(`notion://page/${row.id}`) as Array<{ id: string }>;
+            .all(`notion://page/${item.id}`) as Array<{ id: string }>;
           for (const doc of existingDocs) {
             deleteDocument(db, doc.id);
           }
 
           await indexDocument(db, provider, {
-            title: `${dbTitle} — ${rowTitle}`,
-            content: fullContent,
+            title,
+            content,
             sourceType: "manual",
-            url: `notion://page/${row.id}`,
+            url: `notion://page/${item.id}`,
             submittedBy: "crawler",
           });
+
+          result.pagesIndexed++;
+          log.debug({ id: item.id, title }, "Indexed Notion page");
+        } else if (item.object === "database") {
+          const dbTitle = extractTitle(item);
+          const rows = await queryDatabase(config.token, item.id);
+
+          for (const row of rows) {
+            if (excludeSet.has(row.id)) continue;
+
+            const rowTitle = extractTitle(row);
+            const tags = row.properties ? extractPropertyMetadata(row.properties) : [];
+            const metadataSection = tags.length > 0 ? `\n\nMetadata: ${tags.join(", ")}` : "";
+
+            // Fetch row page content
+            const blocks = await fetchBlockChildren(config.token, row.id);
+            const content = convertNotionBlocks(blocks);
+            const fullContent = `# ${rowTitle}${metadataSection}\n\n${content}`;
+
+            const existingDocs = db
+              .prepare("SELECT id FROM documents WHERE url = ?")
+              .all(`notion://page/${row.id}`) as Array<{ id: string }>;
+            for (const doc of existingDocs) {
+              deleteDocument(db, doc.id);
+            }
+
+            await indexDocument(db, provider, {
+              title: `${dbTitle} — ${rowTitle}`,
+              content: fullContent,
+              sourceType: "manual",
+              url: `notion://page/${row.id}`,
+              submittedBy: "crawler",
+            });
+          }
+
+          result.databasesIndexed++;
+          log.debug({ id: item.id, title: dbTitle, rows: rows.length }, "Indexed Notion database");
         }
-
-        result.databasesIndexed++;
-        log.debug({ id: item.id, title: dbTitle, rows: rows.length }, "Indexed Notion database");
+      } catch (err) {
+        const title = extractTitle(item);
+        const message = err instanceof Error ? err.message : String(err);
+        result.errors.push({ page: title, error: message });
+        log.warn({ id: item.id, err }, "Failed to index Notion item");
       }
-    } catch (err) {
-      const title = extractTitle(item);
-      const message = err instanceof Error ? err.message : String(err);
-      result.errors.push({ page: title, error: message });
-      log.warn({ id: item.id, err }, "Failed to index Notion item");
     }
+
+    log.info(
+      {
+        pagesIndexed: result.pagesIndexed,
+        databasesIndexed: result.databasesIndexed,
+        errors: result.errors.length,
+      },
+      "Notion sync complete",
+    );
+
+    completeSync(db, syncId, {
+      added: result.pagesIndexed + result.databasesIndexed,
+      updated: 0,
+      deleted: 0,
+      errored: result.errors.length,
+    });
+
+    return result;
+  } catch (err) {
+    failSync(db, syncId, err instanceof Error ? err.message : String(err));
+    throw err;
   }
-
-  log.info(
-    {
-      pagesIndexed: result.pagesIndexed,
-      databasesIndexed: result.databasesIndexed,
-      errors: result.errors.length,
-    },
-    "Notion sync complete",
-  );
-
-  return result;
 }
 
 /** Remove all Notion-sourced documents from the knowledge base. */

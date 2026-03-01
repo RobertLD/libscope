@@ -515,6 +515,82 @@ describe("API routes", () => {
     });
   });
 
+  describe("Connector status endpoint", () => {
+    it("GET /api/v1/connectors/status should return empty array when no syncs", async () => {
+      const req = createMockReq("GET", "/api/v1/connectors/status");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      expect(parsed.data).toEqual([]);
+    });
+
+    it("GET /api/v1/connectors/status should return latest sync status", async () => {
+      // Insert a sync record directly
+      db.prepare(
+        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, completed_at, status, docs_added)
+         VALUES ('obsidian', 'vault1', datetime('now'), datetime('now'), 'completed', 5)`,
+      ).run();
+
+      const req = createMockReq("GET", "/api/v1/connectors/status");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      const data = parsed.data as unknown as Array<Record<string, unknown>>;
+      expect(data).toHaveLength(1);
+      expect(data[0].connector_type).toBe("obsidian");
+      expect(data[0].docs_added).toBe(5);
+    });
+
+    it("GET /api/v1/connectors/status?history=true should return full history", async () => {
+      db.prepare(
+        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, status)
+         VALUES ('obsidian', 'vault1', datetime('now'), 'running')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, completed_at, status)
+         VALUES ('obsidian', 'vault1', datetime('now'), datetime('now'), 'completed')`,
+      ).run();
+
+      const req = createMockReq("GET", "/api/v1/connectors/status?history=true");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      const data = parsed.data as unknown as Array<Record<string, unknown>>;
+      expect(data).toHaveLength(2);
+    });
+
+    it("GET /api/v1/connectors/status?type=notion should filter by type", async () => {
+      db.prepare(
+        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, status)
+         VALUES ('obsidian', 'vault1', datetime('now'), 'completed')`,
+      ).run();
+      db.prepare(
+        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, status)
+         VALUES ('notion', 'notion', datetime('now'), 'completed')`,
+      ).run();
+
+      const req = createMockReq("GET", "/api/v1/connectors/status?type=notion");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      const data = parsed.data as unknown as Array<Record<string, unknown>>;
+      expect(data).toHaveLength(1);
+      expect(data[0].connector_type).toBe("notion");
+    });
+  });
+
   describe("Unknown route", () => {
     it("should return 404", async () => {
       const req = createMockReq("GET", "/api/v1/nonexistent");
