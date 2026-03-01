@@ -159,6 +159,51 @@ More content here.`;
     expect(chunks.length).toBeGreaterThan(1);
   });
 
+  it("should deduplicate chunks from overlap regions", () => {
+    // Create content where overlap will produce duplicate chunks
+    const block = "Repeated block of text that appears in the overlap region.\n";
+    const content = block.repeat(200);
+    const withoutDedup = content.length;
+    const chunks = chunkContentStreaming(content, { windowSize: 1024 });
+
+    // All chunks should be unique
+    const uniqueChunks = new Set(chunks);
+    expect(uniqueChunks.size).toBe(chunks.length);
+  });
+
+  it("should preserve all unique chunks", () => {
+    const sections = Array.from(
+      { length: 100 },
+      (_, i) => `## Section ${i}\nUnique content for section number ${i}.`,
+    );
+    const content = sections.join("\n\n");
+    const chunks = chunkContentStreaming(content, { windowSize: 2048 });
+
+    // Every section's unique content should appear somewhere
+    for (let i = 0; i < 100; i++) {
+      const found = chunks.some((c) => c.includes(`Unique content for section number ${i}`));
+      expect(found).toBe(true);
+    }
+  });
+
+  it("should deduplicate chunks that differ only in whitespace", () => {
+    // Build content where the same logical text appears with different whitespace
+    const line = "Hello world this is a test line.";
+    const variant1 = line + "\n";
+    const variant2 = line.replace(/ /g, "  ") + "\n"; // double spaces
+    // Interleave so overlap might pick up both
+    const content = (variant1.repeat(50) + variant2.repeat(50)).repeat(2);
+    const chunks = chunkContentStreaming(content, { windowSize: 512 });
+
+    // After whitespace normalization, duplicates should be removed
+    const seen = new Set<string>();
+    for (const chunk of chunks) {
+      const normalized = chunk.replace(/\s+/g, " ").trim();
+      expect(seen.has(normalized)).toBe(false);
+      seen.add(normalized);
+    }
+  });
+
   it("should use configurable window size", () => {
     const lines = Array.from({ length: 500 }, (_, i) => `Line ${i}: content`);
     const content = lines.join("\n");
