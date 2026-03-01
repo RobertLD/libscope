@@ -3,7 +3,6 @@ import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
 import { getDocument, deleteDocument, listDocuments } from "../../src/core/documents.js";
 import { indexDocument, type IndexDocumentInput } from "../../src/core/indexing.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
-import { ValidationError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 
 describe("documents", () => {
@@ -143,24 +142,30 @@ describe("documents", () => {
       provider = new MockEmbeddingProvider();
     });
 
-    it("should reject duplicate URL", async () => {
+    it("should skip re-indexing for unchanged document with same URL", async () => {
       await indexDocument(vecDb, provider, baseInput);
 
-      await expect(
-        indexDocument(vecDb, provider, {
-          ...baseInput,
-          title: "Different Title",
-          content: "Different content",
-        }),
-      ).rejects.toThrow(ValidationError);
+      const result = await indexDocument(vecDb, provider, {
+        ...baseInput,
+        title: "Different Title",
+      });
 
-      await expect(
-        indexDocument(vecDb, provider, {
-          ...baseInput,
-          title: "Different Title",
-          content: "Different content",
-        }),
-      ).rejects.toThrow("Document with URL already exists");
+      // Same content → same hash → skip
+      expect(result.chunkCount).toBe(0);
+    });
+
+    it("should re-index updated document with same URL", async () => {
+      const first = await indexDocument(vecDb, provider, baseInput);
+
+      const result = await indexDocument(vecDb, provider, {
+        ...baseInput,
+        title: "Different Title",
+        content: "Completely different content",
+      });
+
+      // Different content → different hash → re-index
+      expect(result.id).not.toBe(first.id);
+      expect(result.chunkCount).toBeGreaterThan(0);
     });
 
     it("should reject duplicate title + content length", async () => {

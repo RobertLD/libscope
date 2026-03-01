@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -99,15 +99,29 @@ export async function indexDocument(
     throw new ValidationError("Document content is required");
   }
 
-  // Check for duplicate by URL
+  // Compute content hash for versioning
+  const contentHash = createHash("sha256").update(input.content).digest("hex");
+
+  // Check for duplicate by URL with content hash comparison
   if (input.url) {
-    const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(input.url) as
-      | { id: string }
-      | undefined;
+    const existing = db
+      .prepare("SELECT id, content_hash FROM documents WHERE url = ?")
+      .get(input.url) as { id: string; content_hash: string | null } | undefined;
     if (existing) {
-      throw new ValidationError(
-        `Document with URL already exists (id: ${existing.id}). Delete it first or use a different URL.`,
-      );
+      if (existing.content_hash === contentHash) {
+        log.info({ docId: existing.id, url: input.url }, "Document unchanged, skipping re-index");
+        return { id: existing.id, chunkCount: 0 };
+      }
+      // Document updated — delete old version and re-index
+      log.info({ docId: existing.id, url: input.url }, "Document updated, re-indexing");
+      try {
+        db.prepare(
+          "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
+        ).run(existing.id);
+      } catch {
+        // chunk_embeddings table may not exist
+      }
+      db.prepare("DELETE FROM documents WHERE id = ?").run(existing.id);
     }
   }
 
@@ -132,8 +146,8 @@ export async function indexDocument(
 
   // Store everything in a transaction
   const insertDoc = db.prepare(`
-    INSERT INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertChunk = db.prepare(`
@@ -157,6 +171,7 @@ export async function indexDocument(
       input.content,
       input.url ?? null,
       input.submittedBy ?? "manual",
+      contentHash,
     );
 
     for (let i = 0; i < chunks.length; i++) {
