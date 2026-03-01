@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { ValidationError, FetchError } from "../errors.js";
+import { fetchWithRetry } from "./http-utils.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
 
@@ -91,13 +92,10 @@ async function notionFetch<T>(
     fetchOptions.body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(url, fetchOptions);
+  const response = await fetchWithRetry(url, fetchOptions);
 
   if (response.status === 401) {
     throw new ValidationError("Invalid Notion token or insufficient permissions");
-  }
-  if (response.status === 429) {
-    throw new FetchError("Notion API rate limit exceeded. Try again later.");
   }
   if (!response.ok) {
     const text = await response.text().catch(() => "unknown error");

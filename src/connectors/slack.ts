@@ -3,6 +3,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "../core/indexing.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
+import { fetchWithRetry } from "./http-utils.js";
 
 export interface SlackConfig {
   token: string;
@@ -80,7 +81,7 @@ async function slackApi(
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url.toString(), {
+  const response = await fetchWithRetry(url.toString(), {
     headers: { Authorization: `Bearer ${token}` },
   });
 
