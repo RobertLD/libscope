@@ -111,9 +111,12 @@ export async function handleRequest(
       const limitRaw = url.searchParams.get("limit");
       const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
       const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
+      const offsetRaw = url.searchParams.get("offset");
+      const offsetParsed = offsetRaw ? parseInt(offsetRaw, 10) : NaN;
+      const offset = Number.isNaN(offsetParsed) ? undefined : offsetParsed;
       const tags = tag ? [tag] : undefined;
 
-      const result = await searchDocuments(db, provider, { query: q, topic, tags, limit });
+      const result = await searchDocuments(db, provider, { query: q, topic, tags, limit, offset });
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, result, took);
       return;
