@@ -1,359 +1,41 @@
-# 🔭 LibScope
-
-> AI-powered knowledge base with MCP integration — index, search, and query your documentation, wikis, and knowledge with semantic search.
+# LibScope
 
 [![npm version](https://img.shields.io/npm/v/libscope)](https://www.npmjs.com/package/libscope)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/RobertLD/libscope/actions/workflows/ci.yml/badge.svg)](https://github.com/RobertLD/libscope/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
----
+LibScope is a local knowledge base that makes your documentation searchable by AI assistants. Point it at markdown files, URLs, or connect it to Obsidian/Notion/Confluence/Slack, and it chunks, embeds, and indexes everything into a local SQLite database. Your AI tools query it through [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) or a REST API.
 
-## ✨ Features
+Everything runs on your machine. No cloud services required for basic usage — just `npm install` and go.
 
-### 🔍 Search & AI
-
-- **Semantic vector search** with sqlite-vec embeddings
-- **FTS5 full-text search** fallback when vector search is unavailable
-- **RAG question-answering** — ask natural language questions, get LLM-synthesized answers with sources
-- **Score-ranked results** with pagination and filtering
-
-### 📄 Document Management
-
-- **URL ingestion** — fetch, convert, and index web pages automatically
-- **File & directory indexing** — markdown, MDX, plain text, and more
-- **Batch import** with parallel processing and progress tracking
-- **Versioning with rollback** — full version history for every document
-- **Deduplication** — detect exact and semantic duplicates
-
-### 🗂️ Organization
-
-- **Topics** — hierarchical categories with parent/child relationships
-- **Tags** — flexible labeling with document counts
-- **Workspaces** — isolated databases for separate knowledge bases
-- **Ratings & feedback** — rate documents and suggest corrections
-
-### 🔌 Connectors
-
-- **Obsidian** — sync vaults with frontmatter, wikilinks, and embed support
-- **OneNote** — Microsoft Graph API with device code auth flow
-- **Notion** — pages and databases via integration token
-- **Confluence** — Atlassian Cloud spaces and pages
-- **Slack** — channel messages and threads with aggregation modes
-- **GitHub / GitLab** — index repository documentation with branch and path filtering
-
-### 🔗 Integrations
-
-- **MCP server** — works with Cursor, Claude Code, VS Code, and any MCP client
-- **REST API** with OpenAPI 3.0 spec
-- **Web UI dashboard** with search, document browsing, and knowledge graph visualization
-
-### 🛠️ Developer Tools
-
-- **Watch mode** — auto-reindex on file system changes
-- **Incremental re-embedding** — update vectors after switching embedding providers
-- **Knowledge packs** — create, share, and install curated document collections
-- **Knowledge graph** — visualize relationships between documents, topics, and tags
-- **Interactive REPL** — iterative search sessions from the terminal
-- **Export / import** — back up and restore your entire knowledge base
-
-### 📈 Analytics
-
-- **Overview dashboard** — document, chunk, and topic counts
-- **Popular documents** — most-returned docs in search results
-- **Stale content detection** — find docs with zero search hits
-- **Top queries & search trends** — usage patterns over time
-
----
-
-## 🚀 Quick Start
+## Getting Started
 
 ```bash
-# Install globally
 npm install -g libscope
 
-# Initialize the database
+# Set up the database
 libscope init
 
-# Index a file, a URL, or a whole directory
+# Index some docs
 libscope add ./docs/getting-started.md --library my-lib
 libscope add https://docs.example.com/guide
 libscope import ./docs/ --library my-lib --extensions .md,.mdx
 
-# Search your knowledge base
+# Search
 libscope search "how to authenticate"
 
-# Ask a question (requires LLM provider)
-libscope ask "What is the recommended auth flow?"
-
-# Start the MCP server for your AI assistant
+# Start the MCP server so your AI assistant can query it
 libscope serve
 ```
 
----
+On first run with the default embedding provider, LibScope downloads the [all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model (~80 MB). Subsequent runs use the cached model.
 
-## 📖 Usage Guide
+## Using with AI Assistants
 
-### Adding Documents
+LibScope exposes an MCP server over stdio. Point your MCP-compatible client at it:
 
-```bash
-# From a local file
-libscope add ./path/to/doc.md --topic deployment --title "Deploy Guide"
-
-# From a URL (auto-fetches and converts to markdown)
-libscope add https://reactjs.org/docs/hooks-intro.html --library react
-
-# From a directory (recursive)
-libscope import ./wiki/ --topic internal --extensions .md,.mdx,.txt
-
-# Batch import with parallel processing
-libscope import-batch ./docs/ --concurrency 10 --filter "**/*.md" --library my-lib
-
-# From a GitHub or GitLab repository
-libscope add-repo https://github.com/org/repo --branch main --path docs/
-libscope add-repo https://gitlab.com/org/repo --extensions .md,.rst --token $PAT
-```
-
-### Searching
-
-```bash
-# Basic semantic search
-libscope search "authentication best practices"
-
-# Filtered search
-libscope search "API rate limiting" --library my-lib --topic security --limit 10
-
-# RAG question answering
-libscope ask "How do I configure OAuth2?" --library my-lib --top-k 8
-
-# Interactive REPL mode
-libscope repl --limit 5
-```
-
-### Topics & Tags
-
-```bash
-# Create hierarchical topics
-libscope topics create "backend"
-libscope topics create "authentication" --parent backend --description "Auth & identity"
-libscope topics list
-
-# Tag documents
-libscope tag add <doc-id> typescript,api,v2
-libscope tag remove <doc-id> v2
-libscope tag list
-```
-
-### Document Versioning
-
-```bash
-# View version history
-libscope docs history <doc-id>
-
-# Rollback to a previous version
-libscope docs rollback <doc-id> 3
-```
-
-### Workspaces
-
-Workspaces provide fully isolated databases — useful for separating work and personal knowledge, or per-project documentation.
-
-```bash
-# Create and switch workspaces
-libscope workspace create my-project
-libscope workspace use my-project
-libscope workspace list
-libscope workspace delete old-project
-
-# Use a workspace for a single command
-libscope --workspace my-project search "deploy steps"
-```
-
----
-
-## 🔌 Connectors
-
-### Obsidian
-
-Sync an entire Obsidian vault with incremental updates. Parses frontmatter, wikilinks, embeds, and tags.
-
-```bash
-# Initial sync (maps folder structure to topics)
-libscope connect obsidian /path/to/vault
-
-# Sync with frontmatter-based topic mapping
-libscope connect obsidian /path/to/vault --topic-mapping frontmatter
-
-# Incremental re-sync
-libscope connect obsidian /path/to/vault --sync
-
-# Exclude patterns
-libscope connect obsidian /path/to/vault --exclude "templates/*" "daily/*"
-
-# Remove vault data
-libscope disconnect obsidian /path/to/vault
-```
-
-### OneNote
-
-Sync OneNote notebooks via the Microsoft Graph API using device code authentication.
-
-```bash
-# Set your app registration client ID
-export ONENOTE_CLIENT_ID=your-client-id
-
-# Authenticate and sync (opens device code flow)
-libscope connect onenote
-
-# Sync a specific notebook
-libscope connect onenote --notebook "Work Notes"
-
-# Incremental re-sync with token refresh
-libscope connect onenote --sync
-
-# Disconnect and remove data
-libscope disconnect onenote
-```
-
-### Notion
-
-Sync pages and databases from your Notion workspace.
-
-```bash
-# Sync with integration token
-libscope connect notion --token secret_abc123
-
-# Exclude specific pages/databases
-libscope connect notion --token $NOTION_TOKEN --exclude page-id-1 db-id-2
-
-# Re-sync using stored token
-libscope connect notion --sync
-
-# Disconnect
-libscope disconnect notion
-```
-
-### Confluence
-
-Sync Confluence Cloud spaces and pages.
-
-```bash
-# Sync all spaces
-libscope connect confluence \
-  --url https://acme.atlassian.net \
-  --email user@acme.com \
-  --token $CONFLUENCE_TOKEN
-
-# Sync specific spaces
-libscope connect confluence \
-  --url https://acme.atlassian.net \
-  --email user@acme.com \
-  --token $CONFLUENCE_TOKEN \
-  --spaces ENG,DEVOPS \
-  --exclude-spaces ARCHIVE
-
-# Disconnect
-libscope disconnect confluence
-```
-
-### Slack
-
-Index Slack channel messages and threads.
-
-```bash
-# Sync all channels
-libscope connect slack --token xoxb-your-bot-token
-
-# Sync specific channels with thread aggregation
-libscope connect slack \
-  --token xoxb-... \
-  --channels general,engineering \
-  --thread-mode aggregate
-
-# Separate mode: one document per thread reply
-libscope connect slack --token xoxb-... --thread-mode separate
-
-# Re-sync from saved config
-libscope connect slack --sync
-
-# Disconnect
-libscope disconnect slack
-```
-
-### GitHub / GitLab
-
-Index documentation from any GitHub or GitLab repository.
-
-```bash
-# Public repository
-libscope add-repo https://github.com/org/repo
-
-# Private repo with token, specific branch and path
-libscope add-repo https://github.com/org/private-repo \
-  --token $GITHUB_TOKEN \
-  --branch develop \
-  --path docs/ \
-  --extensions .md,.mdx,.rst
-```
-
----
-
-## 🌐 REST API
-
-Start the REST API server:
-
-```bash
-libscope serve --api --port 3378
-```
-
-The full OpenAPI 3.0 spec is available at `GET /openapi.json`.
-
-| Method   | Endpoint                     | Description                   |
-| -------- | ---------------------------- | ----------------------------- |
-| `GET`    | `/api/v1/health`             | Health check with doc count   |
-| `GET`    | `/api/v1/search?q=...`       | Semantic search               |
-| `GET`    | `/api/v1/documents`          | List documents (with filters) |
-| `POST`   | `/api/v1/documents`          | Index a new document          |
-| `GET`    | `/api/v1/documents/:id`      | Get a single document         |
-| `DELETE` | `/api/v1/documents/:id`      | Delete a document             |
-| `POST`   | `/api/v1/documents/url`      | Index a document from a URL   |
-| `POST`   | `/api/v1/documents/:id/tags` | Add tags to a document        |
-| `POST`   | `/api/v1/ask`                | RAG question answering        |
-| `GET`    | `/api/v1/topics`             | List all topics               |
-| `POST`   | `/api/v1/topics`             | Create a topic                |
-| `GET`    | `/api/v1/tags`               | List all tags                 |
-| `GET`    | `/api/v1/stats`              | Usage statistics              |
-| `GET`    | `/openapi.json`              | OpenAPI 3.0 specification     |
-
-<details>
-<summary><strong>Example: Index and search via the API</strong></summary>
-
-```bash
-# Index a document
-curl -X POST http://localhost:3378/api/v1/documents \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Auth Guide", "content": "# Authentication\n\nUse OAuth2...", "tags": ["auth"]}'
-
-# Search
-curl "http://localhost:3378/api/v1/search?q=authentication&limit=5"
-
-# Ask a question
-curl -X POST http://localhost:3378/api/v1/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "How does authentication work?", "topic": "security"}'
-```
-
-</details>
-
----
-
-## 🤖 MCP Integration
-
-LibScope implements the [Model Context Protocol](https://modelcontextprotocol.io/) for seamless AI assistant integration.
-
-### Setup for Cursor
-
-Add to `~/.cursor/mcp.json`:
+**Cursor** — add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -366,171 +48,200 @@ Add to `~/.cursor/mcp.json`:
 }
 ```
 
-### Setup for Claude Code
+**Claude Code:**
 
 ```bash
 claude mcp add --scope user libscope -- npx -y libscope serve
 ```
 
-### Available MCP Tools
+Once connected, your assistant can search docs, submit new documents, rate content quality, and ask RAG-powered questions against your knowledge base.
 
-| Tool                  | Description                                                              |
-| --------------------- | ------------------------------------------------------------------------ |
-| `search-docs`         | Semantic search with topic/library/version/rating filters and pagination |
-| `get-document`        | Retrieve a specific document by ID with ratings                          |
-| `delete-document`     | Delete a document from the knowledge base                                |
-| `submit-document`     | Index a new document (content or URL with auto-fetch)                    |
-| `rate-document`       | Rate a document (1–5) with feedback and suggested corrections            |
-| `list-documents`      | List documents with library/topic/source-type filters                    |
-| `list-topics`         | List topics with optional parent ID filter                               |
-| `ask-question`        | RAG Q&A — LLM-synthesized answer with sources                            |
-| `reindex-documents`   | Re-embed chunks after switching providers (with date/ID filters)         |
-| `health-check`        | Database connectivity, document/chunk counts, FTS5 status                |
-| `sync-obsidian-vault` | Sync an Obsidian vault (wikilinks, frontmatter, embeds)                  |
-| `sync-onenote`        | Sync OneNote notebooks via Microsoft Graph                               |
-| `sync-notion`         | Sync Notion pages and databases                                          |
-| `sync-confluence`     | Sync Confluence spaces and pages                                         |
-| `sync-slack`          | Sync Slack channels and threads                                          |
-| `install-pack`        | Install a knowledge pack from registry or file                           |
-| `list-packs`          | List installed or available knowledge packs                              |
+<details>
+<summary>Full list of MCP tools</summary>
 
----
+| Tool | What it does |
+| --- | --- |
+| `search-docs` | Semantic search with topic/library/version/rating filters |
+| `get-document` | Retrieve a document by ID |
+| `delete-document` | Remove a document |
+| `submit-document` | Index new content (raw text or a URL to fetch) |
+| `rate-document` | Rate a doc 1–5 with optional feedback and corrections |
+| `list-documents` | List docs with filters |
+| `list-topics` | Browse the topic hierarchy |
+| `ask-question` | RAG question-answering with source citations |
+| `reindex-documents` | Re-embed chunks (useful after switching providers) |
+| `health-check` | DB status, doc/chunk counts |
+| `sync-obsidian-vault` | Sync an Obsidian vault |
+| `sync-onenote` | Sync OneNote notebooks via Microsoft Graph |
+| `sync-notion` | Sync Notion pages and databases |
+| `sync-confluence` | Sync Confluence spaces |
+| `sync-slack` | Sync Slack channels and threads |
+| `install-pack` | Install a knowledge pack |
+| `list-packs` | List installed or registry packs |
 
-## 📊 Web UI Dashboard
+</details>
 
-Start the web dashboard:
+## Connectors
 
-```bash
-libscope serve
-# Dashboard available at http://localhost:3377
-```
-
-The dashboard provides:
-
-- **Search** — full semantic search with topic sidebar filtering
-- **Document browser** — view, inspect, and delete documents
-- **Topic overview** — browse documents by topic with counts
-- **Knowledge graph** — interactive visualization of document, topic, and tag relationships at `/graph`
-- **Stats** — document, chunk, and topic counts at a glance
-
----
-
-## 📦 Knowledge Packs
-
-Knowledge packs are portable, shareable collections of documents.
+LibScope can pull documentation from several platforms. Each connector handles incremental syncing so re-runs only process what changed.
 
 ```bash
-# Create a pack from your current knowledge base
-libscope pack create --name "react-docs" --topic react \
-  --version 1.0.0 --description "React documentation" --author "team"
+# Obsidian — parses wikilinks, frontmatter, embeds, tags
+libscope connect obsidian /path/to/vault
+libscope connect obsidian /path/to/vault --sync   # incremental re-sync
 
-# Install a pack from a local file
-libscope pack install ./react-docs.json
+# Notion
+libscope connect notion --token secret_abc123
 
-# Install from a registry
-libscope pack install react-docs --registry https://registry.example.com
+# Confluence
+libscope connect confluence \
+  --url https://acme.atlassian.net \
+  --email user@acme.com \
+  --token $CONFLUENCE_TOKEN
 
-# List installed packs
-libscope pack list
+# Slack — index channel messages and threads
+libscope connect slack --token xoxb-... --channels general,engineering
 
-# List available packs from registry
-libscope pack list --available
+# OneNote — device code auth via Microsoft Graph
+export ONENOTE_CLIENT_ID=your-client-id
+libscope connect onenote
 
-# Remove a pack and its documents
-libscope pack remove react-docs
+# GitHub / GitLab repos
+libscope add-repo https://github.com/org/repo --branch main --path docs/
+
+# Remove a connector's data
+libscope disconnect obsidian /path/to/vault
 ```
 
----
+<details>
+<summary>Connector options reference</summary>
 
-## 🕸️ Knowledge Graph
+**Obsidian:** `--topic-mapping frontmatter`, `--exclude "templates/*" "daily/*"`, `--sync`
 
-Build and visualize document relationships.
+**Notion:** `--exclude page-id-1 db-id-2`, `--sync`
+
+**Confluence:** `--spaces ENG,DEVOPS`, `--exclude-spaces ARCHIVE`
+
+**Slack:** `--thread-mode aggregate|separate`, `--sync`
+
+**OneNote:** `--notebook "Work Notes"`, `--sync`
+
+**GitHub/GitLab:** `--token`, `--branch`, `--path`, `--extensions .md,.mdx,.rst`
+
+</details>
+
+## Search and RAG
 
 ```bash
-# View the interactive graph in the Web UI
-libscope serve
-# Navigate to http://localhost:3377/graph
+# Semantic search
+libscope search "authentication best practices"
+libscope search "API rate limiting" --library my-lib --topic security --limit 10
+
+# Ask questions (needs an LLM provider configured — see Configuration below)
+libscope ask "How do I configure OAuth2?" --library my-lib
+
+# Interactive REPL for iterative searching
+libscope repl
 ```
 
-The knowledge graph connects documents, topics, and tags with three edge types:
+Search uses sqlite-vec for vector similarity when available, with FTS5 full-text search as a fallback.
 
-- **`belongs_to_topic`** — document → topic assignment
-- **`has_tag`** — document → tag relationship
-- **`similar_to`** — semantic similarity between documents (configurable threshold)
+## Organizing Content
 
-Query parameters: `?threshold=0.85&maxNodes=200&topic=...&tag=...`
-
----
-
-## 📈 Analytics
+**Topics** give your docs a hierarchy. **Tags** give them flexible labels. **Workspaces** give you isolated databases.
 
 ```bash
-# Overview dashboard: doc counts, chunks, search volume, trends
-libscope stats
+# Topics
+libscope topics create "backend"
+libscope topics create "auth" --parent backend --description "Auth & identity"
 
-# Most popular documents (by search hit count)
-libscope stats popular --limit 10
+# Tags
+libscope tag add <doc-id> typescript,api,v2
 
-# Stale content (no search hits in N days)
-libscope stats stale --days 90
-
-# Top search queries with average latency
-libscope stats queries --limit 10
+# Workspaces — separate knowledge bases entirely
+libscope workspace create my-project
+libscope workspace use my-project
+libscope --workspace my-project search "deploy steps"
 ```
 
----
+Documents also keep version history, so you can roll back if a re-index goes wrong:
 
-## ⚙️ Configuration
+```bash
+libscope docs history <doc-id>
+libscope docs rollback <doc-id> 3
+```
+
+## REST API
+
+For programmatic access outside of MCP:
+
+```bash
+libscope serve --api --port 3378
+```
+
+OpenAPI 3.0 spec at `GET /openapi.json`. Key endpoints:
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/search?q=...` | Semantic search |
+| `GET/POST` | `/api/v1/documents` | List or create documents |
+| `GET/DELETE` | `/api/v1/documents/:id` | Get or remove a document |
+| `POST` | `/api/v1/documents/url` | Index from a URL |
+| `POST` | `/api/v1/ask` | RAG question-answering |
+| `GET/POST` | `/api/v1/topics` | List or create topics |
+| `GET` | `/api/v1/tags` | List tags |
+| `GET` | `/api/v1/stats` | Usage statistics |
+| `GET` | `/api/v1/health` | Health check |
+
+## Configuration
+
+LibScope reads config from (highest priority first): **environment variables** → **`.libscope.json`** in your project → **`~/.libscope/config.json`** → built-in defaults.
 
 ### Embedding Providers
 
-| Provider | Default | Requires               | Notes                                              |
-| -------- | ------- | ---------------------- | -------------------------------------------------- |
-| `local`  | ✅      | Nothing                | Uses all-MiniLM-L6-v2, ~80MB download on first use |
-| `ollama` |         | Ollama running locally | Uses nomic-embed-text by default                   |
-| `openai` |         | API key                | Uses text-embedding-3-small                        |
+| Provider | Default? | Requirements | Model |
+| --- | --- | --- | --- |
+| `local` | Yes | None (~80 MB model download on first run) | all-MiniLM-L6-v2 |
+| `ollama` | | Ollama running locally | nomic-embed-text |
+| `openai` | | `LIBSCOPE_OPENAI_API_KEY` | text-embedding-3-small |
 
 ```bash
-# Switch provider
 libscope config set embedding.provider ollama
-
-# Or use environment variables
+# or
 export LIBSCOPE_EMBEDDING_PROVIDER=openai
 export LIBSCOPE_OPENAI_API_KEY=sk-...
 ```
 
-### LLM Configuration (for RAG)
+### LLM for RAG
 
-RAG question-answering requires an LLM provider:
+The `ask` command and `ask-question` MCP tool need an LLM. Configure one with:
 
 ```bash
-# Via config
-libscope config set llm.provider openai
-
-# Via environment variables
-export LIBSCOPE_LLM_PROVIDER=openai    # or ollama
-export LIBSCOPE_LLM_MODEL=gpt-4o-mini  # optional model override
+export LIBSCOPE_LLM_PROVIDER=openai   # or ollama
+export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
 ```
 
-### Environment Variables
+<details>
+<summary>All environment variables</summary>
 
-| Variable                      | Description                                        | Default                  |
-| ----------------------------- | -------------------------------------------------- | ------------------------ |
-| `LIBSCOPE_EMBEDDING_PROVIDER` | Embedding provider (`local` / `ollama` / `openai`) | `local`                  |
-| `LIBSCOPE_OPENAI_API_KEY`     | OpenAI API key                                     | —                        |
-| `LIBSCOPE_OLLAMA_URL`         | Ollama server URL                                  | `http://localhost:11434` |
-| `LIBSCOPE_LLM_PROVIDER`       | LLM provider for RAG (`openai` / `ollama`)         | —                        |
-| `LIBSCOPE_LLM_MODEL`          | LLM model override                                 | —                        |
-| `ONENOTE_CLIENT_ID`           | Microsoft app registration client ID               | —                        |
-| `ONENOTE_TENANT_ID`           | Microsoft tenant ID                                | `common`                 |
-| `NOTION_TOKEN`                | Notion integration token                           | —                        |
-| `CONFLUENCE_URL`              | Confluence base URL                                | —                        |
-| `CONFLUENCE_EMAIL`            | Confluence user email                              | —                        |
-| `CONFLUENCE_TOKEN`            | Confluence API token                               | —                        |
+| Variable | Description | Default |
+| --- | --- | --- |
+| `LIBSCOPE_EMBEDDING_PROVIDER` | `local`, `ollama`, or `openai` | `local` |
+| `LIBSCOPE_OPENAI_API_KEY` | OpenAI API key | — |
+| `LIBSCOPE_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
+| `LIBSCOPE_LLM_PROVIDER` | LLM for RAG (`openai` / `ollama`) | — |
+| `LIBSCOPE_LLM_MODEL` | LLM model override | — |
+| `ONENOTE_CLIENT_ID` | Microsoft app registration client ID | — |
+| `ONENOTE_TENANT_ID` | Microsoft tenant ID | `common` |
+| `NOTION_TOKEN` | Notion integration token | — |
+| `CONFLUENCE_URL` | Confluence base URL | — |
+| `CONFLUENCE_EMAIL` | Confluence user email | — |
+| `CONFLUENCE_TOKEN` | Confluence API token | — |
 
-### Config File
+</details>
 
-Config precedence: **environment variables** > **`.libscope.json`** (project) > **`~/.libscope/config.json`** (user) > **defaults**.
+<details>
+<summary>Example config file (~/.libscope/config.json)</summary>
 
 ```json
 {
@@ -553,149 +264,134 @@ Config precedence: **environment variables** > **`.libscope.json`** (project) > 
 }
 ```
 
----
+</details>
 
-## 🛠️ CLI Reference
+## Other Tools
+
+LibScope ships with a few more utilities beyond the core index-and-search loop:
+
+```bash
+# Watch a directory and auto-reindex on changes
+libscope watch ./docs/
+
+# Re-embed everything after switching embedding providers
+libscope reindex
+
+# Find duplicate documents
+libscope dedupe
+
+# Export / import the whole knowledge base
+libscope export ./backup.json
+libscope import-backup ./backup.json
+
+# Usage analytics
+libscope stats                  # overview
+libscope stats popular          # most-searched docs
+libscope stats stale --days 90  # docs nobody searches for
+
+# Knowledge packs — portable document bundles
+libscope pack create --name "react-docs" --topic react
+libscope pack install ./react-docs.json
+```
+
+There's also a web dashboard at `http://localhost:3377` when you run `libscope serve`, with search, document browsing, topic navigation, and a knowledge graph visualization at `/graph`.
 
 <details>
-<summary><strong>Click to expand full CLI reference</strong></summary>
+<summary>Full CLI reference</summary>
 
-### Core Commands
+**Core**
 
-| Command                             | Description                                |
-| ----------------------------------- | ------------------------------------------ |
-| `libscope init`                     | Initialize the database                    |
-| `libscope add <fileOrUrl>`          | Index a document from a file or URL        |
-| `libscope import <directory>`       | Bulk import files from a directory         |
-| `libscope import-batch <directory>` | Batch import with parallel processing      |
-| `libscope search <query>`           | Semantic search                            |
-| `libscope ask <question>`           | RAG question-answering                     |
-| `libscope repl`                     | Interactive search REPL                    |
-| `libscope serve`                    | Start MCP server (or `--api` for REST API) |
+| Command | Description |
+| --- | --- |
+| `libscope init` | Initialize the database |
+| `libscope add <fileOrUrl>` | Index a file or URL |
+| `libscope import <directory>` | Bulk import from a directory |
+| `libscope import-batch <directory>` | Parallel batch import |
+| `libscope search <query>` | Search |
+| `libscope ask <question>` | RAG question-answering |
+| `libscope repl` | Interactive search REPL |
+| `libscope serve` | Start MCP server (`--api` for REST) |
 
-### Document Management
+**Documents**
 
-| Command                                 | Description                    |
-| --------------------------------------- | ------------------------------ |
-| `libscope docs list`                    | List indexed documents         |
-| `libscope docs show <id>`               | Show a specific document       |
-| `libscope docs delete <id>`             | Delete a document              |
-| `libscope docs history <id>`            | View version history           |
-| `libscope docs rollback <id> <version>` | Rollback to a previous version |
+| Command | Description |
+| --- | --- |
+| `libscope docs list` | List documents |
+| `libscope docs show <id>` | Show a document |
+| `libscope docs delete <id>` | Delete a document |
+| `libscope docs history <id>` | Version history |
+| `libscope docs rollback <id> <ver>` | Roll back |
 
-### Topics & Tags
+**Organization**
 
-| Command                              | Description                                  |
-| ------------------------------------ | -------------------------------------------- |
-| `libscope topics list`               | List all topics                              |
-| `libscope topics create <name>`      | Create a topic (`--parent`, `--description`) |
-| `libscope tag add <docId> <tags...>` | Add tags to a document                       |
-| `libscope tag remove <docId> <tag>`  | Remove a tag from a document                 |
-| `libscope tag list`                  | List all tags with document counts           |
+| Command | Description |
+| --- | --- |
+| `libscope topics list` | List topics |
+| `libscope topics create <name>` | Create a topic |
+| `libscope tag add <id> <tags...>` | Add tags |
+| `libscope tag remove <id> <tag>` | Remove a tag |
+| `libscope tag list` | List tags |
+| `libscope workspace create <name>` | Create workspace |
+| `libscope workspace list` | List workspaces |
+| `libscope workspace use <name>` | Switch workspace |
+| `libscope workspace delete <name>` | Delete workspace |
 
-### Workspaces
+**Connectors**
 
-| Command                            | Description             |
-| ---------------------------------- | ----------------------- |
-| `libscope workspace create <name>` | Create a new workspace  |
-| `libscope workspace list`          | List all workspaces     |
-| `libscope workspace use <name>`    | Switch active workspace |
-| `libscope workspace delete <name>` | Delete a workspace      |
+| Command | Description |
+| --- | --- |
+| `libscope connect obsidian <path>` | Sync Obsidian vault |
+| `libscope connect onenote` | Sync OneNote |
+| `libscope connect notion` | Sync Notion |
+| `libscope connect confluence` | Sync Confluence |
+| `libscope connect slack` | Sync Slack |
+| `libscope add-repo <url>` | Index a GitHub/GitLab repo |
+| `libscope disconnect <name>` | Remove connector data |
 
-### Knowledge Packs
+**Utilities**
 
-| Command                              | Description                                       |
-| ------------------------------------ | ------------------------------------------------- |
-| `libscope pack install <nameOrPath>` | Install a pack (from registry or file)            |
-| `libscope pack remove <name>`        | Remove a pack and its documents                   |
-| `libscope pack list`                 | List installed packs (`--available` for registry) |
-| `libscope pack create`               | Export documents as a pack file                   |
+| Command | Description |
+| --- | --- |
+| `libscope watch <dir>` | Auto-reindex on file changes |
+| `libscope reindex` | Re-embed all chunks |
+| `libscope dedupe` | Find duplicates |
+| `libscope export <path>` | Export to JSON |
+| `libscope import-backup <path>` | Import from backup |
+| `libscope stats` | Usage overview |
+| `libscope pack install <name>` | Install a knowledge pack |
+| `libscope pack create` | Create a knowledge pack |
+| `libscope config set <key> <val>` | Set config |
+| `libscope config show` | Show config |
 
-### Connectors
-
-| Command                            | Description                      |
-| ---------------------------------- | -------------------------------- |
-| `libscope connect obsidian <path>` | Sync an Obsidian vault           |
-| `libscope connect onenote`         | Sync OneNote notebooks           |
-| `libscope connect notion`          | Sync Notion pages and databases  |
-| `libscope connect confluence`      | Sync Confluence spaces           |
-| `libscope connect slack`           | Sync Slack channels              |
-| `libscope add-repo <url>`          | Index a GitHub/GitLab repository |
-| `libscope disconnect <connector>`  | Remove connector data            |
-
-### Developer Tools
-
-| Command                               | Description                             |
-| ------------------------------------- | --------------------------------------- |
-| `libscope watch <directory>`          | Watch for file changes and auto-reindex |
-| `libscope reindex`                    | Re-embed chunks with current provider   |
-| `libscope dedupe`                     | Scan for duplicate documents            |
-| `libscope export <outputPath>`        | Export knowledge base to JSON           |
-| `libscope import-backup <backupPath>` | Import from a backup file               |
-
-### Analytics
-
-| Command                  | Description                       |
-| ------------------------ | --------------------------------- |
-| `libscope stats`         | Overview dashboard                |
-| `libscope stats popular` | Most-returned documents in search |
-| `libscope stats stale`   | Documents with no search hits     |
-| `libscope stats queries` | Top search queries                |
-
-### Configuration
-
-| Command                             | Description                |
-| ----------------------------------- | -------------------------- |
-| `libscope config set <key> <value>` | Set a configuration value  |
-| `libscope config show`              | Show current configuration |
-
-### Global Options
-
-| Flag                  | Description                                  |
-| --------------------- | -------------------------------------------- |
-| `--verbose`           | Enable debug logging                         |
-| `--log-level <level>` | Set log level (debug/info/warn/error/silent) |
-| `--workspace <name>`  | Use a specific workspace                     |
+**Global flags:** `--verbose`, `--log-level <level>`, `--workspace <name>`
 
 </details>
 
----
+## How It Works
 
-## 🏗️ Architecture
+LibScope stores everything in a local SQLite database (at `~/.libscope/libscope.db` by default):
 
-LibScope is built on a local-first, zero-infrastructure stack:
+- Documents are split into chunks by heading boundaries
+- Each chunk is embedded into a vector using the configured provider
+- Vector search is done via [sqlite-vec](https://github.com/asg017/sqlite-vec); FTS5 full-text search is used as a fallback
+- The MCP server reads from this same database over stdio
+- Connectors fetch content from external platforms and feed it through the same indexing pipeline
 
-- **SQLite** (via better-sqlite3) — document storage, metadata, and analytics
-- **sqlite-vec** — vector similarity search for semantic embeddings
-- **FTS5** — full-text search fallback and keyword matching
-- **Chunking** — documents are split into overlapping chunks for granular retrieval
-- **Embedding providers** — pluggable architecture (local/Ollama/OpenAI) for vector generation
-- **MCP SDK** — Model Context Protocol integration via `@modelcontextprotocol/sdk`
+The stack: [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) + [sqlite-vec](https://github.com/asg017/sqlite-vec) + [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) + [@xenova/transformers](https://github.com/xenova/transformers.js) for local embeddings.
 
-All data stays on your machine by default. No external services required for basic usage.
+## Contributing
 
----
-
-## 🤝 Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version:
 
 ```bash
-# Clone and install
 git clone https://github.com/RobertLD/libscope.git
-cd libscope
-npm install
-
-# Development
-npm run dev       # TypeScript watch mode
-npm run test      # Run tests
-npm run lint      # Lint
-npm run format    # Format with Prettier
-npm run typecheck # Type check
+cd libscope && npm install
+npm run dev        # watch mode
+npm test           # run tests
+npm run typecheck  # type check
+npm run lint       # lint
 ```
 
----
+## License
 
-## 📄 License
-
-MIT © [RobertLD](https://github.com/RobertLD)
+MIT — see [LICENSE](LICENSE).
