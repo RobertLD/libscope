@@ -18,6 +18,13 @@ import { fetchAndConvert } from "../core/url-fetcher.js";
 import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
 import { batchImport } from "../core/batch.js";
 import { findDuplicates } from "../core/dedup.js";
+import {
+  getStats,
+  getPopularDocuments,
+  getStaleDocuments,
+  getTopQueries,
+  getSearchTrends,
+} from "../core/analytics.js";
 import { startRepl } from "./repl.js";
 import {
   addTagsToDocument,
@@ -850,6 +857,116 @@ program
         }
         console.log();
       }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+
+// stats
+const statsCmd = program.command("stats").description("Usage analytics and content health metrics");
+
+statsCmd
+  .command("overview", { isDefault: true })
+  .description("Show overview dashboard")
+  .action(() => {
+    const { config, db } = initializeApp();
+    try {
+      const s = getStats(db, config.database.path);
+      console.log("\n\u{1f4ca} Knowledge Base Overview\n");
+      console.log(`  Documents:      ${s.totalDocuments}`);
+      console.log(`  Chunks:         ${s.totalChunks}`);
+      console.log(`  Topics:         ${s.totalTopics}`);
+      console.log(`  Database size:  ${(s.databaseSizeBytes / 1024).toFixed(1)} KB`);
+      console.log(`  Total searches: ${s.totalSearches}`);
+      console.log(`  Avg latency:    ${s.avgLatencyMs} ms`);
+
+      const trends = getSearchTrends(db, 7);
+      if (trends.length > 0) {
+        console.log("\n  Recent search activity (last 7 days):");
+        for (const t of trends) {
+          const bar = "\u2588".repeat(Math.min(t.count, 40));
+          console.log(`    ${t.date}  ${bar} ${t.count}`);
+        }
+      }
+      console.log();
+    } finally {
+      closeDatabase();
+    }
+  });
+
+statsCmd
+  .command("popular")
+  .description("Most-returned documents in search results")
+  .option("--limit <n>", "Number of results", "10")
+  .action((opts: { limit: string }) => {
+    const { db } = initializeApp();
+    try {
+      const docs = getPopularDocuments(db, parseInt(opts.limit, 10));
+      if (docs.length === 0) {
+        console.log("No search data yet.");
+        return;
+      }
+      console.log("\n\u{1f525} Most Popular Documents\n");
+      console.log("  Hits  Document");
+      console.log("  " + "\u2500".repeat(50));
+      for (const d of docs) {
+        console.log(
+          `  ${String(d.hitCount).padStart(4)}  ${d.title} (${d.documentId.slice(0, 8)}\u2026)`,
+        );
+      }
+      console.log();
+    } finally {
+      closeDatabase();
+    }
+  });
+
+statsCmd
+  .command("stale")
+  .description("Documents with no search hits")
+  .option("--days <n>", "Look-back period in days", "90")
+  .action((opts: { days: string }) => {
+    const { db } = initializeApp();
+    try {
+      const docs = getStaleDocuments(db, parseInt(opts.days, 10));
+      if (docs.length === 0) {
+        console.log("No stale documents found.");
+        return;
+      }
+      console.log(`\n\u{1f4ed} Stale Documents (no hits in ${opts.days} days)\n`);
+      console.log("  Updated     Title");
+      console.log("  " + "\u2500".repeat(50));
+      for (const d of docs) {
+        const date = d.updatedAt.slice(0, 10);
+        console.log(`  ${date}  ${d.title}`);
+      }
+      console.log();
+    } finally {
+      closeDatabase();
+    }
+  });
+
+statsCmd
+  .command("queries")
+  .description("Top search queries")
+  .option("--limit <n>", "Number of results", "10")
+  .action((opts: { limit: string }) => {
+    const { db } = initializeApp();
+    try {
+      const queries = getTopQueries(db, parseInt(opts.limit, 10));
+      if (queries.length === 0) {
+        console.log("No search data yet.");
+        return;
+      }
+      console.log("\n\u{1f50d} Top Search Queries\n");
+      console.log("  Count  Avg ms  Query");
+      console.log("  " + "\u2500".repeat(50));
+      for (const q of queries) {
+        console.log(
+          `  ${String(q.count).padStart(5)}  ${String(q.avgLatencyMs).padStart(6)}  ${q.query}`,
+        );
+      }
+      console.log();
     } finally {
       closeDatabase();
     }
