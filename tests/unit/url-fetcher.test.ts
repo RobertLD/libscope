@@ -4,6 +4,7 @@ import { FetchError } from "../../src/errors.js";
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
+// Mock dns.promises so we can control IP resolution
 const mockResolve4 = vi.fn();
 const mockResolve6 = vi.fn();
 vi.mock("node:dns", () => ({
@@ -60,6 +61,7 @@ describe("fetchAndConvert", () => {
     mockFetch.mockReset();
     mockResolve4.mockReset();
     mockResolve6.mockReset();
+    // Default: resolve to a public IP
     mockResolve4.mockResolvedValue(["93.184.216.34"]);
     mockResolve6.mockRejectedValue(new Error("no AAAA"));
   });
@@ -256,6 +258,7 @@ describe("streaming body size limit", () => {
   });
 
   it("should abort when streamed body exceeds 10 MB regardless of Content-Length header", async () => {
+    // Content-Length claims 100 bytes, but body is actually huge
     const bigChunk = new Uint8Array(11 * 1024 * 1024); // 11 MB
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {

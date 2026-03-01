@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { createTestDb } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { insertDoc, insertChunk } from "../fixtures/helpers.js";
-import { searchDocuments } from "../../src/core/search.js";
+import { searchDocuments, escapeLikePattern } from "../../src/core/search.js";
 
 describe("searchDocuments (FTS5 fallback)", () => {
   let db: Database.Database;
@@ -106,5 +106,101 @@ describe("searchDocuments (FTS5 fallback)", () => {
 
     expect(page2.totalCount).toBe(3);
     expect(page2.results.length).toBe(1);
+  });
+});
+
+describe("escapeLikePattern", () => {
+  it("escapes % wildcard", () => {
+    expect(escapeLikePattern("100%")).toBe("100\\%");
+  });
+
+  it("escapes _ wildcard", () => {
+    expect(escapeLikePattern("user_name")).toBe("user\\_name");
+  });
+
+  it("escapes [ bracket", () => {
+    expect(escapeLikePattern("arr[0]")).toBe("arr\\[0]");
+  });
+
+  it("escapes backslash", () => {
+    expect(escapeLikePattern("path\\file")).toBe("path\\\\file");
+  });
+
+  it("escapes multiple special characters", () => {
+    expect(escapeLikePattern("100%_[test]")).toBe("100\\%\\_\\[test]");
+  });
+
+  it("returns plain strings unchanged", () => {
+    expect(escapeLikePattern("hello world")).toBe("hello world");
+  });
+});
+
+describe("vector fallback error handling (issue #74)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("falls back to keyword search when vector table is missing", async () => {
+    // No chunk_embeddings table exists → should fall back gracefully
+    insertDoc(db, "doc1", "TypeScript Guide");
+    insertChunk(db, "c1", "doc1", "TypeScript basics and fundamentals");
+
+    const { results } = await searchDocuments(db, provider, { query: "TypeScript" });
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("propagates unexpected provider errors", async () => {
+    provider.embed = () => Promise.reject(new Error("API rate limit exceeded"));
+
+    await expect(searchDocuments(db, provider, { query: "anything" })).rejects.toThrow(
+      "API rate limit exceeded",
+    );
+  });
+});
+
+describe("LIKE wildcard escaping in keyword search (issue #79)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("does not treat % in query as wildcard", async () => {
+    insertDoc(db, "doc1", "Percent Doc");
+    insertChunk(db, "c1", "doc1", "use 100% of the CPU capacity");
+
+    insertDoc(db, "doc2", "Other Doc");
+    insertChunk(db, "c2", "doc2", "something completely different here");
+
+    const { results } = await searchDocuments(db, provider, { query: "100%" });
+    // Should match doc1 only, not doc2 (% should not be a wildcard)
+    expect(results.length).toBe(1);
+    expect(results[0].content).toContain("100%");
+  });
+
+  it("does not treat _ in query as single-char wildcard", async () => {
+    insertDoc(db, "doc1", "Underscore Doc");
+    insertChunk(db, "c1", "doc1", "the user_name field is required");
+
+    insertDoc(db, "doc2", "Other Doc");
+    insertChunk(db, "c2", "doc2", "the username field is optional");
+
+    const { results } = await searchDocuments(db, provider, { query: "user_name" });
+    expect(results.length).toBe(1);
+    expect(results[0].content).toContain("user_name");
   });
 });

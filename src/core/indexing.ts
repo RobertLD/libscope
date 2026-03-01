@@ -29,6 +29,7 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
   const lines = content.split("\n");
   const chunks: string[] = [];
   let currentChunk: string[] = [];
+  let currentChunkLen = 0; // Running byte length to avoid O(n²) join-per-line
   const headingStack: Array<{ level: number; text: string }> = [];
 
   for (const line of lines) {
@@ -55,24 +56,32 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
       const breadcrumb = headingStack.map((h) => h.text).join(" > ");
       headingStack.push({ level, text: (headingMatch[2] ?? "").trim() });
 
-      currentChunk = breadcrumb ? [`<!-- context: ${breadcrumb} -->`, line] : [line];
+      if (breadcrumb) {
+        const ctx = `<!-- context: ${breadcrumb} -->`;
+        currentChunk = [ctx, line];
+        currentChunkLen = ctx.length + 1 + line.length;
+      } else {
+        currentChunk = [line];
+        currentChunkLen = line.length;
+      }
     } else {
       if (headingMatch) {
         // First heading in the document
         const level = (headingMatch[1] ?? "").length;
         headingStack.push({ level, text: (headingMatch[2] ?? "").trim() });
       }
+      currentChunkLen += (currentChunk.length > 0 ? 1 : 0) + line.length;
       currentChunk.push(line);
     }
 
-    // Also split if chunk gets too large
-    const currentText = currentChunk.join("\n");
-    if (currentText.length > maxChunkSize) {
-      const text = currentText.trim();
+    // Also split if chunk gets too large (use running counter instead of join)
+    if (currentChunkLen > maxChunkSize) {
+      const text = currentChunk.join("\n").trim();
       if (text.length > 0) {
         chunks.push(text);
       }
       currentChunk = [];
+      currentChunkLen = 0;
     }
   }
 
