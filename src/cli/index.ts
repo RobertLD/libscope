@@ -796,41 +796,39 @@ program
   .option("--since <date>", "Only reindex documents created on or after this ISO-8601 date")
   .option("--before <date>", "Only reindex documents created on or before this ISO-8601 date")
   .option("--batch-size <n>", "Chunks per embedding batch", "50")
-  .action(
-    async (opts: { doc?: string[]; since?: string; before?: string; batchSize: string }) => {
-      const { reindex } = await import("../core/reindex.js");
-      const { db, provider } = initializeAppWithEmbedding();
-      try {
-        console.log("Re-embedding chunks...");
-        const startTime = Date.now();
+  .action(async (opts: { doc?: string[]; since?: string; before?: string; batchSize: string }) => {
+    const { reindex } = await import("../core/reindex.js");
+    const { db, provider } = initializeAppWithEmbedding();
+    try {
+      console.log("Re-embedding chunks...");
+      const startTime = Date.now();
 
-        const result = await reindex(db, provider, {
-          documentIds: opts.doc,
-          since: opts.since,
-          before: opts.before,
-          batchSize: parseInt(opts.batchSize, 10),
-          onProgress: (progress) => {
-            const done = progress.completed + progress.failed;
-            console.log(`  [${done}/${progress.total}] chunks processed`);
-          },
-        });
+      const result = await reindex(db, provider, {
+        documentIds: opts.doc,
+        since: opts.since,
+        before: opts.before,
+        batchSize: parseInt(opts.batchSize, 10),
+        onProgress: (progress) => {
+          const done = progress.completed + progress.failed;
+          console.log(`  [${done}/${progress.total}] chunks processed`);
+        },
+      });
 
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(
-          `\n✓ Reindex complete: ${result.completed} updated, ${result.failed} failed (${result.total} total) in ${elapsed}s`,
-        );
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(
+        `\n✓ Reindex complete: ${result.completed} updated, ${result.failed} failed (${result.total} total) in ${elapsed}s`,
+      );
 
-        if (result.failedChunkIds.length > 0) {
-          console.log("\nFailed chunks:");
-          for (const id of result.failedChunkIds) {
-            console.log(`  ✗ ${id}`);
-          }
+      if (result.failedChunkIds.length > 0) {
+        console.log("\nFailed chunks:");
+        for (const id of result.failedChunkIds) {
+          console.log(`  ✗ ${id}`);
         }
-      } finally {
-        closeDatabase();
       }
-    },
-  );
+    } finally {
+      closeDatabase();
+    }
+  });
 
 // repl (interactive search)
 program

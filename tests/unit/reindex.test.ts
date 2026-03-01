@@ -21,9 +21,11 @@ interface MockProviderResult {
 function createMockProvider(overrides?: Partial<EmbeddingProvider>): MockProviderResult {
   const embedBatchFn =
     overrides?.embedBatch ??
-    vi.fn().mockImplementation((texts: string[]) =>
-      Promise.resolve(texts.map(() => new Array<number>(384).fill(0))),
-    );
+    vi
+      .fn()
+      .mockImplementation((texts: string[]) =>
+        Promise.resolve(texts.map(() => new Array<number>(384).fill(0))),
+      );
   const provider: EmbeddingProvider = {
     name: "mock",
     dimensions: 384,
