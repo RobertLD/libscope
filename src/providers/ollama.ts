@@ -1,4 +1,5 @@
 import { EmbeddingError } from "../errors.js";
+import { createChildLogger } from "../logger.js";
 import { withRetry } from "../utils/retry.js";
 import type { EmbeddingProvider } from "./embedding.js";
 
@@ -19,6 +20,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<number[]> {
+    const log = createChildLogger({ provider: this.name, model: this.model });
     if (!text.trim()) {
       throw new EmbeddingError("Input text must not be empty");
     }
@@ -47,6 +49,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         return embedding;
       });
     } catch (err) {
+      log.error({ err }, "Ollama embedding failed");
       if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(
         `Failed to generate embedding: ${err instanceof Error ? err.message : String(err)}`,
