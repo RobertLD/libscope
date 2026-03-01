@@ -57,6 +57,8 @@ import {
   disconnectOneNote,
 } from "../connectors/onenote.js";
 import { loadConnectorConfig, saveConnectorConfig } from "../connectors/index.js";
+import { syncNotion, disconnectNotion } from "../connectors/notion.js";
+import type { NotionConfig } from "../connectors/notion.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -1467,6 +1469,56 @@ disconnectCmd
 
     const removed = disconnectVault(db, resolvedPath);
     console.log(`✓ Disconnected vault. Removed ${removed} documents.`);
+
+    connectCmd
+      .command("notion")
+      .description("Connect and sync Notion pages and databases")
+      .option("--token <token>", "Notion integration token (secret_...)")
+      .option("--sync", "Sync pages using a previously stored token")
+      .option("--exclude <ids...>", "Page/database IDs to exclude")
+      .action(async (opts: { token?: string; sync?: boolean; exclude?: string[] }) => {
+        const { db, provider } = initializeAppWithEmbedding();
+        let token = opts.token;
+
+        if (opts.sync && !token) {
+          token = process.env["NOTION_TOKEN"];
+          if (!token) {
+            console.error("Error: --token is required, or set NOTION_TOKEN environment variable.");
+            process.exitCode = 1;
+            return;
+          }
+        }
+
+        if (!token) {
+          console.error("Error: --token <token> is required.");
+          process.exitCode = 1;
+          return;
+        }
+
+        const config: NotionConfig = { token };
+        if (opts.exclude) {
+          config.excludePages = opts.exclude;
+        }
+
+        console.log("Syncing Notion...");
+        const result = await syncNotion(db, provider, config);
+        console.log(
+          `✓ Synced: ${result.pagesIndexed} pages, ${result.databasesIndexed} databases` +
+            (result.errors.length > 0 ? `, ${result.errors.length} errors` : ""),
+        );
+        for (const err of result.errors) {
+          console.log(`  ⚠ ${err.page}: ${err.error}`);
+        }
+      });
+
+    disconnectCmd
+      .command("notion")
+      .description("Remove all Notion documents")
+      .action(async () => {
+        const { db } = initializeApp();
+        const removed = await disconnectNotion(db);
+        console.log(`✓ Removed ${removed} Notion documents.`);
+      });
   });
 
 program.parse();

@@ -638,6 +638,41 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: sync-notion
+  server.tool(
+    "sync-notion",
+    "Sync pages and databases from a connected Notion workspace into the knowledge base",
+    {
+      token: z.string().describe("Notion integration token (secret_... or ntn_...)"),
+      lastSync: z
+        .string()
+        .optional()
+        .describe("ISO-8601 timestamp — only sync pages edited after this time"),
+      excludePages: z
+        .array(z.string())
+        .optional()
+        .describe("List of Notion page/database IDs to exclude from sync"),
+    },
+    withErrorHandling(async (params) => {
+      const { syncNotion } = await import("../connectors/notion.js");
+      const result = await syncNotion(db, provider, {
+        token: params.token,
+        lastSync: params.lastSync,
+        excludePages: params.excludePages,
+      });
+
+      const text =
+        `Notion sync complete.\n` +
+        `Pages indexed: ${result.pagesIndexed}\n` +
+        `Databases indexed: ${result.databasesIndexed}` +
+        (result.errors.length > 0
+          ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join("; ")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   // Tool: sync-obsidian-vault
   server.tool(
     "sync-obsidian-vault",
