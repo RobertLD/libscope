@@ -1,0 +1,27 @@
+services:
+  libscope:
+    build: .
+    ports:
+      - "3420:3420"  # API
+      - "3421:3421"  # Web UI
+    volumes:
+      - libscope-data:/data
+    environment:
+      - LIBSCOPE_DATA_DIR=/data
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    restart: unless-stopped
+
+  # Optional: Ollama for local embeddings
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    profiles:
+      - local
+    restart: unless-stopped
+
+volumes:
+  libscope-data:
+  ollama-data:
