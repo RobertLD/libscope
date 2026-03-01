@@ -1,6 +1,9 @@
 export { indexDocument, chunkContent } from "./indexing.js";
 export type { IndexDocumentInput, IndexedDocument } from "./indexing.js";
 
+export { checkDuplicate, findDuplicates } from "./dedup.js";
+export type { DedupResult, DedupOptions, DuplicateGroup } from "./dedup.js";
+
 export { searchDocuments } from "./search.js";
 export type { SearchOptions, SearchResult, SearchMethod, ScoreExplanation } from "./search.js";
 
