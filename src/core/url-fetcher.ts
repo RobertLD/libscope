@@ -60,7 +60,10 @@ export async function fetchAndConvert(url: string): Promise<FetchedDocument> {
     };
   } catch (err) {
     if (err instanceof FetchError) throw err;
-    throw new FetchError(`Failed to fetch URL: ${url} — ${String(err)}`, err);
+    throw new FetchError(
+      `Failed to fetch URL: ${url} — ${err instanceof Error ? err.message : String(err)}`,
+      err,
+    );
   }
 }
 

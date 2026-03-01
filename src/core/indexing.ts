@@ -169,9 +169,8 @@ export async function indexDocument(
       try {
         const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
         insertEmbedding.run(chunkId, vecBuffer);
-      } catch {
-        // Vector table might not exist — skip silently
-        log.debug({ chunkId }, "Skipped vector insertion (sqlite-vec may not be loaded)");
+      } catch (err) {
+        log.debug({ chunkId, err }, "Skipped vector insertion (sqlite-vec may not be loaded)");
       }
     }
   });
