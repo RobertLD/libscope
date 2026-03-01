@@ -483,6 +483,53 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: reindex-documents
+  server.tool(
+    "reindex-documents",
+    "Re-embed all document chunks with the current embedding model. Use after switching embedding providers to update vectors without re-fetching content.",
+    {
+      documentIds: z
+        .array(z.string())
+        .optional()
+        .describe("Only reindex chunks belonging to these document IDs"),
+      since: z
+        .string()
+        .optional()
+        .describe("Only reindex documents created on or after this ISO-8601 date"),
+      before: z
+        .string()
+        .optional()
+        .describe("Only reindex documents created on or before this ISO-8601 date"),
+      batchSize: z
+        .number()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Chunks per embedding batch (default: 50)"),
+    },
+    withErrorHandling(async (params) => {
+      const { reindex } = await import("../core/reindex.js");
+
+      const result = await reindex(db, provider, {
+        documentIds: params.documentIds,
+        since: params.since,
+        before: params.before,
+        batchSize: params.batchSize,
+      });
+
+      const text =
+        `Reindex complete.\n` +
+        `Total chunks: ${result.total}\n` +
+        `Updated: ${result.completed}\n` +
+        `Failed: ${result.failed}` +
+        (result.failedChunkIds.length > 0
+          ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
