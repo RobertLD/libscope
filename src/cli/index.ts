@@ -15,6 +15,7 @@ import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
 import { batchImport } from "../core/batch.js";
+import { findDuplicates } from "../core/dedup.js";
 import { startRepl } from "./repl.js";
 
 // Graceful shutdown
@@ -64,10 +65,11 @@ program
   .option("--library <name>", "Mark as library documentation")
   .option("--version <version>", "Library version")
   .option("--title <title>", "Override document title")
+  .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
   .action(
     async (
       fileOrUrl: string,
-      opts: { topic?: string; library?: string; version?: string; title?: string },
+      opts: { topic?: string; library?: string; version?: string; title?: string; dedup?: string },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       try {
@@ -94,6 +96,7 @@ program
           version: opts.version,
           topicId: opts.topic,
           url,
+          dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
         });
 
         console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
@@ -112,10 +115,17 @@ program
   .option("--library <name>", "Mark all as library documentation")
   .option("--version <version>", "Library version")
   .option("--extensions <exts>", "Comma-separated file extensions to include", ".md,.mdx,.txt")
+  .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
   .action(
     async (
       directory: string,
-      opts: { topic?: string; library?: string; version?: string; extensions: string },
+      opts: {
+        topic?: string;
+        library?: string;
+        version?: string;
+        extensions: string;
+        dedup?: string;
+      },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       try {
@@ -144,6 +154,7 @@ program
               library: opts.library,
               version: opts.version,
               topicId: opts.topic,
+              dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
             });
 
             indexed++;
@@ -552,6 +563,59 @@ program
     const { db, provider } = initializeAppWithEmbedding();
     try {
       await startRepl({ db, provider, limit: parseInt(opts.limit, 10) });
+    } finally {
+      closeDatabase();
+    }
+  });
+
+// dedupe — scan and report duplicates
+program
+  .command("dedupe")
+  .description("Scan the knowledge base for duplicate documents")
+  .option("--threshold <n>", "Similarity threshold (0-1)", "0.95")
+  .option("--strategy <type>", "Detection strategy: exact, semantic, or both", "both")
+  .action(async (opts: { threshold: string; strategy: string }) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    try {
+      console.log("Scanning for duplicates...\n");
+      const groups = await findDuplicates(db, provider, {
+        threshold: parseFloat(opts.threshold),
+        strategy: opts.strategy as "exact" | "semantic" | "both",
+      });
+
+      if (groups.length === 0) {
+        console.log("No duplicates found.");
+        return;
+      }
+
+      console.log(`Found ${groups.length} duplicate group(s):\n`);
+
+      const groupCol = 7;
+      const typeCol = 10;
+      const idCol = 38;
+      const titleCol = 40;
+
+      const header =
+        "Group".padEnd(groupCol) + "Type".padEnd(typeCol) + "Document ID".padEnd(idCol) + "Title";
+      console.log(header);
+      console.log("\u2500".repeat(header.length + titleCol));
+
+      for (let i = 0; i < groups.length; i++) {
+        const group = groups[i]!;
+        for (let j = 0; j < group.documentIds.length; j++) {
+          const gLabel = j === 0 ? String(i + 1) : "";
+          const tLabel = j === 0 ? group.matchType : "";
+          const docId = group.documentIds[j] ?? "";
+          const title = group.titles[j] ?? "";
+          console.log(
+            gLabel.padEnd(groupCol) +
+              tLabel.padEnd(typeCol) +
+              docId.padEnd(idCol) +
+              title.slice(0, titleCol),
+          );
+        }
+        console.log();
+      }
     } finally {
       closeDatabase();
     }

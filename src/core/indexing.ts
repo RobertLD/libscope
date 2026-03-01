@@ -4,6 +4,8 @@ import type { Readable } from "node:stream";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { checkDuplicate } from "./dedup.js";
+import type { DedupOptions } from "./dedup.js";
 
 export interface IndexDocumentInput {
   title: string;
@@ -14,6 +16,10 @@ export interface IndexDocumentInput {
   topicId?: string | undefined;
   url?: string | undefined;
   submittedBy?: "manual" | "model" | "crawler" | undefined;
+  /** Dedup behaviour: 'skip' returns existing doc, 'warn' logs but indexes, 'force' bypasses check. */
+  dedup?: "skip" | "warn" | "force" | undefined;
+  /** Options for duplicate detection (threshold, strategy). */
+  dedupOptions?: DedupOptions | undefined;
 }
 
 export interface IndexedDocument {
@@ -177,6 +183,30 @@ export async function indexDocument(
   }
   if (!input.content.trim()) {
     throw new ValidationError("Document content is required");
+  }
+
+  // Dedup check (unless mode is 'force' or unset — backwards compatible)
+  if (input.dedup && input.dedup !== "force") {
+    const dedupResult = await checkDuplicate(db, provider, input.content, input.dedupOptions);
+    if (dedupResult.isDuplicate) {
+      if (input.dedup === "skip") {
+        log.info(
+          { existingDocId: dedupResult.existingDocId, matchType: dedupResult.matchType },
+          "Duplicate detected, skipping",
+        );
+        return { id: dedupResult.existingDocId!, chunkCount: 0 };
+      }
+      if (input.dedup === "warn") {
+        log.warn(
+          {
+            existingDocId: dedupResult.existingDocId,
+            matchType: dedupResult.matchType,
+            similarity: dedupResult.similarity,
+          },
+          "Duplicate detected, indexing anyway",
+        );
+      }
+    }
   }
 
   // Compute content hash for versioning
