@@ -85,13 +85,14 @@ const MIGRATIONS: Record<number, string> = {
       VALUES (new.content, new.id, new.document_id);
     END;
 
-    -- Backfill existing chunks into FTS
-    INSERT INTO chunks_fts(content, chunk_id, document_id)
-    SELECT content, id, document_id FROM chunks;
-
     INSERT INTO schema_version (version) VALUES (2);
   `,
 };
+
+const FTS_BACKFILL_SQL = `
+  INSERT INTO chunks_fts(content, chunk_id, document_id)
+  SELECT content, id, document_id FROM chunks;
+`;
 
 /** Run pending migrations on the database. */
 export function runMigrations(db: Database.Database): void {
@@ -130,6 +131,13 @@ export function runMigrations(db: Database.Database): void {
     });
 
     migrate();
+
+    try {
+      db.exec(FTS_BACKFILL_SQL);
+    } catch (err) {
+      log.warn({ err }, "FTS backfill failed — new chunks will still be indexed via triggers");
+    }
+
     log.info("Database migrations complete");
   } catch (err) {
     if (err instanceof DatabaseError) throw err;

@@ -121,8 +121,8 @@ export async function searchDocuments(
       score: 1 - row.distance, // Convert distance to similarity
       avgRating: row.avg_rating,
     }));
-  } catch {
-    log.warn("Vector search unavailable, falling back to keyword search");
+  } catch (err) {
+    log.warn({ err }, "Vector search unavailable, falling back to keyword search");
     return keywordSearch(db, options, limit);
   }
 }
@@ -139,8 +139,8 @@ function keywordSearch(
   // Try FTS5 first
   try {
     return fts5Search(db, options, limit);
-  } catch {
-    log.debug("FTS5 unavailable, falling back to LIKE search");
+  } catch (err) {
+    log.debug({ err }, "FTS5 unavailable, falling back to LIKE search");
   }
 
   const words = options.query.split(/\s+/).filter((w) => w.length > 2);
