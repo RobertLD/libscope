@@ -16,6 +16,12 @@ import { fetchAndConvert } from "../core/url-fetcher.js";
 import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
 import { batchImport } from "../core/batch.js";
 import { startRepl } from "./repl.js";
+import {
+  addTagsToDocument,
+  removeTagFromDocument,
+  listTags,
+  getDocumentTags,
+} from "../core/tags.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -406,6 +412,10 @@ docsCmd
       console.log(`Submitted by: ${doc.submittedBy}`);
       console.log(`Created: ${doc.createdAt}`);
       console.log(`Updated: ${doc.updatedAt}`);
+      const tags = getDocumentTags(db, documentId);
+      if (tags.length > 0) {
+        console.log(`Tags: ${tags.map((t) => t.name).join(", ")}`);
+      }
       console.log(`\n---\n`);
       console.log(doc.content);
     } finally {
@@ -422,6 +432,67 @@ docsCmd
       const doc = getDocument(db, documentId);
       deleteDocument(db, documentId);
       console.log(`✓ Deleted "${doc.title}" (${documentId})`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+// tag
+const tagCmd = program.command("tag").description("Manage document tags");
+
+tagCmd
+  .command("add <docId> <tags...>")
+  .description("Add tags to a document (comma or space separated)")
+  .action((docId: string, tags: string[]) => {
+    const { db } = initializeApp();
+    try {
+      const tagNames = tags
+        .flatMap((t) => t.split(","))
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const created = addTagsToDocument(db, docId, tagNames);
+      console.log(`✓ Added ${created.length} tag(s) to document ${docId}`);
+      for (const t of created) {
+        console.log(`  • ${t.name}`);
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+tagCmd
+  .command("remove <docId> <tag>")
+  .description("Remove a tag from a document")
+  .action((docId: string, tagName: string) => {
+    const { db } = initializeApp();
+    try {
+      const docTags = getDocumentTags(db, docId);
+      const tag = docTags.find((t) => t.name === tagName.trim().toLowerCase());
+      if (!tag) {
+        console.log(`Tag "${tagName}" not found on document ${docId}`);
+        return;
+      }
+      removeTagFromDocument(db, docId, tag.id);
+      console.log(`✓ Removed tag "${tag.name}" from document ${docId}`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+tagCmd
+  .command("list")
+  .description("List all tags with document counts")
+  .action(() => {
+    const { db } = initializeApp();
+    try {
+      const allTags = listTags(db);
+      if (allTags.length === 0) {
+        console.log("No tags found. Add tags with: libscope tag add <docId> <tags...>");
+      } else {
+        for (const t of allTags) {
+          console.log(`  ${t.name} (${t.documentCount} doc${t.documentCount !== 1 ? "s" : ""})`);
+        }
+      }
     } finally {
       closeDatabase();
     }
