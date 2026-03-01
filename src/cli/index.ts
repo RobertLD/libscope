@@ -666,10 +666,23 @@ program
 // serve
 program
   .command("serve")
-  .description("Start the MCP server")
-  .action(async () => {
-    // Import and run the MCP server
-    await import("../mcp/server.js");
+  .description("Start the MCP server (or REST API with --api)")
+  .option("--api", "Start the REST API server instead of MCP")
+  .option("--port <port>", "API server port", "3378")
+  .option("--host <host>", "API server host", "localhost")
+  .action(async (opts: { api?: boolean; port: string; host: string }) => {
+    if (opts.api) {
+      const { db, provider } = initializeAppWithEmbedding();
+      const { startApiServer } = await import("../api/server.js");
+      const { port } = await startApiServer(db, provider, {
+        port: parseInt(opts.port, 10),
+        host: opts.host,
+      });
+      console.log(`LibScope API server listening on http://${opts.host}:${port}`);
+      console.log("Press Ctrl+C to stop");
+    } else {
+      await import("../mcp/server.js");
+    }
   });
 
 // config
