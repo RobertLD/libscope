@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, accessSync, constants } from "node:fs";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError } from "./errors.js";
+import { getLogger } from "./logger.js";
 
 export interface LibScopeConfig {
   embedding: {
@@ -105,7 +106,7 @@ export function loadConfig(): LibScopeConfig {
   const projectConfig = loadJsonFile(getProjectConfigPath());
   const envOverrides = getEnvOverrides();
 
-  return {
+  const config: LibScopeConfig = {
     embedding: {
       ...DEFAULT_CONFIG.embedding,
       ...userConfig.embedding,
@@ -133,6 +134,70 @@ export function loadConfig(): LibScopeConfig {
       ...projectConfig.logging,
     },
   };
+
+  validateConfig(config);
+
+  return config;
+}
+
+/** Validate config and log warnings for any issues found. */
+export function validateConfig(config: LibScopeConfig): string[] {
+  const warnings: string[] = [];
+
+  // Check OpenAI API key for embedding provider
+  if (config.embedding.provider === "openai") {
+    const hasKey = config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
+    if (!hasKey) {
+      warnings.push(
+        'embedding.provider is "openai" but no API key found. Set embedding.openaiApiKey or OPENAI_API_KEY env var.',
+      );
+    }
+  }
+
+  // Check Ollama base URL for embedding provider
+  if (config.embedding.provider === "ollama") {
+    if (!config.embedding.ollamaUrl) {
+      warnings.push('embedding.provider is "ollama" but embedding.ollamaUrl is not set.');
+    }
+  }
+
+  // Check OpenAI API key for LLM provider
+  if (config.llm?.provider === "openai") {
+    const hasKey =
+      config.llm.openaiApiKey ?? config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
+    if (!hasKey) {
+      warnings.push(
+        'llm.provider is "openai" but no API key found. Set llm.openaiApiKey or OPENAI_API_KEY env var.',
+      );
+    }
+  }
+
+  // Validate database path is writable (or parent directory is writable/creatable)
+  const dbPath = config.database.path;
+  const dbDir = dirname(dbPath);
+  try {
+    if (existsSync(dbDir)) {
+      accessSync(dbDir, constants.W_OK);
+    } else {
+      // Walk up to find the first existing ancestor and check writability
+      let ancestor = dirname(dbDir);
+      while (!existsSync(ancestor) && ancestor !== dirname(ancestor)) {
+        ancestor = dirname(ancestor);
+      }
+      if (existsSync(ancestor)) {
+        accessSync(ancestor, constants.W_OK);
+      }
+    }
+  } catch {
+    warnings.push(`database.path directory "${dbDir}" is not writable or cannot be created.`);
+  }
+
+  const logger = getLogger();
+  for (const warning of warnings) {
+    logger.warn(`Config validation: ${warning}`);
+  }
+
+  return warnings;
 }
 
 /** Save a config value to the user config file. */
