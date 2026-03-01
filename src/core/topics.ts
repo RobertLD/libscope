@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { ValidationError } from "../errors.js";
+import { ValidationError, TopicNotFoundError } from "../errors.js";
 
 export interface Topic {
   id: string;
@@ -102,7 +102,7 @@ export function listTopics(db: Database.Database, parentId?: string): Topic[] {
 }
 
 /** Get a topic by ID. */
-export function getTopic(db: Database.Database, topicId: string): Topic | null {
+export function getTopic(db: Database.Database, topicId: string): Topic {
   const row = db
     .prepare(
       `
@@ -121,7 +121,7 @@ export function getTopic(db: Database.Database, topicId: string): Topic | null {
       }
     | undefined;
 
-  if (!row) return null;
+  if (!row) throw new TopicNotFoundError(topicId);
 
   return {
     id: row.id,

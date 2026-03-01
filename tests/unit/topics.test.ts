@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb } from "../fixtures/test-db.js";
 import { createTopic, listTopics, getTopic } from "../../src/core/topics.js";
+import { TopicNotFoundError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 
 describe("topics", () => {
@@ -87,14 +88,12 @@ describe("topics", () => {
       createTopic(db, { name: "Security", description: "Security docs" });
 
       const topic = getTopic(db, "security");
-      expect(topic).not.toBeNull();
-      expect(topic!.name).toBe("Security");
-      expect(topic!.description).toBe("Security docs");
+      expect(topic.name).toBe("Security");
+      expect(topic.description).toBe("Security docs");
     });
 
-    it("should return null for nonexistent topic", () => {
-      const topic = getTopic(db, "nonexistent");
-      expect(topic).toBeNull();
+    it("should throw TopicNotFoundError for nonexistent topic", () => {
+      expect(() => getTopic(db, "nonexistent")).toThrow(TopicNotFoundError);
     });
   });
 });

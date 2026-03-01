@@ -62,3 +62,10 @@ export class ChunkNotFoundError extends LibScopeError {
     this.name = "ChunkNotFoundError";
   }
 }
+
+export class TopicNotFoundError extends LibScopeError {
+  constructor(topicId: string) {
+    super(`Topic not found: ${topicId}`, "TOPIC_NOT_FOUND");
+    this.name = "TopicNotFoundError";
+  }
+}
