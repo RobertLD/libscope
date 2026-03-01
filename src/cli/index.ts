@@ -1390,6 +1390,77 @@ program
     } finally {
       db.close();
     }
+
+// connect / disconnect obsidian
+const connectCmd = program.command("connect").description("Connect external sources");
+
+connectCmd
+  .command("obsidian <vault-path>")
+  .description("Sync an Obsidian vault into the knowledge base")
+  .option("--sync", "Incremental re-sync (only changed files)")
+  .option(
+    "--topic-mapping <mode>",
+    "Map topics from 'folder' or 'frontmatter' (default: folder)",
+    "folder",
+  )
+  .option("--exclude <patterns...>", "Additional exclude patterns")
+  .action(
+    async (
+      vaultPath: string,
+      cmdOpts: { sync?: boolean; topicMapping?: string; exclude?: string[] },
+    ) => {
+      const { config, db } = initializeApp();
+      const provider = createEmbeddingProvider(config);
+      createVectorTable(db, provider.dimensions);
+
+      const { syncObsidianVault } = await import("../connectors/obsidian.js");
+
+      const topicMapping: "folder" | "frontmatter" =
+        cmdOpts.topicMapping === "frontmatter" ? "frontmatter" : "folder";
+      const obsConfig = {
+        vaultPath: join(process.cwd(), vaultPath).replace(/\/+$/, ""),
+        topicMapping,
+        excludePatterns: cmdOpts.exclude ?? [],
+      };
+
+      // Use absolute path if provided
+      if (vaultPath.startsWith("/")) {
+        obsConfig.vaultPath = vaultPath;
+      }
+
+      console.log(`Syncing Obsidian vault: ${obsConfig.vaultPath}`);
+      const result = await syncObsidianVault(db, provider, obsConfig);
+
+      console.log(`✓ Sync complete:`);
+      console.log(`  Added:   ${result.added}`);
+      console.log(`  Updated: ${result.updated}`);
+      console.log(`  Deleted: ${result.deleted}`);
+      if (result.errors.length > 0) {
+        console.log(`  Errors:  ${result.errors.length}`);
+        for (const e of result.errors) {
+          console.log(`    - ${e.file}: ${e.error}`);
+        }
+      }
+    },
+  );
+
+const disconnectCmd = program.command("disconnect").description("Disconnect external sources");
+
+disconnectCmd
+  .command("obsidian <vault-path>")
+  .description("Remove all documents from an Obsidian vault")
+  .action(async (vaultPath: string) => {
+    const { db } = initializeApp();
+
+    const { disconnectVault } = await import("../connectors/obsidian.js");
+
+    let resolvedPath = vaultPath;
+    if (!vaultPath.startsWith("/")) {
+      resolvedPath = join(process.cwd(), vaultPath);
+    }
+
+    const removed = disconnectVault(db, resolvedPath);
+    console.log(`✓ Disconnected vault. Removed ${removed} documents.`);
   });
 
 program.parse();
