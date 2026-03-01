@@ -14,6 +14,8 @@ import {
   listTags,
   addTagsToDocument,
   getStats,
+  getSearchAnalytics,
+  getKnowledgeGaps,
   fetchAndConvert,
   askQuestion,
   createLlmProvider,
@@ -280,6 +282,17 @@ export async function handleRequest(
       const tags = addTagsToDocument(db, tagDocId, tagNames);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, tags, took);
+      return;
+    }
+
+    // Search analytics
+    if (pathname === "/api/v1/analytics/searches" && method === "GET") {
+      const daysRaw = url.searchParams.get("days");
+      const days = daysRaw ? parseInt(daysRaw, 10) : 30;
+      const analytics = getSearchAnalytics(db, days);
+      const gaps = getKnowledgeGaps(db, days);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { ...analytics, knowledgeGaps: gaps }, took);
       return;
     }
 

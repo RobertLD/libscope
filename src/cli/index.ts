@@ -24,6 +24,8 @@ import {
   getStaleDocuments,
   getTopQueries,
   getSearchTrends,
+  getSearchAnalytics,
+  getKnowledgeGaps,
 } from "../core/analytics.js";
 import { startRepl } from "./repl.js";
 import { confirmAction } from "./confirm.js";
@@ -1090,6 +1092,56 @@ statsCmd
       closeDatabase();
     }
   });
+
+statsCmd
+  .command("search-analytics")
+  .description("Search analytics dashboard with knowledge gap detection")
+  .option("--days <n>", "Look-back period in days", "30")
+  .action((opts: { days: string }) => {
+    const { db } = initializeApp();
+    try {
+      const days = parseInt(opts.days, 10);
+      const analytics = getSearchAnalytics(db, days);
+      const gaps = getKnowledgeGaps(db, days);
+
+      console.log(`\n\u{1f50d} Search Analytics (last ${days} days)\n`);
+      console.log(`  Total searches:    ${analytics.totalSearches}`);
+      console.log(`  Avg result count:  ${analytics.avgResultCount}`);
+
+      if (analytics.topQueries.length > 0) {
+        console.log("\n  Top queries:");
+        for (const q of analytics.topQueries) {
+          console.log(`    ${String(q.count).padStart(5)}x  ${q.query}`);
+        }
+      }
+
+      if (analytics.zeroResultQueries.length > 0) {
+        console.log("\n  Zero-result queries:");
+        for (const q of analytics.zeroResultQueries) {
+          console.log(`    ${String(q.count).padStart(5)}x  ${q.query}`);
+        }
+      }
+
+      if (gaps.length > 0) {
+        console.log("\n  \u26a0\ufe0f Knowledge Gaps:");
+        for (const g of gaps) {
+          console.log(`    ${String(g.count).padStart(5)}x  ${g.query}  (last: ${g.lastSearched})`);
+        }
+      }
+
+      if (analytics.queriesPerDay.length > 0) {
+        console.log("\n  Queries per day:");
+        for (const d of analytics.queriesPerDay) {
+          const bar = "\u2588".repeat(Math.min(d.count, 40));
+          console.log(`    ${d.date}  ${bar} ${d.count}`);
+        }
+      }
+      console.log();
+    } finally {
+      closeDatabase();
+    }
+  });
+
 // add-repo
 program
   .command("add-repo <url>")
