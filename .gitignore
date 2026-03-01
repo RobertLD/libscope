@@ -7,3 +7,5 @@ coverage/
 *.db-shm
 .env
 .env.local
+docs/.vitepress/dist
+docs/.vitepress/cache
