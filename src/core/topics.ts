@@ -42,30 +42,51 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
     }
   }
 
-  // Check for duplicate
-  const existing = db.prepare("SELECT id FROM topics WHERE id = ?").get(id) as
-    | { id: string }
-    | undefined;
-  if (existing) {
-    throw new ValidationError(`Topic '${id}' already exists`);
-  }
-
-  db.prepare(
-    `
+  // Atomic insert: ON CONFLICT avoids check-then-insert race condition
+  const result = db
+    .prepare(
+      `
     INSERT INTO topics (id, name, description, parent_id)
     VALUES (?, ?, ?, ?)
+    ON CONFLICT(name) DO NOTHING
   `,
-  ).run(id, input.name, input.description ?? null, input.parentId ?? null);
+    )
+    .run(id, input.name, input.description ?? null, input.parentId ?? null);
 
-  log.info({ topicId: id, name: input.name }, "Topic created");
+  if (result.changes > 0) {
+    log.info({ topicId: id, name: input.name }, "Topic created");
+    return {
+      id,
+      name: input.name,
+      description: input.description ?? null,
+      parentId: input.parentId ?? null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  // Topic already existed — fetch and return it
+  log.info({ name: input.name }, "Topic already exists, returning existing");
+  const row = db
+    .prepare(
+      "SELECT id, name, description, parent_id, created_at, updated_at FROM topics WHERE name = ?",
+    )
+    .get(input.name) as {
+    id: string;
+    name: string;
+    description: string | null;
+    parent_id: string | null;
+    created_at: string;
+    updated_at: string;
+  };
 
   return {
-    id,
-    name: input.name,
-    description: input.description ?? null,
-    parentId: input.parentId ?? null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    parentId: row.parent_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
