@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { ValidationError, TopicNotFoundError } from "../errors.js";
+import { createChildLogger } from "../logger.js";
 
 export interface Topic {
   id: string;
@@ -19,6 +20,7 @@ export interface CreateTopicInput {
 
 /** Create a new topic. */
 export function createTopic(db: Database.Database, input: CreateTopicInput): Topic {
+  const log = createChildLogger({ operation: "createTopic" });
   if (!input.name.trim()) {
     throw new ValidationError("Topic name is required");
   }
@@ -54,6 +56,8 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
     VALUES (?, ?, ?, ?)
   `,
   ).run(id, input.name, input.description ?? null, input.parentId ?? null);
+
+  log.info({ topicId: id, name: input.name }, "Topic created");
 
   return {
     id,

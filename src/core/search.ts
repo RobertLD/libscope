@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { getLogger } from "../logger.js";
+import { withCorrelationId, createChildLogger } from "../logger.js";
 
 export interface SearchOptions {
   query: string;
@@ -37,7 +37,7 @@ export async function searchDocuments(
   provider: EmbeddingProvider,
   options: SearchOptions,
 ): Promise<SearchResponse> {
-  const log = getLogger();
+  const log = withCorrelationId({ operation: "searchDocuments" });
   const limit = options.limit ?? 10;
   const offset = options.offset ?? 0;
 
@@ -154,7 +154,7 @@ function keywordSearch(
   limit: number,
   offset: number,
 ): SearchResponse {
-  const log = getLogger();
+  const log = createChildLogger({ operation: "keywordSearch" });
 
   // Try FTS5 first
   try {
