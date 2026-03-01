@@ -117,5 +117,68 @@ describe("export/backup", () => {
     it("should throw on missing file", () => {
       expect(() => importFromBackup(db, join(tempDir, "missing.json"))).toThrow();
     });
+
+    it("should handle older backups without content_hash", () => {
+      const backupPath = join(tempDir, "old-backup.json");
+      const oldData = {
+        metadata: {
+          version: "1.0",
+          exportDate: new Date().toISOString(),
+          counts: { documents: 1, chunks: 0, topics: 1, ratings: 0 },
+        },
+        topics: [
+          {
+            id: "topic-1",
+            name: "React",
+            description: "React docs",
+            parent_id: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        documents: [
+          {
+            id: "doc-old",
+            source_type: "library",
+            library: "react",
+            version: "17.0.0",
+            topic_id: "topic-1",
+            title: "Old Doc",
+            content: "old",
+            url: null,
+            submitted_by: "manual",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        chunks: [],
+        ratings: [],
+      };
+      writeFileSync(backupPath, JSON.stringify(oldData, null, 2), "utf-8");
+
+      const newDb = createTestDb();
+      expect(() => importFromBackup(newDb, backupPath)).not.toThrow();
+
+      const docs = newDb.prepare("SELECT * FROM documents").all() as Record<string, unknown>[];
+      expect(docs).toHaveLength(1);
+      expect(docs[0].content_hash).toBeNull();
+      newDb.close();
+    });
+
+    it("should preserve content_hash during round-trip", () => {
+      db.prepare("UPDATE documents SET content_hash = ? WHERE id = ?").run("abc123", "doc-1");
+
+      const backupPath = join(tempDir, "hash-backup.json");
+      exportKnowledgeBase(db, backupPath);
+
+      const newDb = createTestDb();
+      importFromBackup(newDb, backupPath);
+
+      const docs = newDb
+        .prepare("SELECT content_hash FROM documents WHERE id = ?")
+        .all("doc-1") as Record<string, unknown>[];
+      expect(docs[0].content_hash).toBe("abc123");
+      newDb.close();
+    });
   });
 });

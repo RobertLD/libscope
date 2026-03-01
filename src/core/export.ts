@@ -76,8 +76,8 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
     );
 
     const insertDocument = db.prepare(
-      `INSERT OR REPLACE INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, created_at, updated_at)
-       VALUES (@id, @source_type, @library, @version, @topic_id, @title, @content, @url, @submitted_by, @created_at, @updated_at)`,
+      `INSERT OR REPLACE INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, created_at, updated_at, content_hash)
+       VALUES (@id, @source_type, @library, @version, @topic_id, @title, @content, @url, @submitted_by, @created_at, @updated_at, @content_hash)`,
     );
 
     const insertChunk = db.prepare(
@@ -92,7 +92,11 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
 
     const importAll = db.transaction(() => {
       for (const topic of data.topics) insertTopic.run(topic);
-      for (const doc of data.documents) insertDocument.run(doc);
+      for (const doc of data.documents) {
+        // Handle older backups that don't include content_hash
+        if (doc.content_hash === undefined) doc.content_hash = null;
+        insertDocument.run(doc);
+      }
       for (const chunk of data.chunks) insertChunk.run(chunk);
       for (const rating of data.ratings) insertRating.run(rating);
     });
