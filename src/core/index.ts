@@ -15,3 +15,5 @@ export type { Topic, CreateTopicInput } from "./topics.js";
 
 export { fetchAndConvert } from "./url-fetcher.js";
 export type { FetchedDocument } from "./url-fetcher.js";
+
+export { exportKnowledgeBase, importFromBackup } from "./export.js";
