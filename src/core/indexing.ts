@@ -274,6 +274,24 @@ export async function indexDocument(
     VALUES (?, ?)
   `);
 
+  // Store provider/model metadata if the table exists
+  let insertMeta: Database.Statement<[string, string, string]> | null = null;
+  try {
+    const metaTableExists = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_embedding_metadata'",
+      )
+      .get();
+    if (metaTableExists) {
+      insertMeta = db.prepare(`
+        INSERT OR REPLACE INTO chunk_embedding_metadata (chunk_id, embedding_provider, embedding_model)
+        VALUES (?, ?, ?)
+      `);
+    }
+  } catch {
+    // metadata table may not exist yet
+  }
+
   const transaction = db.transaction(() => {
     insertDoc.run(
       docId,
@@ -298,6 +316,7 @@ export async function indexDocument(
       try {
         const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
         insertEmbedding.run(chunkId, vecBuffer);
+        insertMeta?.run(chunkId, provider.name, "unknown");
       } catch (err) {
         log.debug({ chunkId, err }, "Skipped vector insertion (sqlite-vec may not be loaded)");
       }
