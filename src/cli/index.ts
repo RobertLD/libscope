@@ -34,6 +34,7 @@ import {
 } from "../core/tags.js";
 
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
+import { indexRepository, parseRepoUrl } from "../core/repo.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -1012,5 +1013,66 @@ statsCmd
       closeDatabase();
     }
   });
+// add-repo
+program
+  .command("add-repo <url>")
+  .description("Index documentation from a GitHub or GitLab repository")
+  .option("--branch <name>", "Branch to index (default: main or from URL)")
+  .option("--path <subdir>", "Only index files under this subdirectory")
+  .option("--extensions <ext1,ext2>", "Comma-separated file extensions", ".md,.mdx,.txt,.rst")
+  .option("--token <pat>", "Personal access token for private repos")
+  .action(
+    async (
+      url: string,
+      opts: { branch?: string; path?: string; extensions: string; token?: string },
+    ) => {
+      const { db, provider } = initializeAppWithEmbedding();
+      try {
+        const parsed = parseRepoUrl(url);
+        console.log(`Repository: ${parsed.owner}/${parsed.repo} (${parsed.host})`);
+
+        const extensions = opts.extensions.split(",").map((e) => {
+          const trimmed = e.trim();
+          return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+        });
+
+        const startTime = Date.now();
+        const result = await indexRepository(
+          db,
+          provider,
+          {
+            url,
+            branch: opts.branch,
+            paths: opts.path ? [opts.path] : undefined,
+            extensions,
+            token: opts.token,
+          },
+          (message: string) => {
+            console.log(`  ${message}`);
+          },
+        );
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(``);
+        console.log(`┌─────────────────────────────┐`);
+        console.log(`│ Repository Indexing Summary  │`);
+        console.log(`├─────────────────────────────┤`);
+        console.log(`│ Indexed: ${String(result.indexed).padStart(17)} │`);
+        console.log(`│ Skipped: ${String(result.skipped).padStart(17)} │`);
+        console.log(`│ Errors:  ${String(result.errors.length).padStart(17)} │`);
+        console.log(`│ Time:    ${(elapsed + "s").padStart(17)} │`);
+        console.log(`└─────────────────────────────┘`);
+
+        if (result.errors.length > 0) {
+          console.log("\nErrors:");
+          for (const err of result.errors) {
+            console.log(`  ✗ ${err}`);
+          }
+        }
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
 
 program.parse();

@@ -83,6 +83,8 @@ export type { RagOptions, RagResult, RagSource, LlmProvider } from "./rag.js";
 
 export { reindex } from "./reindex.js";
 export type { ReindexOptions, ReindexResult, ReindexProgress } from "./reindex.js";
+export { indexRepository, parseRepoUrl } from "./repo.js";
+export type { RepoOptions, RepoResult } from "./repo.js";
 
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
