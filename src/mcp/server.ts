@@ -307,6 +307,60 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: health-check
+  server.tool(
+    "health-check",
+    "Check the health of the LibScope server, including database connectivity, document and chunk counts, and FTS5 index status",
+    {},
+    () => {
+      try {
+        const health: Record<string, unknown> = {};
+
+        // Check database connectivity
+        try {
+          db.prepare("SELECT 1").get();
+          health.database = "ok";
+        } catch {
+          health.database = "error";
+        }
+
+        // Document count
+        try {
+          const row = db.prepare("SELECT COUNT(*) as count FROM documents").get() as {
+            count: number;
+          };
+          health.documents = row.count;
+        } catch {
+          health.documents = "error";
+        }
+
+        // Chunk count
+        try {
+          const row = db.prepare("SELECT COUNT(*) as count FROM chunks").get() as {
+            count: number;
+          };
+          health.chunks = row.count;
+        } catch {
+          health.chunks = "error";
+        }
+
+        // FTS5 index status
+        try {
+          db.prepare("SELECT COUNT(*) FROM chunks_fts").get();
+          health.fts5 = "ok";
+        } catch {
+          health.fts5 = "error";
+        }
+
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(health, null, 2) }],
+        };
+      } catch (err) {
+        return errorResponse(err);
+      }
+    },
+  );
+
   // Tool: list-documents
   server.tool(
     "list-documents",
