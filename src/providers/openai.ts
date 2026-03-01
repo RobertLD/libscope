@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { EmbeddingError } from "../errors.js";
+import { withRetry } from "../utils/retry.js";
 import type { EmbeddingProvider } from "./embedding.js";
 
 /**
@@ -24,20 +25,22 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       throw new EmbeddingError("Input text must not be empty");
     }
     try {
-      const response = await this.client.embeddings.create({
-        model: this.model,
-        input: text,
+      return await withRetry<number[]>(async () => {
+        const response = await this.client.embeddings.create({
+          model: this.model,
+          input: text,
+        });
+        const embedding = response.data[0]?.embedding;
+        if (!embedding) {
+          throw new Error("OpenAI returned empty embedding");
+        }
+        if (embedding.length !== this.dimensions) {
+          throw new EmbeddingError(
+            `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
+          );
+        }
+        return embedding;
       });
-      const embedding = response.data[0]?.embedding;
-      if (!embedding) {
-        throw new Error("OpenAI returned empty embedding");
-      }
-      if (embedding.length !== this.dimensions) {
-        throw new EmbeddingError(
-          `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
-        );
-      }
-      return embedding;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(
@@ -57,24 +60,26 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       }
     }
     try {
-      const response = await this.client.embeddings.create({
-        model: this.model,
-        input: texts,
-      });
-      if (response.data.length !== texts.length) {
-        throw new EmbeddingError(
-          `OpenAI returned ${response.data.length} embeddings for ${texts.length} inputs`,
-        );
-      }
-      const embeddings = response.data.map((d) => d.embedding);
-      for (const emb of embeddings) {
-        if (emb.length !== this.dimensions) {
+      return await withRetry<number[][]>(async () => {
+        const response = await this.client.embeddings.create({
+          model: this.model,
+          input: texts,
+        });
+        if (response.data.length !== texts.length) {
           throw new EmbeddingError(
-            `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
+            `OpenAI returned ${response.data.length} embeddings for ${texts.length} inputs`,
           );
         }
-      }
-      return embeddings;
+        const embeddings = response.data.map((d) => d.embedding);
+        for (const emb of embeddings) {
+          if (emb.length !== this.dimensions) {
+            throw new EmbeddingError(
+              `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
+            );
+          }
+        }
+        return embeddings;
+      });
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(
