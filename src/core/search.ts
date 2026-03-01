@@ -54,7 +54,7 @@ export async function searchDocuments(
         d.version,
         d.topic_id,
         d.url,
-        (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) AS avg_rating
+        avg_r.avg_rating
       FROM (
         SELECT chunk_id, distance
         FROM chunk_embeddings
@@ -64,6 +64,11 @@ export async function searchDocuments(
       ) candidates
       JOIN chunks c ON c.id = candidates.chunk_id
       JOIN documents d ON d.id = c.document_id
+      LEFT JOIN (
+        SELECT document_id, AVG(rating) AS avg_rating
+        FROM ratings
+        GROUP BY document_id
+      ) avg_r ON avg_r.document_id = d.id
       WHERE 1=1
     `;
 
@@ -82,7 +87,7 @@ export async function searchDocuments(
       params.push(options.version);
     }
     if (options.minRating) {
-      sql += " AND (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) >= ?";
+      sql += " AND avg_r.avg_rating >= ?";
       params.push(options.minRating);
     }
 
@@ -155,9 +160,14 @@ function keywordSearch(
       d.version,
       d.topic_id,
       d.url,
-      (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) AS avg_rating
+      avg_r.avg_rating
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
+    LEFT JOIN (
+      SELECT document_id, AVG(rating) AS avg_rating
+      FROM ratings
+      GROUP BY document_id
+    ) avg_r ON avg_r.document_id = d.id
     WHERE (${likeConditions})
   `;
 
@@ -226,9 +236,14 @@ function fts5Search(db: Database.Database, options: SearchOptions, limit: number
       d.topic_id,
       d.url,
       rank AS fts_rank,
-      (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) AS avg_rating
+      avg_r.avg_rating
     FROM chunks_fts f
     JOIN documents d ON d.id = f.document_id
+    LEFT JOIN (
+      SELECT document_id, AVG(rating) AS avg_rating
+      FROM ratings
+      GROUP BY document_id
+    ) avg_r ON avg_r.document_id = d.id
     WHERE chunks_fts MATCH ?
   `;
 
