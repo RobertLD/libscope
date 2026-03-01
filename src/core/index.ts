@@ -83,6 +83,23 @@ export type { RagOptions, RagResult, RagSource, LlmProvider } from "./rag.js";
 
 export { reindex } from "./reindex.js";
 export type { ReindexOptions, ReindexResult, ReindexProgress } from "./reindex.js";
+
+export {
+  listAvailablePacks,
+  installPack,
+  removePack,
+  listInstalledPacks,
+  createPack,
+} from "./packs.js";
+export type {
+  KnowledgePack,
+  PackDocument,
+  PackInfo,
+  InstalledPack,
+  InstallResult,
+  CreatePackOptions,
+} from "./packs.js";
+
 export { indexRepository, parseRepoUrl } from "./repo.js";
 export type { RepoOptions, RepoResult } from "./repo.js";
 

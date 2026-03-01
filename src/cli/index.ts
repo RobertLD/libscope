@@ -40,6 +40,13 @@ import {
   setActiveWorkspace,
   getWorkspacePath,
 } from "../core/workspace.js";
+import {
+  installPack,
+  removePack,
+  listInstalledPacks,
+  listAvailablePacks,
+  createPack,
+} from "../core/packs.js";
 
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
@@ -1141,5 +1148,99 @@ workspaceCmd
     deleteWorkspace(name);
     console.log(`✓ Workspace "${name}" deleted.`);
   });
+
+// pack
+const packCmd = program.command("pack").description("Manage knowledge packs");
+
+packCmd
+  .command("install <nameOrPath>")
+  .description("Install a knowledge pack from registry or local .json file")
+  .option("--registry <url>", "Custom registry URL")
+  .action(async (nameOrPath: string, opts: { registry?: string }) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    const result = await installPack(db, provider, nameOrPath, {
+      registryUrl: opts.registry,
+    });
+    if (result.alreadyInstalled) {
+      console.log(`Pack "${result.packName}" is already installed.`);
+    } else {
+      console.log(
+        `✓ Pack "${result.packName}" installed (${result.documentsInstalled} documents).`,
+      );
+    }
+  });
+
+packCmd
+  .command("remove <name>")
+  .description("Remove a pack and its documents")
+  .action((name: string) => {
+    const { db } = initializeApp();
+    removePack(db, name);
+    console.log(`✓ Pack "${name}" removed.`);
+  });
+
+packCmd
+  .command("list")
+  .description("List installed or available packs")
+  .option("--available", "List packs available in the registry")
+  .option("--registry <url>", "Custom registry URL")
+  .action(async (opts: { available?: boolean; registry?: string }) => {
+    if (opts.available) {
+      const packs = await listAvailablePacks(opts.registry);
+      if (packs.length === 0) {
+        console.log("No packs available in the registry.");
+        return;
+      }
+      console.log("Available packs:\n");
+      for (const p of packs) {
+        console.log(`  ${p.name} v${p.version} — ${p.description} (${p.docCount} docs)`);
+      }
+    } else {
+      const { db } = initializeApp();
+      const packs = listInstalledPacks(db);
+      if (packs.length === 0) {
+        console.log("No packs installed.");
+        return;
+      }
+      console.log("Installed packs:\n");
+      for (const p of packs) {
+        console.log(`  ${p.name} v${p.version} — ${p.description ?? ""} (${p.docCount} docs)`);
+      }
+    }
+  });
+
+packCmd
+  .command("create")
+  .description("Export current documents as a pack file")
+  .requiredOption("--name <name>", "Pack name")
+  .option("--topic <topic>", "Filter documents by topic ID")
+  .option("--version <version>", "Pack version (default: 1.0.0)")
+  .option("--description <desc>", "Pack description")
+  .option("--author <author>", "Pack author")
+  .option("--output <path>", "Output file path")
+  .action(
+    (opts: {
+      name: string;
+      topic?: string;
+      version?: string;
+      description?: string;
+      author?: string;
+      output?: string;
+    }) => {
+      const { db } = initializeApp();
+      const outputPath = opts.output ?? `${opts.name}.json`;
+      const pack = createPack(db, {
+        name: opts.name,
+        version: opts.version,
+        description: opts.description,
+        author: opts.author,
+        topic: opts.topic,
+        outputPath,
+      });
+      console.log(
+        `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
+      );
+    },
+  );
 
 program.parse();
