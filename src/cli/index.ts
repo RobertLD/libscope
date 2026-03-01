@@ -50,6 +50,13 @@ import {
 
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
+import {
+  authenticateDeviceCode,
+  refreshAccessToken,
+  syncOneNote,
+  disconnectOneNote,
+} from "../connectors/onenote.js";
+import { loadConnectorConfig, saveConnectorConfig } from "../connectors/index.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -1242,5 +1249,147 @@ packCmd
       );
     },
   );
+
+// connect onenote
+const connectCmd = program.command("connect").description("Connect external services");
+
+connectCmd
+  .command("onenote")
+  .description("Connect and sync OneNote notebooks via Microsoft Graph API")
+  .option("--token <accessToken>", "Use a pre-existing access token")
+  .option("--sync", "Incremental re-sync only")
+  .option("--notebook <name>", "Sync a specific notebook")
+  .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
+    const config = loadConfig();
+    const logLevel =
+      (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
+    initLogger(logLevel);
+
+    const workspace = program.opts().workspace as string | undefined;
+    if (workspace) {
+      process.env["LIBSCOPE_WORKSPACE"] = workspace;
+    }
+    const wsName = getActiveWorkspace();
+    const wsPath = getWorkspacePath(wsName);
+    const dbPath = join(wsPath, config.database.path);
+    const db = getDatabase(dbPath);
+    runMigrations(db);
+    const provider = createEmbeddingProvider(config);
+    createVectorTable(db, provider.dimensions);
+
+    try {
+      const connConfig = loadConnectorConfig();
+      let onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
+
+      let accessToken = opts.token;
+
+      if (!accessToken && !opts.sync) {
+        const clientId =
+          (onenoteConf.clientId as string | undefined) ?? process.env.ONENOTE_CLIENT_ID;
+        if (!clientId) {
+          console.error("Error: No client ID. Set ONENOTE_CLIENT_ID env var or provide --token.");
+          process.exit(1);
+        }
+        const tenantId =
+          (onenoteConf.tenantId as string | undefined) ?? process.env.ONENOTE_TENANT_ID ?? "common";
+
+        console.log("Starting device code authentication...");
+        const auth = await authenticateDeviceCode(clientId, tenantId);
+        accessToken = auth.accessToken;
+        onenoteConf = {
+          ...onenoteConf,
+          clientId,
+          tenantId,
+          accessToken: auth.accessToken,
+          refreshToken: auth.refreshToken,
+          tokenExpiry: auth.expiresAt,
+        };
+        connConfig.onenote = onenoteConf;
+        saveConnectorConfig(connConfig);
+        console.log("✓ Authenticated successfully");
+      }
+
+      if (opts.sync && !accessToken) {
+        // Try to refresh token
+        const clientId = onenoteConf.clientId as string | undefined;
+        const refreshTok = onenoteConf.refreshToken as string | undefined;
+        if (clientId && refreshTok) {
+          const tenantId = (onenoteConf.tenantId as string | undefined) ?? "common";
+          const auth = await refreshAccessToken(clientId, refreshTok, tenantId);
+          accessToken = auth.accessToken;
+          onenoteConf.accessToken = auth.accessToken;
+          onenoteConf.refreshToken = auth.refreshToken;
+          onenoteConf.tokenExpiry = auth.expiresAt;
+          connConfig.onenote = onenoteConf;
+          saveConnectorConfig(connConfig);
+        } else {
+          accessToken = onenoteConf.accessToken as string | undefined;
+        }
+      }
+
+      if (!accessToken) {
+        console.error("Error: No access token available. Run without --sync to authenticate.");
+        process.exit(1);
+      }
+
+      const notebooks = opts.notebook ? [opts.notebook] : ["all"];
+      const syncResult = await syncOneNote(db, provider, {
+        clientId: (onenoteConf.clientId as string) ?? "",
+        tenantId: (onenoteConf.tenantId as string) ?? "common",
+        accessToken,
+        notebooks,
+        excludeSections: (onenoteConf.excludeSections as string[]) ?? [],
+        lastSync: opts.sync ? (onenoteConf.lastSync as string | undefined) : undefined,
+      });
+
+      console.log(`\n✓ OneNote sync complete:`);
+      console.log(`  Notebooks: ${syncResult.notebooks}`);
+      console.log(`  Sections:  ${syncResult.sections}`);
+      console.log(`  Added:     ${syncResult.pagesAdded}`);
+      console.log(`  Updated:   ${syncResult.pagesUpdated}`);
+      console.log(`  Deleted:   ${syncResult.pagesDeleted}`);
+      if (syncResult.errors.length > 0) {
+        console.log(`  Errors:    ${syncResult.errors.length}`);
+        for (const e of syncResult.errors) {
+          console.log(`    - ${e.page}: ${e.error}`);
+        }
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// disconnect onenote
+program
+  .command("disconnect <service>")
+  .description("Disconnect an external service and remove its data")
+  .action((service: string) => {
+    if (service !== "onenote") {
+      console.error(`Unknown service: ${service}`);
+      process.exit(1);
+    }
+
+    const config = loadConfig();
+    const logLevel =
+      (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
+    initLogger(logLevel);
+
+    const workspace2 = program.opts().workspace as string | undefined;
+    if (workspace2) {
+      process.env["LIBSCOPE_WORKSPACE"] = workspace2;
+    }
+    const wsName2 = getActiveWorkspace();
+    const wsPath = getWorkspacePath(wsName2);
+    const dbPath = join(wsPath, config.database.path);
+    const db = getDatabase(dbPath);
+    runMigrations(db);
+
+    try {
+      const removed = disconnectOneNote(db);
+      console.log(`✓ Disconnected OneNote. Removed ${removed} documents.`);
+    } finally {
+      db.close();
+    }
+  });
 
 program.parse();

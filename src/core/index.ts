@@ -103,6 +103,18 @@ export type {
 export { indexRepository, parseRepoUrl } from "./repo.js";
 export type { RepoOptions, RepoResult } from "./repo.js";
 
+export {
+  syncOneNote,
+  disconnectOneNote,
+  authenticateDeviceCode,
+  refreshAccessToken,
+  convertOneNoteHtml,
+} from "../connectors/onenote.js";
+export type { OneNoteConfig, OneNoteSyncResult } from "../connectors/onenote.js";
+
+export { loadConnectorConfig, saveConnectorConfig } from "../connectors/index.js";
+export type { ConnectorConfig } from "../connectors/index.js";
+
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";
