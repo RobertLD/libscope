@@ -44,9 +44,10 @@ describe("searchDocuments (FTS5 fallback)", () => {
     insertDoc(db, "doc2", "Advanced TypeScript");
     insertChunk(db, "c2", "doc2", "TypeScript generics and advanced type patterns");
 
-    const results = await searchDocuments(db, provider, { query: "TypeScript" });
+    const { results, totalCount } = await searchDocuments(db, provider, { query: "TypeScript" });
 
     expect(results.length).toBe(2);
+    expect(totalCount).toBe(2);
     expect(results[0].content).toContain("TypeScript");
     expect(results[0].score).toBeGreaterThan(0);
   });
@@ -58,7 +59,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
     insertDoc(db, "doc2", "Vue Composition", { library: "vue" });
     insertChunk(db, "c2", "doc2", "Vue composition API for state management");
 
-    const results = await searchDocuments(db, provider, {
+    const { results } = await searchDocuments(db, provider, {
       query: "state",
       library: "react",
     });
@@ -77,7 +78,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
     insertDoc(db, "doc2", "Deploy Guide", { topicId: "deployment" });
     insertChunk(db, "c2", "doc2", "Deployment best practices for production");
 
-    const results = await searchDocuments(db, provider, {
+    const { results } = await searchDocuments(db, provider, {
       query: "best practices",
       topic: "testing",
     });
@@ -90,10 +91,39 @@ describe("searchDocuments (FTS5 fallback)", () => {
     insertDoc(db, "doc1", "Some Doc");
     insertChunk(db, "c1", "doc1", "Content about databases and SQL");
 
-    const results = await searchDocuments(db, provider, {
+    const { results } = await searchDocuments(db, provider, {
       query: "xyznonexistent",
     });
 
     expect(results).toEqual([]);
+  });
+
+  it("should paginate results with offset", async () => {
+    insertDoc(db, "doc1", "First TypeScript Guide");
+    insertChunk(db, "c1", "doc1", "TypeScript basics and fundamentals");
+
+    insertDoc(db, "doc2", "Second TypeScript Guide");
+    insertChunk(db, "c2", "doc2", "TypeScript advanced patterns");
+
+    insertDoc(db, "doc3", "Third TypeScript Guide");
+    insertChunk(db, "c3", "doc3", "TypeScript generics and utilities");
+
+    const page1 = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      limit: 2,
+      offset: 0,
+    });
+
+    expect(page1.totalCount).toBe(3);
+    expect(page1.results.length).toBe(2);
+
+    const page2 = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      limit: 2,
+      offset: 2,
+    });
+
+    expect(page2.totalCount).toBe(3);
+    expect(page2.results.length).toBe(1);
   });
 });

@@ -108,6 +108,7 @@ async function main(): Promise<void> {
       library: z.string().optional().describe("Filter by library name"),
       version: z.string().optional().describe("Filter by library version"),
       minRating: z.number().min(1).max(5).optional().describe("Minimum average rating filter"),
+      offset: z.number().min(0).optional().describe("Offset for pagination (default: 0)"),
       limit: z
         .number()
         .min(1)
@@ -116,13 +117,14 @@ async function main(): Promise<void> {
         .describe("Maximum results to return (default: 10)"),
     },
     withErrorHandling(async (params) => {
-      const results = await searchDocuments(db, provider, {
+      const { results, totalCount } = await searchDocuments(db, provider, {
         query: params.query,
         topic: params.topic,
         library: params.library,
         version: params.version,
         minRating: params.minRating,
         limit: params.limit,
+        offset: params.offset,
       });
 
       if (results.length === 0) {
@@ -131,16 +133,18 @@ async function main(): Promise<void> {
         };
       }
 
-      const text = results
-        .map(
-          (r, i) =>
-            `## Result ${i + 1}: ${r.title}\n` +
-            (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
-            (r.url ? `**Source:** ${r.url}\n` : "") +
-            (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "") +
-            `\n${r.content}\n`,
-        )
-        .join("\n---\n\n");
+      const text =
+        `**Total results: ${totalCount}**\n\n` +
+        results
+          .map(
+            (r, i) =>
+              `## Result ${i + 1}: ${r.title}\n` +
+              (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
+              (r.url ? `**Source:** ${r.url}\n` : "") +
+              (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "") +
+              `\n${r.content}\n`,
+          )
+          .join("\n---\n\n");
 
       return { content: [{ type: "text" as const, text }] };
     }),

@@ -56,7 +56,7 @@ describe("integration: full workflow", () => {
     expect(chunks.length).toBe(indexed.chunkCount);
 
     // 5. Search (falls back to keyword since we don't have vec0)
-    const results = await searchDocuments(db, provider, {
+    const { results } = await searchDocuments(db, provider, {
       query: "JWT tokens authentication",
     });
     expect(results.length).toBeGreaterThan(0);
@@ -169,13 +169,13 @@ describe("integration: full workflow", () => {
     });
 
     // Keyword search should find the right docs
-    const dbResults = await searchDocuments(db, provider, {
+    const { results: dbResults } = await searchDocuments(db, provider, {
       query: "PostgreSQL connection",
     });
     expect(dbResults.length).toBeGreaterThan(0);
     expect(dbResults[0]!.title).toBe("Database Setup");
 
-    const authResults = await searchDocuments(db, provider, {
+    const { results: authResults } = await searchDocuments(db, provider, {
       query: "JWT authentication token",
     });
     expect(authResults.length).toBeGreaterThan(0);
