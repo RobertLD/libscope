@@ -1359,16 +1359,13 @@ connectCmd
     }
   });
 
-// disconnect onenote
-program
-  .command("disconnect <service>")
-  .description("Disconnect an external service and remove its data")
-  .action((service: string) => {
-    if (service !== "onenote") {
-      console.error(`Unknown service: ${service}`);
-      process.exit(1);
-    }
+// disconnect commands
+const disconnectCmd = program.command("disconnect").description("Disconnect external sources");
 
+disconnectCmd
+  .command("onenote")
+  .description("Disconnect OneNote and remove its data")
+  .action(() => {
     const config = loadConfig();
     const logLevel =
       (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
@@ -1390,9 +1387,7 @@ program
     } finally {
       db.close();
     }
-
-// connect / disconnect obsidian
-const connectCmd = program.command("connect").description("Connect external sources");
+  });
 
 connectCmd
   .command("obsidian <vault-path>")
@@ -1443,8 +1438,6 @@ connectCmd
       }
     },
   );
-
-const disconnectCmd = program.command("disconnect").description("Disconnect external sources");
 
 disconnectCmd
   .command("obsidian <vault-path>")
