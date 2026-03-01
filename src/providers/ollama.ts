@@ -1,4 +1,5 @@
 import { EmbeddingError } from "../errors.js";
+import { withRetry } from "../utils/retry.js";
 import type { EmbeddingProvider } from "./embedding.js";
 
 /**
@@ -22,27 +23,29 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
       throw new EmbeddingError("Input text must not be empty");
     }
     try {
-      const response = await fetch(`${this.baseUrl}/api/embed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: text }),
+      return await withRetry<number[]>(async () => {
+        const response = await fetch(`${this.baseUrl}/api/embed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: this.model, input: text }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
+        }
+
+        const data = (await response.json()) as { embeddings: number[][] };
+        const embedding = data.embeddings[0];
+        if (!embedding) {
+          throw new Error("Ollama returned empty embeddings");
+        }
+        if (embedding.length !== this.dimensions) {
+          throw new EmbeddingError(
+            `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
+          );
+        }
+        return embedding;
       });
-
-      if (!response.ok) {
-        throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
-      }
-
-      const data = (await response.json()) as { embeddings: number[][] };
-      const embedding = data.embeddings[0];
-      if (!embedding) {
-        throw new Error("Ollama returned empty embeddings");
-      }
-      if (embedding.length !== this.dimensions) {
-        throw new EmbeddingError(
-          `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
-        );
-      }
-      return embedding;
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(
@@ -63,30 +66,32 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     }
     // Ollama supports batch input
     try {
-      const response = await fetch(`${this.baseUrl}/api/embed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: texts }),
-      });
+      return await withRetry<number[][]>(async () => {
+        const response = await fetch(`${this.baseUrl}/api/embed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: this.model, input: texts }),
+        });
 
-      if (!response.ok) {
-        throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
-      }
+        if (!response.ok) {
+          throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
+        }
 
-      const data = (await response.json()) as { embeddings: number[][] };
-      if (data.embeddings.length !== texts.length) {
-        throw new EmbeddingError(
-          `Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`,
-        );
-      }
-      for (const emb of data.embeddings) {
-        if (emb.length !== this.dimensions) {
+        const data = (await response.json()) as { embeddings: number[][] };
+        if (data.embeddings.length !== texts.length) {
           throw new EmbeddingError(
-            `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
+            `Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`,
           );
         }
-      }
-      return data.embeddings;
+        for (const emb of data.embeddings) {
+          if (emb.length !== this.dimensions) {
+            throw new EmbeddingError(
+              `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
+            );
+          }
+        }
+        return data.embeddings;
+      });
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
       throw new EmbeddingError(
