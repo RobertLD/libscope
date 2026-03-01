@@ -638,6 +638,35 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Tool: sync-obsidian-vault
+  server.tool(
+    "sync-obsidian-vault",
+    "Sync an Obsidian vault into the knowledge base. Parses wikilinks, frontmatter, embeds, and tags with incremental sync support.",
+    {
+      vaultPath: z.string().describe("Absolute path to the Obsidian vault directory"),
+    },
+    withErrorHandling(async (params) => {
+      const { syncObsidianVault } = await import("../connectors/obsidian.js");
+
+      const result = await syncObsidianVault(db, provider, {
+        vaultPath: params.vaultPath,
+        topicMapping: "folder",
+        excludePatterns: [],
+      });
+
+      const text =
+        `Obsidian vault sync complete.\n` +
+        `Added: ${result.added}\n` +
+        `Updated: ${result.updated}\n` +
+        `Deleted: ${result.deleted}` +
+        (result.errors.length > 0
+          ? `\nErrors: ${result.errors.map((e) => `${e.file}: ${e.error}`).join(", ")}`
+          : "");
+
+      return { content: [{ type: "text" as const, text }] };
+    }),
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

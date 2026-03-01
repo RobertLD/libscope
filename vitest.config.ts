@@ -19,6 +19,7 @@ export default defineConfig({
         "src/db/index.ts",
         "src/providers/index.ts",
         "src/providers/embedding.ts",
+        "src/web/graph-api.ts",
       ],
       thresholds: {
         statements: 75,
