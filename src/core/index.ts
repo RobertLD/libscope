@@ -17,3 +17,11 @@ export { fetchAndConvert } from "./url-fetcher.js";
 export type { FetchedDocument } from "./url-fetcher.js";
 
 export { exportKnowledgeBase, importFromBackup } from "./export.js";
+
+export { batchImport } from "./batch.js";
+export type {
+  BatchImportOptions,
+  BatchImportResult,
+  BatchProgress,
+  BatchFileResult,
+} from "./batch.js";

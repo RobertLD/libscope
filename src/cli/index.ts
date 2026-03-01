@@ -14,6 +14,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
+import { batchImport } from "../core/batch.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -154,6 +155,82 @@ program
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`\nDone: ${indexed} indexed, ${failed} failed in ${elapsed}s`);
+      closeDatabase();
+    },
+  );
+
+// import-batch
+program
+  .command("import-batch <directory>")
+  .description("Batch import files with parallel processing")
+  .option("--concurrency <n>", "Number of parallel imports", "5")
+  .option("--filter <glob>", "Glob pattern for file selection", "**/*.{md,mdx,txt}")
+  .option("--dry-run", "Preview files without importing")
+  .option("--topic <topicId>", "Assign all to a topic")
+  .option("--library <name>", "Mark all as library documentation")
+  .option("--version <version>", "Library version")
+  .action(
+    async (
+      directory: string,
+      opts: {
+        concurrency: string;
+        filter: string;
+        dryRun?: boolean;
+        topic?: string;
+        library?: string;
+        version?: string;
+      },
+    ) => {
+      const { db, provider } = initializeAppWithEmbedding();
+
+      const { globSync } = await import("node:fs");
+      const files = globSync(opts.filter, { cwd: directory }).map((f: string) =>
+        join(directory, f),
+      );
+      files.sort();
+
+      if (files.length === 0) {
+        console.log(`No files matching "${opts.filter}" found in ${directory}`);
+        closeDatabase();
+        return;
+      }
+
+      if (opts.dryRun) {
+        console.log(`Found ${files.length} files (dry run):\n`);
+        for (const f of files) {
+          console.log(`  ${f}`);
+        }
+        closeDatabase();
+        return;
+      }
+
+      console.log(`Importing ${files.length} files (concurrency: ${opts.concurrency})...`);
+      const startTime = Date.now();
+
+      const result = await batchImport(db, provider, files, {
+        concurrency: parseInt(opts.concurrency, 10),
+        library: opts.library,
+        version: opts.version,
+        topicId: opts.topic,
+        onProgress: (progress) => {
+          const done = progress.completed + progress.failed;
+          const file = progress.currentFile ?? "";
+          console.log(`  [${done}/${progress.total}] ${file}`);
+        },
+      });
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`\nDone: ${result.completed} indexed, ${result.failed} failed in ${elapsed}s`);
+
+      if (result.failed > 0) {
+        console.log("\nFailed files:");
+        for (const r of result.results) {
+          if (!r.success) {
+            console.log(`  ✗ ${r.file}: ${r.error}`);
+          }
+        }
+      }
+
       closeDatabase();
     },
   );
