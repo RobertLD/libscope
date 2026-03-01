@@ -39,6 +39,15 @@ export interface SearchResponse {
   totalCount: number;
 }
 
+export type SearchMethod = "vector" | "fts5" | "keyword";
+
+export interface ScoreExplanation {
+  method: SearchMethod;
+  rawScore: number;
+  boostFactors: string[];
+  details: string;
+}
+
 export interface SearchResult {
   documentId: string;
   chunkId: string;
@@ -51,6 +60,7 @@ export interface SearchResult {
   url: string | null;
   score: number;
   avgRating: number | null;
+  scoreExplanation: ScoreExplanation;
 }
 
 /** Perform semantic search across indexed documents. */
@@ -148,19 +158,28 @@ export async function searchDocuments(
 
     return {
       totalCount,
-      results: rows.map((row) => ({
-        documentId: row.document_id,
-        chunkId: row.chunk_id,
-        title: row.title,
-        content: row.chunk_content,
-        sourceType: row.source_type,
-        library: row.library,
-        version: row.version,
-        topicId: row.topic_id,
-        url: row.url,
-        score: 1 - row.distance, // Convert distance to similarity
-        avgRating: row.avg_rating,
-      })),
+      results: rows.map((row) => {
+        const similarity = 1 - row.distance;
+        return {
+          documentId: row.document_id,
+          chunkId: row.chunk_id,
+          title: row.title,
+          content: row.chunk_content,
+          sourceType: row.source_type,
+          library: row.library,
+          version: row.version,
+          topicId: row.topic_id,
+          url: row.url,
+          score: similarity,
+          avgRating: row.avg_rating,
+          scoreExplanation: {
+            method: "vector" as SearchMethod,
+            rawScore: row.distance,
+            boostFactors: [],
+            details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
+          },
+        };
+      }),
     };
   } catch (err) {
     if (!isVectorTableError(err)) {
@@ -260,19 +279,28 @@ function keywordSearch(
 
   return {
     totalCount,
-    results: rows.map((row, index) => ({
-      documentId: row.document_id,
-      chunkId: row.chunk_id,
-      title: row.title,
-      content: row.chunk_content,
-      sourceType: row.source_type,
-      library: row.library,
-      version: row.version,
-      topicId: row.topic_id,
-      url: row.url,
-      score: Math.max(0, 1 - index * 0.1), // Simple rank-based score
-      avgRating: row.avg_rating,
-    })),
+    results: rows.map((row, index) => {
+      const rankScore = Math.max(0, 1 - index * 0.1);
+      return {
+        documentId: row.document_id,
+        chunkId: row.chunk_id,
+        title: row.title,
+        content: row.chunk_content,
+        sourceType: row.source_type,
+        library: row.library,
+        version: row.version,
+        topicId: row.topic_id,
+        url: row.url,
+        score: rankScore,
+        avgRating: row.avg_rating,
+        scoreExplanation: {
+          method: "keyword" as SearchMethod,
+          rawScore: rankScore,
+          boostFactors: [],
+          details: `Keyword LIKE match: rank=${index + 1}, score=${rankScore.toFixed(4)}`,
+        },
+      };
+    }),
   };
 }
 
@@ -358,18 +386,27 @@ function fts5Search(
 
   return {
     totalCount,
-    results: rows.map((row) => ({
-      documentId: row.document_id,
-      chunkId: row.chunk_id,
-      title: row.title,
-      content: row.chunk_content,
-      sourceType: row.source_type,
-      library: row.library,
-      version: row.version,
-      topicId: row.topic_id,
-      url: row.url,
-      score: -row.fts_rank, // BM25 rank is negative, lower = better
-      avgRating: row.avg_rating,
-    })),
+    results: rows.map((row) => {
+      const bm25Score = -row.fts_rank;
+      return {
+        documentId: row.document_id,
+        chunkId: row.chunk_id,
+        title: row.title,
+        content: row.chunk_content,
+        sourceType: row.source_type,
+        library: row.library,
+        version: row.version,
+        topicId: row.topic_id,
+        url: row.url,
+        score: bm25Score,
+        avgRating: row.avg_rating,
+        scoreExplanation: {
+          method: "fts5" as SearchMethod,
+          rawScore: row.fts_rank,
+          boostFactors: [],
+          details: `FTS5 BM25 ranking: raw_rank=${row.fts_rank.toFixed(4)}, score=${bm25Score.toFixed(4)}`,
+        },
+      };
+    }),
   };
 }

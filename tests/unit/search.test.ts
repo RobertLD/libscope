@@ -4,6 +4,7 @@ import { createTestDb } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { insertDoc, insertChunk } from "../fixtures/helpers.js";
 import { searchDocuments, escapeLikePattern } from "../../src/core/search.js";
+import type { ScoreExplanation } from "../../src/core/search.js";
 
 describe("searchDocuments (FTS5 fallback)", () => {
   let db: Database.Database;
@@ -201,5 +202,61 @@ describe("LIKE wildcard escaping in keyword search (issue #79)", () => {
     const { results } = await searchDocuments(db, provider, { query: "user_name" });
     expect(results.length).toBe(1);
     expect(results[0]!.content).toContain("user_name");
+  });
+});
+
+describe("search result scoring explanation (issue #89)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should include scoreExplanation with FTS5 method", async () => {
+    insertDoc(db, "doc1", "TypeScript Guide");
+    insertChunk(db, "c1", "doc1", "TypeScript basics and fundamentals");
+
+    const { results } = await searchDocuments(db, provider, { query: "TypeScript" });
+
+    expect(results.length).toBeGreaterThan(0);
+    const explanation: ScoreExplanation = results[0]!.scoreExplanation;
+    expect(explanation).toBeDefined();
+    expect(explanation.method).toBe("fts5");
+    expect(typeof explanation.rawScore).toBe("number");
+    expect(Array.isArray(explanation.boostFactors)).toBe(true);
+    expect(explanation.details).toContain("FTS5 BM25");
+  });
+
+  it("should include scoreExplanation with keyword method for LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Keyword Doc");
+    insertChunk(db, "c1", "doc1", "testing keyword search fallback");
+
+    // Drop FTS table after inserting to force LIKE fallback
+    db.exec("DROP TABLE IF EXISTS chunks_fts");
+
+    const { results } = await searchDocuments(db, provider, { query: "keyword" });
+
+    expect(results.length).toBeGreaterThan(0);
+    const explanation = results[0]!.scoreExplanation;
+    expect(explanation.method).toBe("keyword");
+    expect(explanation.details).toContain("Keyword LIKE match");
+  });
+
+  it("should have consistent score and rawScore values for FTS5", async () => {
+    insertDoc(db, "doc1", "Score Test");
+    insertChunk(db, "c1", "doc1", "consistency check for scoring");
+
+    const { results } = await searchDocuments(db, provider, { query: "consistency" });
+
+    expect(results.length).toBe(1);
+    const result = results[0]!;
+    // FTS5: score = -rawScore (BM25 rank is negative)
+    expect(result.score).toBe(-result.scoreExplanation.rawScore);
   });
 });

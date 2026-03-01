@@ -2,7 +2,7 @@ export { indexDocument, chunkContent } from "./indexing.js";
 export type { IndexDocumentInput, IndexedDocument } from "./indexing.js";
 
 export { searchDocuments } from "./search.js";
-export type { SearchOptions, SearchResult } from "./search.js";
+export type { SearchOptions, SearchResult, SearchMethod, ScoreExplanation } from "./search.js";
 
 export { rateDocument, getDocumentRatings, listRatings } from "./ratings.js";
 export type { RateDocumentInput, Rating, RatingSummary } from "./ratings.js";
