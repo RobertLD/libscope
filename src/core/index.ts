@@ -89,3 +89,15 @@ export type { RepoOptions, RepoResult } from "./repo.js";
 export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
 export type { EmbeddingProvider } from "../providers/embedding.js";
 export type { ProviderFactory } from "../providers/index.js";
+
+export {
+  createWorkspace,
+  deleteWorkspace,
+  listWorkspaces,
+  getWorkspacePath,
+  getWorkspacesDir,
+  getActiveWorkspace,
+  setActiveWorkspace,
+  DEFAULT_WORKSPACE,
+} from "./workspace.js";
+export type { Workspace } from "./workspace.js";

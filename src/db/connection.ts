@@ -4,19 +4,28 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
 
 const require = createRequire(import.meta.url);
 
 let db: Database.Database | null = null;
 let cachedPath: string | null = null;
 
+/** Resolve the database path, falling back to the active workspace. */
+export function resolveDbPath(dbPath?: string): string {
+  if (dbPath) return dbPath;
+  return getWorkspacePath(getActiveWorkspace());
+}
+
 /** Get or create the database connection. */
-export function getDatabase(dbPath: string): Database.Database {
+export function getDatabase(dbPath?: string): Database.Database {
+  const resolvedPath = resolveDbPath(dbPath);
+
   if (db) {
-    if (cachedPath && cachedPath !== dbPath) {
+    if (cachedPath && cachedPath !== resolvedPath) {
       const log = getLogger();
       log.warn(
-        { existingPath: cachedPath, requestedPath: dbPath },
+        { existingPath: cachedPath, requestedPath: resolvedPath },
         "getDatabase() called with a different path than the existing connection; returning cached connection. Call closeDatabase() first to connect to a different database.",
       );
     }
@@ -25,13 +34,13 @@ export function getDatabase(dbPath: string): Database.Database {
 
   const log = getLogger();
   try {
-    const dir = dirname(dbPath);
+    const dir = dirname(resolvedPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
 
-    db = new Database(dbPath);
-    cachedPath = dbPath;
+    db = new Database(resolvedPath);
+    cachedPath = resolvedPath;
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
 
@@ -44,10 +53,10 @@ export function getDatabase(dbPath: string): Database.Database {
       log.warn({ err }, "sqlite-vec extension not available — vector search will be disabled");
     }
 
-    log.info({ path: dbPath }, "Database connection established");
+    log.info({ path: resolvedPath }, "Database connection established");
     return db;
   } catch (err) {
-    throw new DatabaseError(`Failed to open database at ${dbPath}`, err);
+    throw new DatabaseError(`Failed to open database at ${resolvedPath}`, err);
   }
 }
 

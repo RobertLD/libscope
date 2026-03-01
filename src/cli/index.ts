@@ -32,6 +32,14 @@ import {
   listTags,
   getDocumentTags,
 } from "../core/tags.js";
+import {
+  createWorkspace,
+  deleteWorkspace,
+  listWorkspaces,
+  getActiveWorkspace,
+  setActiveWorkspace,
+  getWorkspacePath,
+} from "../core/workspace.js";
 
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
@@ -53,7 +61,8 @@ program
   .description("AI-powered knowledge base with MCP integration")
   .version("0.1.0")
   .option("--verbose", "Enable verbose logging")
-  .option("--log-level <level>", "Set log level (debug, info, warn, error, silent)");
+  .option("--log-level <level>", "Set log level (debug, info, warn, error, silent)")
+  .option("--workspace <name>", "Use a specific workspace");
 
 // init
 program
@@ -680,6 +689,7 @@ configCmd
 interface ProgramOpts {
   verbose?: boolean;
   logLevel?: string;
+  workspace?: string;
 }
 
 function setupLogging(opts: ProgramOpts): void {
@@ -692,8 +702,16 @@ function setupLogging(opts: ProgramOpts): void {
 /** Shared CLI initialization: loadConfig → setupLogging → getDatabase → runMigrations. */
 function initializeApp() {
   const config = loadConfig();
-  setupLogging(program.opts());
-  const db = getDatabase(config.database.path);
+  const opts = program.opts<ProgramOpts>();
+  setupLogging(opts);
+
+  if (opts.workspace) {
+    process.env["LIBSCOPE_WORKSPACE"] = opts.workspace;
+  }
+
+  const workspace = getActiveWorkspace();
+  const dbPath = getWorkspacePath(workspace);
+  const db = getDatabase(dbPath);
   runMigrations(db);
   return { config, db };
 }
@@ -1074,5 +1092,54 @@ program
       }
     },
   );
+
+// workspace
+const workspaceCmd = program.command("workspace").description("Manage workspaces");
+
+workspaceCmd
+  .command("create <name>")
+  .description("Create a new workspace")
+  .action((name: string) => {
+    const ws = createWorkspace(name);
+    console.log(`✓ Workspace "${ws.name}" created at ${ws.path}`);
+  });
+
+workspaceCmd
+  .command("list")
+  .description("List all workspaces")
+  .action(() => {
+    const workspaces = listWorkspaces();
+    const active = getActiveWorkspace();
+
+    if (workspaces.length === 0) {
+      console.log("No workspaces found.");
+      return;
+    }
+
+    console.log("Workspaces:\n");
+    for (const ws of workspaces) {
+      const marker = ws.name === active ? " (active)" : "";
+      console.log(`  ${ws.name}${marker}`);
+      console.log(`    Path: ${ws.path}`);
+      console.log(`    Created: ${ws.createdAt}`);
+      console.log();
+    }
+  });
+
+workspaceCmd
+  .command("use <name>")
+  .description("Switch active workspace")
+  .action((name: string) => {
+    setActiveWorkspace(name);
+    console.log(`✓ Switched to workspace "${name}"`);
+  });
+
+workspaceCmd
+  .command("delete <name>")
+  .description("Delete a workspace")
+  .action((name: string) => {
+    deleteWorkspace(name);
+    console.log(`✓ Workspace "${name}" deleted.`);
+  });
 
 program.parse();
