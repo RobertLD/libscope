@@ -7,10 +7,14 @@ globalThis.fetch = mockFetch;
 // Mock dns.promises so we can control IP resolution
 const mockResolve4 = vi.fn();
 const mockResolve6 = vi.fn();
+const mockLookup = vi.fn();
 vi.mock("node:dns", () => ({
   promises: {
     resolve4: (...args: unknown[]): Promise<string[]> => mockResolve4(...args) as Promise<string[]>,
     resolve6: (...args: unknown[]): Promise<string[]> => mockResolve6(...args) as Promise<string[]>,
+  },
+  lookup: (...args: unknown[]): void => {
+    mockLookup(...args);
   },
 }));
 
@@ -62,9 +66,16 @@ describe("fetchAndConvert", () => {
     mockFetch.mockReset();
     mockResolve4.mockReset();
     mockResolve6.mockReset();
+    mockLookup.mockReset();
     // Default: resolve to a public IP
     mockResolve4.mockResolvedValue(["93.184.216.34"]);
     mockResolve6.mockRejectedValue(new Error("no AAAA"));
+    // Default: lookup also fails (callback style)
+    mockLookup.mockImplementation(
+      (_hostname: unknown, cb: (err: Error | null, address?: string, family?: number) => void) => {
+        cb(new Error("ENOTFOUND"));
+      },
+    );
   });
 
   it("should fetch HTML and convert to text with title from <title> tag", async () => {
@@ -184,6 +195,12 @@ describe("SSRF protection", () => {
     mockFetch.mockReset();
     mockResolve4.mockReset();
     mockResolve6.mockReset();
+    mockLookup.mockReset();
+    mockLookup.mockImplementation(
+      (_hostname: unknown, cb: (err: Error | null, address?: string, family?: number) => void) => {
+        cb(new Error("ENOTFOUND"));
+      },
+    );
   });
 
   it("should block file:// URLs", async () => {
@@ -254,8 +271,14 @@ describe("streaming body size limit", () => {
     mockFetch.mockReset();
     mockResolve4.mockReset();
     mockResolve6.mockReset();
+    mockLookup.mockReset();
     mockResolve4.mockResolvedValue(["93.184.216.34"]);
     mockResolve6.mockRejectedValue(new Error("no AAAA"));
+    mockLookup.mockImplementation(
+      (_hostname: unknown, cb: (err: Error | null, address?: string, family?: number) => void) => {
+        cb(new Error("ENOTFOUND"));
+      },
+    );
   });
 
   it("should abort when streamed body exceeds 10 MB regardless of Content-Length header", async () => {
@@ -298,8 +321,14 @@ describe("FetchOptions configuration", () => {
     mockFetch.mockReset();
     mockResolve4.mockReset();
     mockResolve6.mockReset();
+    mockLookup.mockReset();
     mockResolve4.mockResolvedValue(["93.184.216.34"]);
     mockResolve6.mockRejectedValue(new Error("no AAAA"));
+    mockLookup.mockImplementation(
+      (_hostname: unknown, cb: (err: Error | null, address?: string, family?: number) => void) => {
+        cb(new Error("ENOTFOUND"));
+      },
+    );
   });
 
   it("should expose sensible DEFAULT_FETCH_OPTIONS", () => {

@@ -1,7 +1,10 @@
-import { promises as dns } from "node:dns";
+import { promises as dns, lookup as dnsLookup } from "node:dns";
+import { promisify } from "node:util";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
+
+const lookupAsync = promisify(dnsLookup);
 
 export interface FetchedDocument {
   title: string;
@@ -78,6 +81,17 @@ async function validateUrl(url: string, allowPrivateUrls = false): Promise<strin
   const addresses: string[] = [];
   for (const r of results) {
     if (r.status === "fulfilled") addresses.push(...r.value);
+  }
+
+  // Fall back to OS resolver (respects /etc/resolv.conf search domains)
+  // when dns.resolve4/resolve6 fail — common with short internal hostnames.
+  if (addresses.length === 0) {
+    try {
+      const result = await lookupAsync(hostname);
+      if (result.address) addresses.push(result.address);
+    } catch {
+      // lookup also failed
+    }
   }
 
   if (addresses.length === 0) {

@@ -9,6 +9,11 @@ vi.mock("node:dns", () => ({
     resolve4: vi.fn().mockResolvedValue(["140.82.121.3"]),
     resolve6: vi.fn().mockRejectedValue(new Error("no AAAA")),
   },
+  lookup: vi.fn(
+    (_hostname: unknown, cb: (err: Error | null, address?: string, family?: number) => void) => {
+      cb(new Error("ENOTFOUND"));
+    },
+  ),
 }));
 
 const { parseRepoUrl, shouldIncludeFile, fetchRepoContents, indexRepository } =
