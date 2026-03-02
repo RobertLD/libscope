@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3](https://github.com/RobertLD/libscope/compare/v1.2.2...v1.2.3) (2026-03-02)
+
+
+### Features
+
+* add self-update command and fix version display ([#230](https://github.com/RobertLD/libscope/issues/230)) ([6e0a56b](https://github.com/RobertLD/libscope/commit/6e0a56b2353201909d9d782976d31e9b3452f067))
+
+
+### Bug Fixes
+
+* support indexing.allowPrivateUrls in config set command ([#234](https://github.com/RobertLD/libscope/issues/234)) ([2e74d8b](https://github.com/RobertLD/libscope/commit/2e74d8ba8837215856fcfb7ea1522eda95967894)), closes [#233](https://github.com/RobertLD/libscope/issues/233)
+
+
+### Miscellaneous Chores
+
+* bump version to 1.2.3 ([#236](https://github.com/RobertLD/libscope/issues/236)) ([3cc2ab5](https://github.com/RobertLD/libscope/commit/3cc2ab5b050cf7972a9c91d2a73da873b8858e2e))
+* release 1.2.2 ([#232](https://github.com/RobertLD/libscope/issues/232)) ([c4c94a9](https://github.com/RobertLD/libscope/commit/c4c94a98fd2f9010243caacb561cf1e999783274))
+
 ## [1.2.2](https://github.com/RobertLD/libscope/compare/v1.2.2...v1.2.2) (2026-03-02)
 
 
