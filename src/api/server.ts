@@ -4,18 +4,20 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { corsMiddleware, checkRateLimit, checkApiKey } from "./middleware.js";
 import { handleRequest } from "./routes.js";
+import { ConnectorScheduler, loadScheduleEntries } from "../core/scheduler.js";
 
 export interface ApiServerOptions {
   port?: number | undefined;
   host?: string | undefined;
   corsOrigins?: string[] | undefined;
+  enableScheduler?: boolean | undefined;
 }
 
 export async function startApiServer(
   db: Database.Database,
   provider: EmbeddingProvider,
   options?: ApiServerOptions,
-): Promise<{ close: () => void; port: number }> {
+): Promise<{ close: () => void; port: number; scheduler?: ConnectorScheduler | undefined }> {
   const log = getLogger();
   const port = options?.port ?? 3378;
   const host = options?.host ?? "localhost";
@@ -47,9 +49,27 @@ export async function startApiServer(
     server.on("error", reject);
     server.listen(port, host, () => {
       log.info({ port, host }, "API server started");
+
+      let scheduler: ConnectorScheduler | undefined;
+      if (options?.enableScheduler !== false) {
+        const entries = loadScheduleEntries();
+        if (entries.length > 0) {
+          scheduler = new ConnectorScheduler(db, provider);
+          scheduler.start(entries);
+          log.info(
+            { scheduledJobs: entries.length },
+            "Connector scheduler started with API server",
+          );
+        }
+      }
+
       resolve({
-        close: () => server.close(),
+        close: () => {
+          scheduler?.stop();
+          server.close();
+        },
         port,
+        scheduler,
       });
     });
   });
