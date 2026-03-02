@@ -23,6 +23,13 @@ jobs:
       - name: Install build tools
         run: pip install build
 
+      - name: Sync version from git tag
+        working-directory: sdk/python
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
+          echo "Publishing pylibscope ${VERSION}"
+
       - name: Build package
         working-directory: sdk/python
         run: python -m build
