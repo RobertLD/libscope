@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
+import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
 import { askQuestion, createLlmProvider, type LlmProvider } from "../core/rag.js";
@@ -65,7 +66,7 @@ async function main(): Promise<void> {
 
   let db;
   try {
-    db = getDatabase(config.database.path);
+    db = getDatabase(getWorkspacePath(getActiveWorkspace()));
     runMigrations(db);
   } catch (err) {
     console.error("Failed to initialize database:", err instanceof Error ? err.message : err);
