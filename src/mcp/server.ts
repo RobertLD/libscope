@@ -124,6 +124,14 @@ async function main(): Promise<void> {
         .max(50)
         .optional()
         .describe("Maximum results to return (default: 10)"),
+      contextChunks: z
+        .number()
+        .min(0)
+        .max(2)
+        .optional()
+        .describe(
+          "Number of neighboring chunks to include before/after each result for context (0-2, default: 0)",
+        ),
     },
     withErrorHandling(async (params) => {
       const { results, totalCount } = await searchDocuments(db, provider, {
@@ -134,6 +142,7 @@ async function main(): Promise<void> {
         minRating: params.minRating,
         limit: params.limit,
         offset: params.offset,
+        contextChunks: params.contextChunks,
       });
 
       if (results.length === 0) {
@@ -145,14 +154,25 @@ async function main(): Promise<void> {
       const text =
         `**Total results: ${totalCount}**\n\n` +
         results
-          .map(
-            (r, i) =>
+          .map((r, i) => {
+            let entry =
               `## Result ${i + 1}: ${r.title} (score: ${r.score.toFixed(2)})\n` +
               (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
               (r.url ? `**Source:** ${r.url}\n` : "") +
-              (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "") +
-              `\n${r.content}\n`,
-          )
+              (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "");
+
+            if (r.contextBefore && r.contextBefore.length > 0) {
+              entry += `\n**Context (before):**\n${r.contextBefore.map((c) => c.content).join("\n\n")}\n`;
+            }
+
+            entry += `\n${r.content}\n`;
+
+            if (r.contextAfter && r.contextAfter.length > 0) {
+              entry += `\n**Context (after):**\n${r.contextAfter.map((c) => c.content).join("\n\n")}\n`;
+            }
+
+            return entry;
+          })
           .join("\n---\n\n");
 
       return { content: [{ type: "text" as const, text }] };

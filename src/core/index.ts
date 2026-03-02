@@ -5,7 +5,13 @@ export { checkDuplicate, findDuplicates } from "./dedup.js";
 export type { DedupResult, DedupOptions, DuplicateGroup } from "./dedup.js";
 
 export { searchDocuments } from "./search.js";
-export type { SearchOptions, SearchResult, SearchMethod, ScoreExplanation } from "./search.js";
+export type {
+  SearchOptions,
+  SearchResult,
+  SearchMethod,
+  ScoreExplanation,
+  ContextChunk,
+} from "./search.js";
 
 export {
   logSearch,

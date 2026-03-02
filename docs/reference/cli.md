@@ -61,6 +61,7 @@ libscope import-batch ./docs/ --concurrency 10 --filter "**/*.md" --library my-l
 
 ```bash
 libscope search "authentication best practices" --library my-lib --limit 10
+libscope search "deploy process" --context 1    # include neighboring chunks
 ```
 
 | Option | Description |
@@ -69,6 +70,7 @@ libscope search "authentication best practices" --library my-lib --limit 10
 | `--topic <name>` | Filter by topic |
 | `--limit <n>` | Max results (default: 10) |
 | `--min-rating <n>` | Minimum average rating |
+| `--context <n>` | Include N neighboring chunks before/after each result (0-2, default: 0) |
 
 ### `libscope ask`
 
