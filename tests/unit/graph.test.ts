@@ -164,6 +164,21 @@ describe("buildKnowledgeGraph", () => {
     expect(docNodes[0]!.label).toBe("Tagged Doc");
   });
 
+  it("averages multiple chunk embeddings per document", async () => {
+    insertDocument(db, "d1", "Multi Chunk Doc", null);
+    insertDocument(db, "d2", "Other Doc", null);
+    // d1 has two chunks whose embeddings average to [1, 0, 0, 0]
+    insertChunkWithEmbedding(db, "c1a", "d1", [1, 0.5, 0, 0]);
+    insertChunkWithEmbedding(db, "c1b", "d1", [1, -0.5, 0, 0]);
+    // d2 has one chunk with similar direction
+    insertChunkWithEmbedding(db, "c2", "d2", [1, 0, 0, 0]);
+
+    const graph = await buildKnowledgeGraph(db, { similarityThreshold: 0.9 });
+
+    const simEdges = graph.edges.filter((e) => e.type === "similar_to");
+    expect(simEdges.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("applies threshold filtering for similarity edges", async () => {
     insertDocument(db, "d1", "Doc One", null);
     insertDocument(db, "d2", "Doc Two", null);

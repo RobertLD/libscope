@@ -212,6 +212,101 @@ describe("FileWatcher", () => {
     watcher.stop();
   });
 
+  it("should handle non-Error watcher error events", () => {
+    const db = createMockDb();
+    const provider = createMockProvider();
+    const onError = vi.fn();
+
+    const watcher = new FileWatcher(db, provider, {
+      directory: "/tmp/docs",
+      onError,
+    });
+
+    watcher.start();
+
+    // Simulate a non-Error object being emitted
+    errorCallback("string error" as unknown as Error);
+
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
+
+    watcher.stop();
+  });
+
+  it("should ignore events with no filename", () => {
+    const db = createMockDb();
+    const provider = createMockProvider();
+
+    const watcher = new FileWatcher(db, provider, {
+      directory: "/tmp/docs",
+      extensions: [".md"],
+    });
+
+    watcher.start();
+
+    // Trigger event with null filename — should be ignored
+    watchCallback("change", null as unknown as string);
+
+    expect(mockStatSync).not.toHaveBeenCalled();
+
+    watcher.stop();
+  });
+
+  it("should skip non-file entries (directories)", async () => {
+    const db = createMockDb();
+    const provider = createMockProvider();
+    const onIndex = vi.fn();
+
+    mockStatSync.mockReturnValue({ isFile: () => false } as import("node:fs").Stats);
+
+    const watcher = new FileWatcher(db, provider, {
+      directory: "/tmp/docs",
+      extensions: [".md"],
+      onIndex,
+    });
+
+    watcher.start();
+    watchCallback("change", "subdir.md");
+
+    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onIndex).not.toHaveBeenCalled();
+
+    watcher.stop();
+  });
+
+  it("should not call onRemove when deleted file has no corresponding document", async () => {
+    const db = createMockDb();
+    const onRemove = vi.fn();
+
+    // Return undefined for document lookup (no existing doc)
+    (db.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+      get: vi.fn().mockReturnValue(undefined),
+      run: vi.fn(),
+    });
+
+    mockStatSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    const provider = createMockProvider();
+    const watcher = new FileWatcher(db, provider, {
+      directory: "/tmp/docs",
+      extensions: [".md"],
+      onRemove,
+    });
+
+    watcher.start();
+    watchCallback("change", "ghost.md");
+
+    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onRemove).not.toHaveBeenCalled();
+
+    watcher.stop();
+  });
+
   it("should clean up timers and close watcher on stop", () => {
     const db = createMockDb();
     const provider = createMockProvider();

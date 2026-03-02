@@ -177,7 +177,9 @@ tests/
 - **Use `MockEmbeddingProvider`** from `tests/fixtures/mock-provider.ts` for all tests that need embeddings. It returns deterministic 4D vectors — no model download, no network.
 - **Use `createTestDb()`** from `tests/fixtures/test-db.ts` for an in-memory SQLite instance with all migrations applied.
 - **sqlite-vec is NOT available in tests.** The test DB is plain SQLite. Vector search tests exercise the FTS5/LIKE fallback path. This is by design.
-- **Coverage threshold is 80%** for statements, branches, functions, and lines (enforced in `vitest.config.ts`). CLI code (`src/cli/`) is excluded from coverage.
+- **Coverage thresholds** (enforced in `vitest.config.ts`): statements ≥ 75%, branches ≥ 74%, functions ≥ 75%, lines ≥ 75%. CLI code (`src/cli/`) is excluded from coverage.
+- **Always run `npm run test:coverage`** (not just `npm test`) before pushing. CI runs `test:coverage`, which fails if any threshold is missed. `npm test` alone does NOT check coverage.
+- When adding new source files, ensure adequate test coverage so global thresholds are not violated. New files with many uncovered branches will drag the overall percentage down.
 - Tests should be fast (< 1 second total), deterministic, and not depend on ordering.
 
 ### Common Gotcha
@@ -252,8 +254,12 @@ git worktree remove ../libscope-<branch-name>
 3. Expose via MCP tool in `src/mcp/server.ts` and/or CLI command in `src/cli/index.ts`.
 4. Write unit tests in `tests/unit/` using `MockEmbeddingProvider` and `createTestDb()`.
 5. Add integration coverage in `tests/integration/workflow.test.ts` if it's a core flow.
-6. Run `npm run typecheck && npm test && npm run lint` — all must pass.
+6. Run `npm run typecheck && npm run test:coverage && npm run lint` — all must pass. **Use `test:coverage`, not `test`** — CI enforces coverage thresholds and will fail if new code drops coverage below the configured minimums (see `vitest.config.ts` thresholds).
 7. **Update documentation** — see the Documentation section below.
+8. **PR description must match implementation.** Don't describe features that aren't implemented yet — only document what actually ships in the PR. If scope is reduced, update the description before opening the PR.
+9. **Verify HTTP error handling.** When writing code that calls external services (fetch, HTTP clients), always check response status codes — `fetch()` resolves on 4xx/5xx, so check `resp.ok` or `resp.status`. Never treat a resolved fetch as a success without status checking.
+10. **Don't expose secrets in API responses.** If a model stores sensitive fields (tokens, secrets, keys), redact them from API/MCP response payloads.
+11. **Self-review before creating a PR.** Before opening a pull request, use a `code-review` sub-agent to review your own diff (`git diff main...HEAD`). Fix any issues it finds. Do not rely on the automated GitHub review — catch problems before the PR is created, not after.
 
 ## Documentation
 

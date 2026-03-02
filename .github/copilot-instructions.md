@@ -12,4 +12,5 @@ Refer to [agents.md](../agents.md) at the repository root for full architecture,
 - sqlite-vec is loaded via `createRequire` — do not change this to an ESM import.
 - Database migrations are versioned — never modify existing migrations, only add new ones.
 - Tests use `MockEmbeddingProvider` and in-memory SQLite (no sqlite-vec in tests).
-- Run `npm run typecheck && npm test && npm run lint` before considering work complete.
+- Run `npm run typecheck && npm run test:coverage && npm run lint` before considering work complete. Use `test:coverage` (not `test`) — CI enforces coverage thresholds (statements ≥ 75%, branches ≥ 74%, functions ≥ 75%, lines ≥ 75%) and will reject PRs that drop below them.
+- Before creating a PR, use a `code-review` sub-agent to self-review your diff. Fix any issues it finds before opening the PR.

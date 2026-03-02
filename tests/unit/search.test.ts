@@ -176,6 +176,87 @@ describe("searchDocuments (FTS5 fallback)", () => {
     expect(results.length).toBe(1);
     expect(results[0].sourceType).toBe("library");
   });
+
+  it("should filter by version", async () => {
+    db.prepare(
+      `INSERT INTO documents (id, title, content, source_type, library, version)
+       VALUES (?, ?, '', 'library', 'react', ?)`,
+    ).run("doc1", "React 17", "17.0.0");
+    insertChunk(db, "c1", "doc1", "TypeScript React 17 hooks");
+
+    db.prepare(
+      `INSERT INTO documents (id, title, content, source_type, library, version)
+       VALUES (?, ?, '', 'library', 'react', ?)`,
+    ).run("doc2", "React 18", "18.0.0");
+    insertChunk(db, "c2", "doc2", "TypeScript React 18 concurrent");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript React",
+      version: "18.0.0",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].version).toBe("18.0.0");
+  });
+
+  it("should filter by minRating", async () => {
+    insertDoc(db, "doc1", "Good Doc");
+    insertChunk(db, "c1", "doc1", "TypeScript highly rated content");
+    db.prepare("INSERT INTO ratings (id, document_id, rating) VALUES (?, ?, ?)").run(
+      "r1",
+      "doc1",
+      5,
+    );
+
+    insertDoc(db, "doc2", "Bad Doc");
+    insertChunk(db, "c2", "doc2", "TypeScript poorly rated content");
+    db.prepare("INSERT INTO ratings (id, document_id, rating) VALUES (?, ?, ?)").run(
+      "r2",
+      "doc2",
+      1,
+    );
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      minRating: 4,
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("Good Doc");
+  });
+
+  it("should filter by tags", async () => {
+    insertDoc(db, "doc1", "Tagged Doc");
+    insertChunk(db, "c1", "doc1", "TypeScript tagged content");
+    db.prepare("INSERT INTO tags (id, name) VALUES (?, ?)").run("t1", "tutorial");
+    db.prepare("INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)").run("doc1", "t1");
+
+    insertDoc(db, "doc2", "Untagged Doc");
+    insertChunk(db, "c2", "doc2", "TypeScript untagged content");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      tags: ["tutorial"],
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("Tagged Doc");
+  });
+
+  it("should disable analytics when analyticsEnabled is false", async () => {
+    insertDoc(db, "doc1", "Analytics Doc");
+    insertChunk(db, "c1", "doc1", "TypeScript analytics test content");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      analyticsEnabled: false,
+    });
+
+    expect(results.length).toBe(1);
+    // Verify no search log entry was created
+    const logCount = db.prepare("SELECT COUNT(*) as cnt FROM search_log").get() as { cnt: number };
+    expect(logCount.cnt).toBe(0);
+  });
 });
 
 describe("escapeLikePattern", () => {
@@ -305,7 +386,10 @@ describe("search result scoring explanation (issue #89)", () => {
     insertDoc(db, "doc1", "Keyword Doc");
     insertChunk(db, "c1", "doc1", "testing keyword search fallback");
 
-    // Drop FTS table after inserting to force LIKE fallback
+    // Drop FTS triggers and table after inserting to force LIKE fallback
+    db.exec("DROP TRIGGER IF EXISTS chunks_ai");
+    db.exec("DROP TRIGGER IF EXISTS chunks_ad");
+    db.exec("DROP TRIGGER IF EXISTS chunks_au");
     db.exec("DROP TABLE IF EXISTS chunks_fts");
 
     const { results } = await searchDocuments(db, provider, { query: "keyword" });
@@ -326,6 +410,200 @@ describe("search result scoring explanation (issue #89)", () => {
     const result = results[0]!;
     // FTS5: score = -rawScore (BM25 rank is negative)
     expect(result.score).toBe(-result.scoreExplanation.rawScore);
+  });
+});
+
+describe("LIKE fallback with filters", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Insert data then drop FTS to force LIKE fallback. */
+  function dropFts(): void {
+    db.exec("DROP TRIGGER IF EXISTS chunks_ai");
+    db.exec("DROP TRIGGER IF EXISTS chunks_ad");
+    db.exec("DROP TRIGGER IF EXISTS chunks_au");
+    db.exec("DROP TABLE IF EXISTS chunks_fts");
+  }
+
+  it("should filter by version in LIKE fallback", async () => {
+    db.prepare(
+      `INSERT INTO documents (id, title, content, source_type, library, version)
+       VALUES (?, ?, '', 'library', 'react', ?)`,
+    ).run("doc1", "React 17", "17.0.0");
+    insertChunk(db, "c1", "doc1", "keyword React 17 hooks guide");
+
+    db.prepare(
+      `INSERT INTO documents (id, title, content, source_type, library, version)
+       VALUES (?, ?, '', 'library', 'react', ?)`,
+    ).run("doc2", "React 18", "18.0.0");
+    insertChunk(db, "c2", "doc2", "keyword React 18 concurrent features");
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword React",
+      version: "18.0.0",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.version).toBe("18.0.0");
+  });
+
+  it("should filter by minRating in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Rated Doc");
+    insertChunk(db, "c1", "doc1", "keyword highly rated content here");
+    db.prepare("INSERT INTO ratings (id, document_id, rating) VALUES (?, ?, ?)").run(
+      "r1",
+      "doc1",
+      5,
+    );
+
+    insertDoc(db, "doc2", "Low Doc");
+    insertChunk(db, "c2", "doc2", "keyword poorly rated content here");
+    db.prepare("INSERT INTO ratings (id, document_id, rating) VALUES (?, ?, ?)").run(
+      "r2",
+      "doc2",
+      1,
+    );
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword rated",
+      minRating: 4,
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.title).toBe("Rated Doc");
+  });
+
+  it("should filter by dateFrom in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Old Doc", { createdAt: "2023-01-01T00:00:00.000Z" });
+    insertChunk(db, "c1", "doc1", "keyword old content here");
+
+    insertDoc(db, "doc2", "New Doc", { createdAt: "2024-06-01T00:00:00.000Z" });
+    insertChunk(db, "c2", "doc2", "keyword new content here");
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword content",
+      dateFrom: "2024-01-01T00:00:00.000Z",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.title).toBe("New Doc");
+  });
+
+  it("should filter by dateTo in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Old Doc", { createdAt: "2023-01-01T00:00:00.000Z" });
+    insertChunk(db, "c1", "doc1", "keyword old content here");
+
+    insertDoc(db, "doc2", "New Doc", { createdAt: "2024-06-01T00:00:00.000Z" });
+    insertChunk(db, "c2", "doc2", "keyword new content here");
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword content",
+      dateTo: "2023-12-31T23:59:59.000Z",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.title).toBe("Old Doc");
+  });
+
+  it("should filter by source type in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Library Doc", { sourceType: "library" });
+    insertChunk(db, "c1", "doc1", "keyword library documentation");
+
+    insertDoc(db, "doc2", "Manual Doc", { sourceType: "manual" });
+    insertChunk(db, "c2", "doc2", "keyword manual documentation");
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword documentation",
+      source: "library",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.sourceType).toBe("library");
+  });
+
+  it("should filter by tags in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Tagged Doc");
+    insertChunk(db, "c1", "doc1", "keyword tagged content");
+    db.prepare("INSERT INTO tags (id, name) VALUES (?, ?)").run("t1", "howto");
+    db.prepare("INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)").run("doc1", "t1");
+
+    insertDoc(db, "doc2", "Other Doc");
+    insertChunk(db, "c2", "doc2", "keyword other content");
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword content",
+      tags: ["howto"],
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.title).toBe("Tagged Doc");
+  });
+
+  it("should return empty results when query words are too short", async () => {
+    insertDoc(db, "doc1", "Doc");
+    insertChunk(db, "c1", "doc1", "a b c");
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, { query: "a b" });
+    expect(results).toEqual([]);
+  });
+
+  it("should apply maxChunksPerDocument in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Multi Chunk");
+    insertChunk(db, "c1", "doc1", "keyword alpha content here", 0);
+    insertChunk(db, "c2", "doc1", "keyword beta content here", 1);
+    insertChunk(db, "c3", "doc1", "keyword gamma content here", 2);
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword content",
+      maxChunksPerDocument: 1,
+    });
+
+    expect(results.length).toBe(1);
+  });
+
+  it("should attach context chunks in LIKE fallback", async () => {
+    insertDoc(db, "doc1", "Context Doc");
+    insertChunk(db, "c0", "doc1", "prologue section", 0);
+    insertChunk(db, "c1", "doc1", "keyword main section here", 1);
+    insertChunk(db, "c2", "doc1", "epilogue section", 2);
+
+    dropFts();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword main",
+      contextChunks: 1,
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.contextBefore).toBeDefined();
+    expect(results[0]!.contextBefore!.length).toBe(1);
+    expect(results[0]!.contextAfter).toBeDefined();
+    expect(results[0]!.contextAfter!.length).toBe(1);
   });
 });
 
