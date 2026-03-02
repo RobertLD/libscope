@@ -13,7 +13,9 @@ RUN apk add --no-cache python3 make g++ && \
     addgroup -g 1001 libscope && \
     adduser -u 1001 -G libscope -s /bin/sh -D libscope
 COPY package*.json ./
-RUN npm ci --omit=dev && apk del python3 make g++
+RUN npm ci --omit=dev --ignore-scripts && \
+    npm rebuild better-sqlite3 && \
+    apk del python3 make g++
 COPY --from=builder /app/dist ./dist
 USER libscope
 EXPOSE 3420 3421
