@@ -43,6 +43,25 @@ interface WebhookRow {
 
 const MAX_FAILURES = 10;
 
+/** Atomically increment failure_count and deactivate if threshold is reached. */
+function recordFailure(
+  db: Database.Database,
+  log: ReturnType<typeof getLogger>,
+  webhookId: string,
+): void {
+  db.prepare(
+    "UPDATE webhooks SET failure_count = failure_count + 1, active = CASE WHEN failure_count + 1 >= ? THEN 0 ELSE active END WHERE id = ?",
+  ).run(MAX_FAILURES, webhookId);
+
+  const updated = db
+    .prepare("SELECT failure_count, active FROM webhooks WHERE id = ?")
+    .get(webhookId) as { failure_count: number; active: number } | undefined;
+
+  if (updated && updated.failure_count >= MAX_FAILURES && updated.active === 0) {
+    log.warn({ webhookId }, "Webhook deactivated after %d consecutive failures", MAX_FAILURES);
+  }
+}
+
 function rowToWebhook(row: WebhookRow): Webhook {
   return {
     id: row.id,
@@ -57,8 +76,14 @@ function rowToWebhook(row: WebhookRow): Webhook {
 }
 
 function validateUrl(url: string): void {
-  if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    throw new ValidationError("Webhook URL must start with http:// or https://");
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ValidationError("Invalid webhook URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new ValidationError("Webhook URL must use http or https");
   }
 }
 
@@ -194,30 +219,22 @@ export function fireWebhooks(
       body,
       signal: AbortSignal.timeout(5000),
     })
-      .then(() => {
+      .then((resp) => {
+        if (!resp.ok) {
+          log.warn(
+            { webhookId: webhook.id, url: webhook.url, status: resp.status },
+            "Webhook delivery received non-2xx response",
+          );
+          recordFailure(db, log, webhook.id);
+          return;
+        }
         db.prepare(
           "UPDATE webhooks SET last_triggered_at = datetime('now'), failure_count = 0 WHERE id = ?",
         ).run(webhook.id);
       })
       .catch((err: unknown) => {
         log.warn({ err, webhookId: webhook.id, url: webhook.url }, "Webhook delivery failed");
-        const newCount = webhook.failureCount + 1;
-        if (newCount >= MAX_FAILURES) {
-          db.prepare("UPDATE webhooks SET failure_count = ?, active = 0 WHERE id = ?").run(
-            newCount,
-            webhook.id,
-          );
-          log.warn(
-            { webhookId: webhook.id },
-            "Webhook deactivated after %d consecutive failures",
-            MAX_FAILURES,
-          );
-        } else {
-          db.prepare("UPDATE webhooks SET failure_count = ? WHERE id = ?").run(
-            newCount,
-            webhook.id,
-          );
-        }
+        recordFailure(db, log, webhook.id);
       });
   }
 }

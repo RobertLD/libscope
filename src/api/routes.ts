@@ -48,7 +48,21 @@ import {
   buildPayload,
   signPayload,
 } from "../core/webhooks.js";
-import type { WebhookEvent } from "../core/webhooks.js";
+import type { WebhookEvent, Webhook } from "../core/webhooks.js";
+
+/** Strip the secret from webhook API responses. */
+function redactWebhook(webhook: Webhook): Omit<Webhook, "secret"> & { hasSecret: boolean } {
+  return {
+    id: webhook.id,
+    url: webhook.url,
+    events: webhook.events,
+    active: webhook.active,
+    createdAt: webhook.createdAt,
+    lastTriggeredAt: webhook.lastTriggeredAt,
+    failureCount: webhook.failureCount,
+    hasSecret: webhook.secret !== null,
+  };
+}
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
@@ -166,7 +180,6 @@ function matchWebhookId(segments: string[]): string | null {
     segments[2] === "webhooks"
   ) {
     const id = segments[3];
-    if (id === "test") return null;
     return id ?? null;
   }
   return null;
@@ -698,7 +711,7 @@ export async function handleRequest(
       if (method === "GET") {
         const webhooks = listWebhooks(db);
         const took = Math.round(performance.now() - start);
-        sendJson(res, 200, webhooks, took);
+        sendJson(res, 200, webhooks.map(redactWebhook), took);
         return;
       }
       if (method === "POST") {
@@ -713,7 +726,7 @@ export async function handleRequest(
         }
         const webhook = createWebhook(db, body.url, body.events as WebhookEvent[], body.secret);
         const took = Math.round(performance.now() - start);
-        sendJson(res, 201, webhook, took);
+        sendJson(res, 201, redactWebhook(webhook), took);
         return;
       }
     }
