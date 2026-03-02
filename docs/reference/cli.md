@@ -11,7 +11,7 @@
 | `libscope search <query>` | Semantic search |
 | `libscope ask <question>` | RAG question-answering |
 | `libscope repl` | Interactive search REPL |
-| `libscope serve` | Start MCP server (or `--api` for REST API) |
+| `libscope serve` | Start MCP server, REST API (`--api`), or web dashboard (`--dashboard`) |
 
 ### `libscope add`
 
@@ -84,18 +84,21 @@ libscope ask "How do I configure OAuth2?" --library my-lib --top-k 8
 
 ### `libscope serve`
 
-Start the MCP server or REST API.
+Start the MCP server, REST API, or web dashboard.
 
 ```bash
-libscope serve          # MCP server (stdio)
-libscope serve --api    # REST API
-libscope serve --api --port 3378
+libscope serve                # MCP server (stdio)
+libscope serve --api          # REST API (port 3378)
+libscope serve --dashboard    # Web dashboard UI (port 3377)
+libscope serve --dashboard --port 8080
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--api` | Start REST API instead of MCP server |
-| `--port <n>` | REST API port (default: 3378) |
+| `--dashboard` | Start the web dashboard UI |
+| `--port <n>` | Server port (default: 3378 for API, 3377 for dashboard) |
+| `--host <h>` | Server host (default: localhost) |
 
 ## Document Management
 
