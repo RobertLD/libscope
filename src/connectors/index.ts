@@ -169,5 +169,6 @@ export {
   convertConfluenceStorage,
   disconnectConfluence,
   buildAuthHeader,
+  getApiUrls,
 } from "./confluence.js";
 export type { ConfluenceConfig, ConfluenceSyncResult } from "./confluence.js";
