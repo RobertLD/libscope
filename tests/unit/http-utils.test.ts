@@ -15,6 +15,13 @@ vi.mock("../../src/logger.js", () => ({
   }),
 }));
 
+// Mock config
+vi.mock("../../src/config.js", () => ({
+  loadConfig: () => ({
+    indexing: { allowSelfSignedCerts: false, allowPrivateUrls: false, maxDocumentSize: 104857600 },
+  }),
+}));
+
 const { fetchWithRetry } = await import("../../src/connectors/http-utils.js");
 
 function jsonResponse(data: unknown, status = 200, headers?: Record<string, string>): Response {
