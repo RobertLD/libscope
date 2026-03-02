@@ -58,7 +58,7 @@
     "openai": "^6.25.0",
     "pino": "^9.0.0",
     "sqlite-vec": "^0.1.0",
-    "zod": "^3.23.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
