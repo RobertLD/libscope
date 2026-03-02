@@ -84,6 +84,7 @@ export {
   removeTagFromDocument,
   getDocumentTags,
   getDocumentsByTag,
+  suggestTags,
 } from "./tags.js";
 export type { Tag, TagWithCount, GetDocumentsByTagOptions } from "./tags.js";
 

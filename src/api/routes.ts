@@ -14,6 +14,7 @@ import {
   createTopic,
   listTags,
   addTagsToDocument,
+  suggestTags,
   getStats,
   getSearchAnalytics,
   getKnowledgeGaps,
@@ -73,6 +74,20 @@ function matchDocumentTags(segments: string[]): string | null {
     segments[1] === "v1" &&
     segments[2] === "documents" &&
     segments[4] === "tags"
+  ) {
+    return segments[3] ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/documents/:id/suggest-tags */
+function matchDocumentSuggestTags(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "documents" &&
+    segments[4] === "suggest-tags"
   ) {
     return segments[3] ?? null;
   }
@@ -393,6 +408,17 @@ export async function handleRequest(
       const tags = addTagsToDocument(db, tagDocId, tagNames);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, tags, took);
+      return;
+    }
+
+    // Suggest tags for a document
+    const suggestDocId = matchDocumentSuggestTags(segments);
+    if (suggestDocId && method === "GET") {
+      const limitRaw = url.searchParams.get("limit");
+      const limit = limitRaw ? parseInt(limitRaw, 10) : 5;
+      const suggestions = suggestTags(db, suggestDocId, limit);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { documentId: suggestDocId, suggestions }, took);
       return;
     }
 

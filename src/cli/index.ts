@@ -36,6 +36,7 @@ import {
   removeTagFromDocument,
   listTags,
   getDocumentTags,
+  suggestTags,
 } from "../core/tags.js";
 import { bulkDelete, bulkRetag, bulkMove } from "../core/bulk.js";
 import type { BulkSelector } from "../core/bulk.js";
@@ -897,6 +898,28 @@ tagCmd
       } else {
         for (const t of allTags) {
           console.log(`  ${t.name} (${t.documentCount} doc${t.documentCount !== 1 ? "s" : ""})`);
+        }
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+tagCmd
+  .command("suggest <documentId>")
+  .description("Suggest tags for a document based on content analysis")
+  .option("-l, --limit <n>", "Max number of suggestions", "5")
+  .action((documentId: string, opts: { limit: string }) => {
+    const { db } = initializeApp();
+    try {
+      const limit = parseInt(opts.limit, 10);
+      const suggestions = suggestTags(db, documentId, limit);
+      if (suggestions.length === 0) {
+        console.log("No tag suggestions found for this document.");
+      } else {
+        console.log(`Suggested tags for ${documentId}:`);
+        for (const tag of suggestions) {
+          console.log(`  • ${tag}`);
         }
       }
     } finally {
