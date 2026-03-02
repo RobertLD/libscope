@@ -277,6 +277,7 @@ async function main(): Promise<void> {
       if (url && !content) {
         const fetched = await fetchAndConvert(url, {
           allowPrivateUrls: config.indexing.allowPrivateUrls,
+          allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
         });
         content = fetched.content;
         title ??= fetched.title;

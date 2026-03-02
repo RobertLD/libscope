@@ -87,6 +87,8 @@ Supported providers: `openai`, `ollama`.
 | `LIBSCOPE_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
 | `LIBSCOPE_LLM_PROVIDER` | LLM provider for RAG (`openai` / `ollama`) | — |
 | `LIBSCOPE_LLM_MODEL` | LLM model override | — |
+| `LIBSCOPE_ALLOW_PRIVATE_URLS` | Allow fetching from private/internal IPs | `false` |
+| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates | `false` |
 | `ONENOTE_CLIENT_ID` | Microsoft app registration client ID | — |
 | `ONENOTE_TENANT_ID` | Microsoft tenant ID | `common` |
 | `NOTION_TOKEN` | Notion integration token | — |

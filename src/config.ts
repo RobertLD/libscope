@@ -24,6 +24,7 @@ export interface LibScopeConfig {
   indexing: {
     maxDocumentSize: number;
     allowPrivateUrls: boolean;
+    allowSelfSignedCerts: boolean;
   };
   logging: {
     level: "debug" | "info" | "warn" | "error" | "silent";
@@ -43,6 +44,7 @@ const DEFAULT_CONFIG: LibScopeConfig = {
   indexing: {
     maxDocumentSize: 100 * 1024 * 1024, // 100MB
     allowPrivateUrls: false,
+    allowSelfSignedCerts: false,
   },
   logging: {
     level: "info",
@@ -93,11 +95,20 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
   const llmProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
   const llmModel = process.env["LIBSCOPE_LLM_MODEL"];
   const allowPrivate = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
+  const allowSelfSigned = process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
 
-  if (allowPrivate === "true" || allowPrivate === "1") {
+  if (
+    allowPrivate === "true" ||
+    allowPrivate === "1" ||
+    allowSelfSigned === "true" ||
+    allowSelfSigned === "1"
+  ) {
     overrides.indexing = {
       ...DEFAULT_CONFIG.indexing,
-      allowPrivateUrls: true,
+      ...(allowPrivate === "true" || allowPrivate === "1" ? { allowPrivateUrls: true } : {}),
+      ...(allowSelfSigned === "true" || allowSelfSigned === "1"
+        ? { allowSelfSignedCerts: true }
+        : {}),
     };
   }
 

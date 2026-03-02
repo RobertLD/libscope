@@ -41,6 +41,13 @@ Complete reference for all configuration options.
 |-----|------|---------|-------------|
 | `logging.level` | string | `"info"` | `debug`, `info`, `warn`, `error`, or `silent` |
 
+### Indexing
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `indexing.allowPrivateUrls` | boolean | `false` | Allow fetching from private/internal IP addresses |
+| `indexing.allowSelfSignedCerts` | boolean | `false` | Accept self-signed or untrusted TLS certificates |
+
 ## Environment Variables
 
 | Variable | Maps to | Default |
@@ -50,6 +57,8 @@ Complete reference for all configuration options.
 | `LIBSCOPE_OLLAMA_URL` | `embedding.ollamaUrl` | `http://localhost:11434` |
 | `LIBSCOPE_LLM_PROVIDER` | `llm.provider` | — |
 | `LIBSCOPE_LLM_MODEL` | `llm.model` | — |
+| `LIBSCOPE_ALLOW_PRIVATE_URLS` | `indexing.allowPrivateUrls` | `false` |
+| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | `indexing.allowSelfSignedCerts` | `false` |
 | `ONENOTE_CLIENT_ID` | OneNote app client ID | — |
 | `ONENOTE_TENANT_ID` | OneNote tenant ID | `common` |
 | `NOTION_TOKEN` | Notion integration token | — |
@@ -63,9 +72,22 @@ Complete reference for all configuration options.
 # Via CLI
 libscope config set embedding.provider ollama
 libscope config set llm.provider openai
+libscope config set indexing.allowSelfSignedCerts true
 
 # View current config
 libscope config show
+```
+
+## Corporate / Internal Networks
+
+If you're indexing docs from internal servers (Confluence, wikis, etc.):
+
+```bash
+# Allow fetching from private/internal IP addresses
+libscope config set indexing.allowPrivateUrls true
+
+# Accept self-signed or corporate TLS certificates
+libscope config set indexing.allowSelfSignedCerts true
 ```
 
 ## Example Config File
@@ -86,6 +108,10 @@ libscope config show
   },
   "logging": {
     "level": "info"
+  },
+  "indexing": {
+    "allowPrivateUrls": false,
+    "allowSelfSignedCerts": false
   }
 }
 ```
