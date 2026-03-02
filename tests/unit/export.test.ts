@@ -181,4 +181,72 @@ describe("export/backup", () => {
       newDb.close();
     });
   });
+
+  describe("importFromBackup — validation errors", () => {
+    it("should throw when backup is not an object", () => {
+      const path = join(tempDir, "bad.json");
+      writeFileSync(path, '"just a string"', "utf-8");
+      expect(() => importFromBackup(db, path)).toThrow("expected an object");
+    });
+
+    it("should throw when required keys are missing", () => {
+      const path = join(tempDir, "bad.json");
+      writeFileSync(path, JSON.stringify({ metadata: {} }), "utf-8");
+      expect(() => importFromBackup(db, path)).toThrow("missing topics");
+    });
+
+    it("should throw when documents is not an array", () => {
+      const path = join(tempDir, "bad.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          metadata: {},
+          topics: [],
+          documents: "not-array",
+          chunks: [],
+          ratings: [],
+        }),
+        "utf-8",
+      );
+      expect(() => importFromBackup(db, path)).toThrow("Failed to import");
+    });
+
+    it("should throw when a document lacks id or title", () => {
+      const path = join(tempDir, "bad.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          metadata: {},
+          topics: [],
+          documents: [{ noId: true }],
+          chunks: [],
+          ratings: [],
+        }),
+        "utf-8",
+      );
+      expect(() => importFromBackup(db, path)).toThrow("Failed to import");
+    });
+
+    it("should throw when metadata version is missing", () => {
+      const path = join(tempDir, "bad.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          metadata: {},
+          topics: [],
+          documents: [{ id: "d1", title: "t1" }],
+          chunks: [],
+          ratings: [],
+        }),
+        "utf-8",
+      );
+      expect(() => importFromBackup(db, path)).toThrow("missing metadata");
+    });
+
+    it("should wrap non-DatabaseError exceptions", () => {
+      const path = join(tempDir, "bad.json");
+      writeFileSync(path, "NOT VALID JSON", "utf-8");
+      expect(() => importFromBackup(db, path)).toThrow("Failed to import");
+    });
+  });
 });
