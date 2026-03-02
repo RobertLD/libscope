@@ -220,21 +220,29 @@ export function fireWebhooks(
       signal: AbortSignal.timeout(5000),
     })
       .then((resp) => {
-        if (!resp.ok) {
-          log.warn(
-            { webhookId: webhook.id, url: webhook.url, status: resp.status },
-            "Webhook delivery received non-2xx response",
-          );
-          recordFailure(db, log, webhook.id);
-          return;
+        try {
+          if (!resp.ok) {
+            log.warn(
+              { webhookId: webhook.id, url: webhook.url, status: resp.status },
+              "Webhook delivery received non-2xx response",
+            );
+            recordFailure(db, log, webhook.id);
+            return;
+          }
+          db.prepare(
+            "UPDATE webhooks SET last_triggered_at = datetime('now'), failure_count = 0 WHERE id = ?",
+          ).run(webhook.id);
+        } catch (dbErr: unknown) {
+          log.error({ err: dbErr, webhookId: webhook.id }, "DB error recording webhook success");
         }
-        db.prepare(
-          "UPDATE webhooks SET last_triggered_at = datetime('now'), failure_count = 0 WHERE id = ?",
-        ).run(webhook.id);
       })
       .catch((err: unknown) => {
         log.warn({ err, webhookId: webhook.id, url: webhook.url }, "Webhook delivery failed");
-        recordFailure(db, log, webhook.id);
+        try {
+          recordFailure(db, log, webhook.id);
+        } catch (dbErr: unknown) {
+          log.error({ err: dbErr, webhookId: webhook.id }, "DB error recording webhook failure");
+        }
       });
   }
 }
