@@ -110,9 +110,31 @@ libscope serve --dashboard --port 8080
 |---------|-------------|
 | `libscope docs list` | List indexed documents |
 | `libscope docs show <id>` | Show a specific document |
+| `libscope docs update <id>` | Update a document |
 | `libscope docs delete <id>` | Delete a document |
 | `libscope docs history <id>` | View version history |
 | `libscope docs rollback <id> <version>` | Rollback to a previous version |
+
+## Document Links (Cross-references)
+
+### `libscope docs update`
+
+Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-indexing of embeddings.
+
+```bash
+libscope docs update <documentId> --title "New Title"
+libscope docs update <documentId> --content "Updated content here"
+libscope docs update <documentId> --library vue --version 3.0.0
+```
+
+| Option | Description |
+|--------|-------------|
+| `--title <title>` | New document title |
+| `--content <content>` | New content (triggers re-chunking) |
+| `--library <name>` | New library name |
+| `--version <ver>` | New library version |
+| `--url <url>` | New source URL |
+| `--topic <topicId>` | New topic ID |
 
 ## Document Links (Cross-references)
 

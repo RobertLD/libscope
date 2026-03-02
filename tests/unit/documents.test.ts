@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
-import { getDocument, deleteDocument, listDocuments } from "../../src/core/documents.js";
+import {
+  getDocument,
+  deleteDocument,
+  listDocuments,
+  updateDocument,
+} from "../../src/core/documents.js";
 import { indexDocument, type IndexDocumentInput } from "../../src/core/indexing.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import type Database from "better-sqlite3";
@@ -122,6 +127,92 @@ describe("documents", () => {
     it("should return empty array when no matches", () => {
       const docs = listDocuments(db, { library: "nonexistent" });
       expect(docs.length).toBe(0);
+    });
+  });
+
+  describe("updateDocument", () => {
+    let vecDb: Database.Database;
+    let provider: MockEmbeddingProvider;
+
+    beforeEach(() => {
+      vecDb = createTestDbWithVec();
+      provider = new MockEmbeddingProvider();
+    });
+
+    it("should update title only", async () => {
+      const indexed = await indexDocument(vecDb, provider, {
+        title: "Original Title",
+        content: "Some content here.",
+        sourceType: "manual",
+      });
+
+      const updated = await updateDocument(vecDb, provider, indexed.id, {
+        title: "New Title",
+      });
+
+      expect(updated.title).toBe("New Title");
+      expect(updated.content).toBe("Some content here.");
+    });
+
+    it("should update content and re-chunk", async () => {
+      const indexed = await indexDocument(vecDb, provider, {
+        title: "Doc",
+        content: "Old content.",
+        sourceType: "manual",
+      });
+
+      const updated = await updateDocument(vecDb, provider, indexed.id, {
+        content: "Brand new content that is different.",
+      });
+
+      expect(updated.content).toBe("Brand new content that is different.");
+      // Verify chunks were recreated
+      const chunks = vecDb
+        .prepare("SELECT id FROM chunks WHERE document_id = ?")
+        .all(indexed.id) as { id: string }[];
+      expect(chunks.length).toBeGreaterThan(0);
+    });
+
+    it("should update metadata fields", async () => {
+      const indexed = await indexDocument(vecDb, provider, {
+        title: "Doc",
+        content: "Content here.",
+        sourceType: "library",
+        library: "react",
+        version: "18.0.0",
+      });
+
+      const updated = await updateDocument(vecDb, provider, indexed.id, {
+        metadata: { library: "vue", version: "3.0.0", url: "https://vue.org" },
+      });
+
+      expect(updated.library).toBe("vue");
+      expect(updated.version).toBe("3.0.0");
+      expect(updated.url).toBe("https://vue.org");
+    });
+
+    it("should reject empty title", async () => {
+      const indexed = await indexDocument(vecDb, provider, {
+        title: "Doc",
+        content: "Content.",
+        sourceType: "manual",
+      });
+
+      await expect(updateDocument(vecDb, provider, indexed.id, { title: "  " })).rejects.toThrow(
+        "Document title cannot be empty",
+      );
+    });
+
+    it("should reject empty content", async () => {
+      const indexed = await indexDocument(vecDb, provider, {
+        title: "Doc",
+        content: "Content.",
+        sourceType: "manual",
+      });
+
+      await expect(updateDocument(vecDb, provider, indexed.id, { content: "" })).rejects.toThrow(
+        "Document content cannot be empty",
+      );
     });
   });
 

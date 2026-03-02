@@ -9,6 +9,7 @@ import {
   getDocument,
   indexDocument,
   deleteDocument,
+  updateDocument,
   listTopics,
   createTopic,
   listTags,
@@ -415,6 +416,42 @@ export async function handleRequest(
       deleteDocument(db, docId);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, { deleted: true }, took);
+      return;
+    }
+
+    if (docId && (method === "PUT" || method === "PATCH")) {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object") {
+        sendError(res, 400, "VALIDATION_ERROR", "Request body must be a JSON object");
+        return;
+      }
+      const b = body as Record<string, unknown>;
+      const title = typeof b["title"] === "string" ? b["title"] : undefined;
+      const content = typeof b["content"] === "string" ? b["content"] : undefined;
+      const metadata: Record<string, string | null | undefined> = {};
+      if (b["library"] !== undefined)
+        metadata.library = typeof b["library"] === "string" ? b["library"] : null;
+      if (b["version"] !== undefined)
+        metadata.version = typeof b["version"] === "string" ? b["version"] : null;
+      if (b["url"] !== undefined) metadata.url = typeof b["url"] === "string" ? b["url"] : null;
+      if (b["topicId"] !== undefined)
+        metadata.topicId = typeof b["topicId"] === "string" ? b["topicId"] : null;
+
+      const doc = await updateDocument(db, provider, docId, {
+        title,
+        content,
+        metadata:
+          Object.keys(metadata).length > 0
+            ? (metadata as {
+                library?: string | null;
+                version?: string | null;
+                url?: string | null;
+                topicId?: string | null;
+              })
+            : undefined,
+      });
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, doc, took);
       return;
     }
 

@@ -7,7 +7,7 @@ import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
 import { askQuestion, createLlmProvider, type LlmProvider } from "../core/rag.js";
-import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
+import { getDocument, listDocuments, deleteDocument, updateDocument } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
 import { listTopics } from "../core/topics.js";
@@ -237,6 +237,45 @@ async function main(): Promise<void> {
             text: `Document ${params.documentId} has been deleted successfully.`,
           },
         ],
+      };
+    }),
+  );
+
+  // Tool: update-document
+  server.tool(
+    "update-document",
+    "Update an existing document's title, content, or metadata",
+    {
+      documentId: z.string().describe("The document ID to update"),
+      title: z.string().optional().describe("New title"),
+      content: z.string().optional().describe("New content (will re-chunk and re-index)"),
+      library: z.string().nullable().optional().describe("New library name (null to clear)"),
+      version: z.string().nullable().optional().describe("New version (null to clear)"),
+      url: z.string().nullable().optional().describe("New URL (null to clear)"),
+      topicId: z.string().nullable().optional().describe("New topic ID (null to clear)"),
+    },
+    withErrorHandling(async (params) => {
+      const metadata: Record<string, string | null | undefined> = {};
+      if (params.library !== undefined) metadata.library = params.library;
+      if (params.version !== undefined) metadata.version = params.version;
+      if (params.url !== undefined) metadata.url = params.url;
+      if (params.topicId !== undefined) metadata.topicId = params.topicId;
+
+      const doc = await updateDocument(db, provider, params.documentId, {
+        title: params.title,
+        content: params.content,
+        metadata:
+          Object.keys(metadata).length > 0
+            ? (metadata as {
+                library?: string | null;
+                version?: string | null;
+                url?: string | null;
+                topicId?: string | null;
+              })
+            : undefined,
+      });
+      return {
+        content: [{ type: "text" as const, text: `Document updated: ${doc.title} (${doc.id})` }],
       };
     }),
   );
