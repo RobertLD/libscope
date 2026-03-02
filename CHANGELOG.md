@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/RobertLD/libscope/compare/v1.1.0...v1.2.0) (2026-03-02)
+
+
+### Features
+
+* add API key authentication ([#173](https://github.com/RobertLD/libscope/issues/173)) ([#208](https://github.com/RobertLD/libscope/issues/208)) ([aba755f](https://github.com/RobertLD/libscope/commit/aba755fb1828e3215b172e919f825118296da7af))
+* add config validation on startup ([#172](https://github.com/RobertLD/libscope/issues/172)) ([#205](https://github.com/RobertLD/libscope/issues/205)) ([dae5759](https://github.com/RobertLD/libscope/commit/dae57597217e1902027e436d25c519a51e44d2d9))
+* add confirmation prompts for destructive CLI operations ([#171](https://github.com/RobertLD/libscope/issues/171)) ([#206](https://github.com/RobertLD/libscope/issues/206)) ([a981956](https://github.com/RobertLD/libscope/commit/a981956bc9f741555b185df0a3010fe62be916b4))
+* add Confluence space and page connector (closes [#153](https://github.com/RobertLD/libscope/issues/153)) ([#159](https://github.com/RobertLD/libscope/issues/159)) ([2a6a767](https://github.com/RobertLD/libscope/commit/2a6a767971befd05018e6e23bcbdbcaad34e5f82))
+* add connector sync status and history tracking ([#179](https://github.com/RobertLD/libscope/issues/179)) ([#213](https://github.com/RobertLD/libscope/issues/213)) ([997a37d](https://github.com/RobertLD/libscope/commit/997a37d5431ab64b47156bd92a8d07bbe9fe224b))
+* add conversational RAG search with LLM answers (closes [#119](https://github.com/RobertLD/libscope/issues/119)) ([#134](https://github.com/RobertLD/libscope/issues/134)) ([ce9c4bc](https://github.com/RobertLD/libscope/commit/ce9c4bc282ec77d15115bbedeffe7642337598ed))
+* add Docker GHCR publishing workflow ([#196](https://github.com/RobertLD/libscope/issues/196)) ([#210](https://github.com/RobertLD/libscope/issues/210)) ([48687e4](https://github.com/RobertLD/libscope/commit/48687e48465b91e3218d08eac83a21a275011596))
+* add Docker image and docker-compose ([#177](https://github.com/RobertLD/libscope/issues/177)) ([#192](https://github.com/RobertLD/libscope/issues/192)) ([790ab3b](https://github.com/RobertLD/libscope/commit/790ab3b759a013dd81e255ebb856eea2b40adeae))
+* add document versioning and change history (closes [#120](https://github.com/RobertLD/libscope/issues/120)) ([#131](https://github.com/RobertLD/libscope/issues/131)) ([c4b0e40](https://github.com/RobertLD/libscope/commit/c4b0e4029128415b59920ed2c9a6824af9e1a945))
+* add file watch mode for automatic re-indexing (closes [#114](https://github.com/RobertLD/libscope/issues/114)) ([#124](https://github.com/RobertLD/libscope/issues/124)) ([43d1bf4](https://github.com/RobertLD/libscope/commit/43d1bf4ff25fbbb449c1b95de9e3a406793f4687))
+* add GitHub/GitLab repository doc indexing (closes [#118](https://github.com/RobertLD/libscope/issues/118)) ([#125](https://github.com/RobertLD/libscope/issues/125)) ([e7a5dbc](https://github.com/RobertLD/libscope/commit/e7a5dbcbeffb9ad91dea8727d2a7020b522aa01e))
+* add Go SDK for REST API (closes [#149](https://github.com/RobertLD/libscope/issues/149)) ([#160](https://github.com/RobertLD/libscope/issues/160)) ([d9b5e4e](https://github.com/RobertLD/libscope/commit/d9b5e4ecfd2de0171ff7343d2a0244c956dde15d))
+* add incremental re-embedding for model migration (closes [#123](https://github.com/RobertLD/libscope/issues/123)) ([#136](https://github.com/RobertLD/libscope/issues/136)) ([6664131](https://github.com/RobertLD/libscope/commit/666413197422502a4451564b3009ef162263c626))
+* add knowledge graph visualization to web dashboard (closes [#142](https://github.com/RobertLD/libscope/issues/142)) ([#144](https://github.com/RobertLD/libscope/issues/144)) ([9a0801e](https://github.com/RobertLD/libscope/commit/9a0801ea4fcb22adb27821d9d6625ef5c8a7f2c0))
+* add knowledge pack system for installable doc bundles (closes [#137](https://github.com/RobertLD/libscope/issues/137)) ([#145](https://github.com/RobertLD/libscope/issues/145)) ([0024170](https://github.com/RobertLD/libscope/commit/0024170fbca4630e8c28314854e9a37b24e9039f))
+* add local web UI dashboard (closes [#117](https://github.com/RobertLD/libscope/issues/117)) ([#130](https://github.com/RobertLD/libscope/issues/130)) ([36e58c3](https://github.com/RobertLD/libscope/commit/36e58c35c42d998e71257fa18de2c93394fa38e2))
+* add multi-database workspace support (closes [#115](https://github.com/RobertLD/libscope/issues/115)) ([#132](https://github.com/RobertLD/libscope/issues/132)) ([3a343b7](https://github.com/RobertLD/libscope/commit/3a343b76138edcae3b353081e083dac9e0b3cbd1))
+* add multi-label tag system for document organization (closes [#121](https://github.com/RobertLD/libscope/issues/121)) ([#128](https://github.com/RobertLD/libscope/issues/128)) ([e0a6015](https://github.com/RobertLD/libscope/commit/e0a6015425b84886953028cf6d4423f9ab7aa3fc))
+* add Notion page and database connector (closes [#152](https://github.com/RobertLD/libscope/issues/152)) ([#156](https://github.com/RobertLD/libscope/issues/156)) ([08a7437](https://github.com/RobertLD/libscope/commit/08a7437b25bd01cc099e3a2b9bb626010920959f))
+* add Obsidian vault connector with incremental sync (closes [#146](https://github.com/RobertLD/libscope/issues/146)) ([#155](https://github.com/RobertLD/libscope/issues/155)) ([24c3037](https://github.com/RobertLD/libscope/commit/24c3037edaf6d7f995af2e57345918134c228ec1))
+* add offset parameter to REST API search endpoint ([#174](https://github.com/RobertLD/libscope/issues/174)) ([#204](https://github.com/RobertLD/libscope/issues/204)) ([6dc2df4](https://github.com/RobertLD/libscope/commit/6dc2df44e898b8e38e4c6a0c17723b9fe07e63bb))
+* add OneNote connector via Microsoft Graph API (closes [#147](https://github.com/RobertLD/libscope/issues/147)) ([#154](https://github.com/RobertLD/libscope/issues/154)) ([f549a2e](https://github.com/RobertLD/libscope/commit/f549a2e9038f2ce69d2c4111908046834fb42243))
+* add Python SDK for REST API (closes [#148](https://github.com/RobertLD/libscope/issues/148)) ([#161](https://github.com/RobertLD/libscope/issues/161)) ([70fe5db](https://github.com/RobertLD/libscope/commit/70fe5db03274511d7484391c9fd80d031f83d41a))
+* add REST API server with OpenAPI spec (closes [#150](https://github.com/RobertLD/libscope/issues/150)) ([#157](https://github.com/RobertLD/libscope/issues/157)) ([a9ae913](https://github.com/RobertLD/libscope/commit/a9ae913fa46c71fa34fa0af6d2e039002e428303))
+* add Server-Sent Events streaming for RAG responses ([#175](https://github.com/RobertLD/libscope/issues/175)) ([#211](https://github.com/RobertLD/libscope/issues/211)) ([d6264bf](https://github.com/RobertLD/libscope/commit/d6264bfd97081b61bc1ea982271b8ab6576ce34e))
+* add similarity-based deduplication on ingest (closes [#116](https://github.com/RobertLD/libscope/issues/116)) ([#126](https://github.com/RobertLD/libscope/issues/126)) ([3a8f829](https://github.com/RobertLD/libscope/commit/3a8f8292e02c5420cde46ebe9d58b796055e06a6))
+* add Slack channel connector with thread aggregation (closes [#151](https://github.com/RobertLD/libscope/issues/151)) ([#158](https://github.com/RobertLD/libscope/issues/158)) ([97f706f](https://github.com/RobertLD/libscope/commit/97f706f8ec96538fb772b5bf5b664e98e3b8971a))
+* add usage analytics and content health metrics (closes [#122](https://github.com/RobertLD/libscope/issues/122)) ([#133](https://github.com/RobertLD/libscope/issues/133)) ([6b25ab1](https://github.com/RobertLD/libscope/commit/6b25ab18932050056eab09121364c356167ab3df))
+* prepare Python SDK for PyPI publishing as pylibscope ([#189](https://github.com/RobertLD/libscope/issues/189)) ([4ff0d5c](https://github.com/RobertLD/libscope/commit/4ff0d5cbe381331b272f0561acf53b173dc40ff2)), closes [#183](https://github.com/RobertLD/libscope/issues/183)
+* search analytics dashboard with knowledge gap detection ([#167](https://github.com/RobertLD/libscope/issues/167)) ([#212](https://github.com/RobertLD/libscope/issues/212)) ([5580d89](https://github.com/RobertLD/libscope/commit/5580d8986063860b50b268aa81e3b28ee888cde7))
+
+
+### Bug Fixes
+
+* add retry logic for Notion/Slack/Confluence connectors ([#176](https://github.com/RobertLD/libscope/issues/176)) ([#207](https://github.com/RobertLD/libscope/issues/207)) ([05e11c3](https://github.com/RobertLD/libscope/commit/05e11c39ee4d714fee32b113e666b147109f6537))
+* add vercel.json to install devDependencies for vitepress build ([#214](https://github.com/RobertLD/libscope/issues/214)) ([3324461](https://github.com/RobertLD/libscope/commit/3324461c96813f91550d772de9f7414058d7adf4))
+* cap rate limiter memory with sliding window counter ([#180](https://github.com/RobertLD/libscope/issues/180)) ([#193](https://github.com/RobertLD/libscope/issues/193)) ([28dba0b](https://github.com/RobertLD/libscope/commit/28dba0b0335a59e3c1ef42114d41ad4475f78727))
+* deduplicate streaming chunker overlap ([#186](https://github.com/RobertLD/libscope/issues/186)) ([#194](https://github.com/RobertLD/libscope/issues/194)) ([0355009](https://github.com/RobertLD/libscope/commit/0355009bc34135f9a3f47f8caa4c8c36dba30222))
+* Docker build failing due to husky in prepare script ([#219](https://github.com/RobertLD/libscope/issues/219)) ([76d6812](https://github.com/RobertLD/libscope/commit/76d68120719a04831646613bd229ebb2f34069fe))
+* OneNote rate limiter race condition and CLI lint warnings ([#164](https://github.com/RobertLD/libscope/issues/164)) ([a018cf8](https://github.com/RobertLD/libscope/commit/a018cf8fddaf6959b3a48f31bd82cfdaef8db4b6))
+* pass dbPath to getStats for accurate databaseSizeBytes ([#185](https://github.com/RobertLD/libscope/issues/185)) ([#195](https://github.com/RobertLD/libscope/issues/195)) ([0579d14](https://github.com/RobertLD/libscope/commit/0579d1433c5ddb112a07736a193bb52c8cdff1f1))
+* resolve CodeQL alerts, update license to BSL 1.1, fix README badges ([#218](https://github.com/RobertLD/libscope/issues/218)) ([3d28d7e](https://github.com/RobertLD/libscope/commit/3d28d7eb1ed6d564c880cb9bd12733de9b421ced))
+* **security:** override esbuild to &gt;=0.25.0 to resolve CVE ([#216](https://github.com/RobertLD/libscope/issues/216)) ([7d5a130](https://github.com/RobertLD/libscope/commit/7d5a1306ac8c2e38fd9dbc0f9e9039477bcd4303))
+* update engines to node &gt;=20 ([#217](https://github.com/RobertLD/libscope/issues/217)) ([4419a38](https://github.com/RobertLD/libscope/commit/4419a38f160fd39ee896fb458bf9b614070c5d71))
+* validate parseInt results in API routes and fix watcher memory leak ([#163](https://github.com/RobertLD/libscope/issues/163)) ([7712dee](https://github.com/RobertLD/libscope/commit/7712deefcd7944d267e3aeebd9cd98ea5c74cadb))
+
 ## [1.1.0](https://github.com/RobertLD/libscope/compare/v1.0.1...v1.1.0) (2026-03-01)
 
 
