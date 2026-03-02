@@ -2,8 +2,11 @@ import type Database from "better-sqlite3";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+// NOTE: @types/node-cron v3 is used with node-cron v4 — no v4 types are published yet.
+// The schedule() and ScheduledTask.stop() APIs are compatible across versions.
 import cron from "node-cron";
 import type { EmbeddingProvider } from "../providers/embedding.js";
+import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import {
   loadNamedConnectorConfig,
@@ -27,9 +30,13 @@ export interface ScheduleConfig {
   cronExpression: string;
 }
 
-interface ConnectorScheduleEntry {
+/** Configuration for a scheduled connector sync entry. */
+export interface ConnectorScheduleEntry {
+  /** Connector type (e.g. "notion", "slack", "confluence"). */
   connectorType: string;
+  /** Named connector config identifier. */
   connectorName: string;
+  /** Cron expression for scheduling (e.g. every 6 hours). */
   cronExpression: string;
 }
 
@@ -39,8 +46,8 @@ interface ScheduledJob {
   connectorName: string;
   cronExpression: string;
   lastRun?: string | undefined;
-  nextRun?: string | undefined;
   running: boolean;
+  runPromise?: Promise<void> | undefined;
 }
 
 export interface SchedulerStatus {
@@ -87,7 +94,11 @@ export class ConnectorScheduler {
 
       const key = `${entry.connectorType}:${entry.connectorName}`;
       const task = cron.schedule(entry.cronExpression, () => {
-        void this.runSync(entry.connectorType, entry.connectorName);
+        const promise = this.runSync(entry.connectorType, entry.connectorName);
+        const job = this.jobs.get(key);
+        if (job) {
+          job.runPromise = promise;
+        }
       });
 
       this.jobs.set(key, {
@@ -108,12 +119,20 @@ export class ConnectorScheduler {
     log.info({ jobCount: this.jobs.size }, "Connector scheduler started");
   }
 
-  /** Stop all scheduled jobs. */
-  stop(): void {
+  /** Stop all scheduled jobs and wait for in-flight syncs to finish. */
+  async stop(): Promise<void> {
     const log = getLogger();
+    const inFlight: Promise<void>[] = [];
     for (const [key, job] of this.jobs) {
       void job.task.stop();
+      if (job.running && job.runPromise) {
+        inFlight.push(job.runPromise);
+      }
       log.debug({ job: key }, "Stopped scheduled job");
+    }
+    if (inFlight.length > 0) {
+      log.info({ count: inFlight.length }, "Waiting for in-flight syncs to complete");
+      await Promise.allSettled(inFlight);
     }
     this.jobs.clear();
     this.started = false;
@@ -233,7 +252,7 @@ export class ConnectorScheduler {
         };
       }
       default:
-        throw new Error(`Unknown connector type: ${connectorType}`);
+        throw new ValidationError(`Unknown connector type: ${connectorType}`);
     }
   }
 }

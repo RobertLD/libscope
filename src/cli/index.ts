@@ -2453,6 +2453,10 @@ scheduleCmd
     }
 
     const config = loadCfg<Record<string, unknown>>(connector);
+    if (!config.schedule) {
+      console.error(`No schedule configured for "${connector}". Nothing to remove.`);
+      process.exit(1);
+    }
     delete config.schedule;
     saveCfg(connector, config);
     console.log(`✓ Schedule removed for ${connector}`);

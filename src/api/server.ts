@@ -17,7 +17,11 @@ export async function startApiServer(
   db: Database.Database,
   provider: EmbeddingProvider,
   options?: ApiServerOptions,
-): Promise<{ close: () => void; port: number; scheduler?: ConnectorScheduler | undefined }> {
+): Promise<{
+  close: () => Promise<void>;
+  port: number;
+  scheduler?: ConnectorScheduler | undefined;
+}> {
   const log = getLogger();
   const port = options?.port ?? 3378;
   const host = options?.host ?? "localhost";
@@ -64,8 +68,8 @@ export async function startApiServer(
       }
 
       resolve({
-        close: () => {
-          scheduler?.stop();
+        close: async () => {
+          await scheduler?.stop();
           server.close();
         },
         port,
