@@ -8,6 +8,7 @@ import { deleteDocument } from "../core/documents.js";
 import { getLogger } from "../logger.js";
 import { FetchError, ValidationError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
+import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
 export interface ConfluenceConfig {
   baseUrl: string;
@@ -223,128 +224,151 @@ export async function syncConfluence(
 
   const auth = buildAuthHeader(config.email, config.token);
   const base = config.baseUrl.replace(/\/+$/, "");
-  const result: ConfluenceSyncResult = { spaces: 0, pagesIndexed: 0, pagesUpdated: 0, errors: [] };
+  const syncId = startSync(db, "confluence", base);
 
-  log.info({ baseUrl: base }, "Starting Confluence sync");
+  try {
+    const result: ConfluenceSyncResult = {
+      spaces: 0,
+      pagesIndexed: 0,
+      pagesUpdated: 0,
+      errors: [],
+    };
 
-  // Fetch all spaces
-  const allSpaces = await fetchAllPages<ConfluenceSpace>(`${base}/wiki/api/v2/spaces`, base, auth);
+    log.info({ baseUrl: base }, "Starting Confluence sync");
 
-  // Filter spaces
-  const excludeSet = new Set(config.excludeSpaces ?? []);
-  const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
-  const spacesToSync = allSpaces.filter((s) => {
-    if (excludeSet.has(s.key)) return false;
-    return requestedAll || config.spaces.includes(s.key);
-  });
+    // Fetch all spaces
+    const allSpaces = await fetchAllPages<ConfluenceSpace>(
+      `${base}/wiki/api/v2/spaces`,
+      base,
+      auth,
+    );
 
-  result.spaces = spacesToSync.length;
-  log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
+    // Filter spaces
+    const excludeSet = new Set(config.excludeSpaces ?? []);
+    const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
+    const spacesToSync = allSpaces.filter((s) => {
+      if (excludeSet.has(s.key)) return false;
+      return requestedAll || config.spaces.includes(s.key);
+    });
 
-  for (const space of spacesToSync) {
-    // Create or get topic for this space
-    const topic = createTopic(db, { name: space.name });
+    result.spaces = spacesToSync.length;
+    log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
 
-    // Fetch pages in space
-    let pages: ConfluencePage[];
-    try {
-      pages = await fetchAllPages<ConfluencePage>(
-        `${base}/wiki/api/v2/spaces/${space.id}/pages`,
-        base,
-        auth,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
-      result.errors.push({ page: `space:${space.key}`, error: msg });
-      continue;
-    }
+    for (const space of spacesToSync) {
+      // Create or get topic for this space
+      const topic = createTopic(db, { name: space.name });
 
-    for (const page of pages) {
+      // Fetch pages in space
+      let pages: ConfluencePage[];
       try {
-        // Fetch full page content with body
-        const fullPage = await confluenceFetch<ConfluencePage>(
-          `${base}/wiki/api/v2/pages/${page.id}?body-format=storage`,
+        pages = await fetchAllPages<ConfluencePage>(
+          `${base}/wiki/api/v2/spaces/${space.id}/pages`,
+          base,
           auth,
-        );
-
-        const storageHtml = fullPage.body?.storage?.value ?? "";
-        const pageUrl = fullPage._links?.webui
-          ? `${base}${fullPage._links.webui}`
-          : `${base}/wiki/spaces/${space.key}/pages/${page.id}`;
-
-        // Incremental sync: check existing doc version
-        const existingDoc = db
-          .prepare("SELECT id, url FROM documents WHERE url = ?")
-          .get(pageUrl) as { id: string; url: string } | undefined;
-
-        const existingMeta = existingDoc
-          ? (db
-              .prepare(
-                "SELECT id FROM document_tags dt JOIN tags t ON dt.tag_id = t.id WHERE dt.document_id = ? AND t.name = ?",
-              )
-              .get(existingDoc.id, `confluence-version:${fullPage.version.number}`) as
-              | { id: string }
-              | undefined)
-          : undefined;
-
-        if (existingDoc && existingMeta) {
-          // Same version — skip
-          log.debug({ pageId: page.id, title: page.title }, "Page unchanged, skipping");
-          continue;
-        }
-
-        if (existingDoc) {
-          // Version changed — delete old doc and re-index
-          deleteDocument(db, existingDoc.id);
-          result.pagesUpdated++;
-        }
-
-        const markdown = convertConfluenceStorage(storageHtml);
-
-        const indexed = await indexDocument(db, provider, {
-          title: fullPage.title,
-          content: markdown,
-          sourceType: "topic",
-          topicId: topic.id,
-          url: pageUrl,
-          submittedBy: "crawler",
-          dedup: "force",
-        });
-
-        // Extract labels as tags + add version tag for incremental sync
-        const labels = extractLabels(fullPage);
-        const allTags = [
-          ...labels,
-          `confluence-space:${space.key}`,
-          `confluence-version:${fullPage.version.number}`,
-        ];
-        addTagsToDocument(db, indexed.id, allTags);
-
-        result.pagesIndexed++;
-        log.info(
-          { pageId: page.id, title: fullPage.title, chunkCount: indexed.chunkCount },
-          "Page indexed",
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        log.error({ pageId: page.id, title: page.title, err }, "Failed to index page");
-        result.errors.push({ page: page.title, error: msg });
+        log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
+        result.errors.push({ page: `space:${space.key}`, error: msg });
+        continue;
+      }
+
+      for (const page of pages) {
+        try {
+          // Fetch full page content with body
+          const fullPage = await confluenceFetch<ConfluencePage>(
+            `${base}/wiki/api/v2/pages/${page.id}?body-format=storage`,
+            auth,
+          );
+
+          const storageHtml = fullPage.body?.storage?.value ?? "";
+          const pageUrl = fullPage._links?.webui
+            ? `${base}${fullPage._links.webui}`
+            : `${base}/wiki/spaces/${space.key}/pages/${page.id}`;
+
+          // Incremental sync: check existing doc version
+          const existingDoc = db
+            .prepare("SELECT id, url FROM documents WHERE url = ?")
+            .get(pageUrl) as { id: string; url: string } | undefined;
+
+          const existingMeta = existingDoc
+            ? (db
+                .prepare(
+                  "SELECT id FROM document_tags dt JOIN tags t ON dt.tag_id = t.id WHERE dt.document_id = ? AND t.name = ?",
+                )
+                .get(existingDoc.id, `confluence-version:${fullPage.version.number}`) as
+                | { id: string }
+                | undefined)
+            : undefined;
+
+          if (existingDoc && existingMeta) {
+            // Same version — skip
+            log.debug({ pageId: page.id, title: page.title }, "Page unchanged, skipping");
+            continue;
+          }
+
+          if (existingDoc) {
+            // Version changed — delete old doc and re-index
+            deleteDocument(db, existingDoc.id);
+            result.pagesUpdated++;
+          }
+
+          const markdown = convertConfluenceStorage(storageHtml);
+
+          const indexed = await indexDocument(db, provider, {
+            title: fullPage.title,
+            content: markdown,
+            sourceType: "topic",
+            topicId: topic.id,
+            url: pageUrl,
+            submittedBy: "crawler",
+            dedup: "force",
+          });
+
+          // Extract labels as tags + add version tag for incremental sync
+          const labels = extractLabels(fullPage);
+          const allTags = [
+            ...labels,
+            `confluence-space:${space.key}`,
+            `confluence-version:${fullPage.version.number}`,
+          ];
+          addTagsToDocument(db, indexed.id, allTags);
+
+          result.pagesIndexed++;
+          log.info(
+            { pageId: page.id, title: fullPage.title, chunkCount: indexed.chunkCount },
+            "Page indexed",
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.error({ pageId: page.id, title: page.title, err }, "Failed to index page");
+          result.errors.push({ page: page.title, error: msg });
+        }
       }
     }
-  }
 
-  log.info(
-    {
-      spaces: result.spaces,
-      indexed: result.pagesIndexed,
+    log.info(
+      {
+        spaces: result.spaces,
+        indexed: result.pagesIndexed,
+        updated: result.pagesUpdated,
+        errors: result.errors.length,
+      },
+      "Confluence sync complete",
+    );
+
+    completeSync(db, syncId, {
+      added: result.pagesIndexed,
       updated: result.pagesUpdated,
-      errors: result.errors.length,
-    },
-    "Confluence sync complete",
-  );
+      deleted: 0,
+      errored: result.errors.length,
+    });
 
-  return result;
+    return result;
+  } catch (err) {
+    failSync(db, syncId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 }
 
 export function disconnectConfluence(db: Database.Database): number {

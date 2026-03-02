@@ -149,6 +149,15 @@ export function deleteConnectorDocuments(db: Database.Database, sourceType: stri
   return rows.length;
 }
 
+export {
+  startSync,
+  completeSync,
+  failSync,
+  getConnectorStatus,
+  getSyncHistory,
+} from "./sync-tracker.js";
+export type { SyncStats, ConnectorSyncRow } from "./sync-tracker.js";
+
 export { syncNotion, convertNotionBlocks, disconnectNotion } from "./notion.js";
 export type { NotionConfig, NotionSyncResult, NotionBlock } from "./notion.js";
 

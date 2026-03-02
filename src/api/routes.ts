@@ -25,6 +25,7 @@ import { DocumentNotFoundError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { parseJsonBody, sendJson, sendError } from "./middleware.js";
 import { OPENAPI_SPEC } from "./openapi.js";
+import { getConnectorStatus, getSyncHistory } from "../connectors/sync-tracker.js";
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
@@ -293,6 +294,26 @@ export async function handleRequest(
       const gaps = getKnowledgeGaps(db, days);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, { ...analytics, knowledgeGaps: gaps }, took);
+      return;
+    }
+
+    // Connector sync status
+    if (pathname === "/api/v1/connectors/status" && method === "GET") {
+      const connectorType = url.searchParams.get("type") ?? undefined;
+      const connectorName = url.searchParams.get("name") ?? undefined;
+      const history = url.searchParams.get("history");
+      const limitRaw = url.searchParams.get("limit");
+      const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
+      const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
+
+      let data;
+      if (history === "true") {
+        data = getSyncHistory(db, connectorType, limit);
+      } else {
+        data = getConnectorStatus(db, connectorType, connectorName);
+      }
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, data, took);
       return;
     }
 

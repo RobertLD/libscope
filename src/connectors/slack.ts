@@ -4,6 +4,7 @@ import { indexDocument } from "../core/indexing.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
+import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
 export interface SlackConfig {
   token: string;
@@ -309,112 +310,126 @@ export async function syncSlack(
     throw new ValidationError("At least one channel must be specified");
   }
 
-  userCache.clear();
+  const syncId = startSync(db, "slack", "slack");
 
-  const result: SlackSyncResult = {
-    channels: 0,
-    messagesIndexed: 0,
-    threadsIndexed: 0,
-    errors: [],
-  };
+  try {
+    userCache.clear();
 
-  log.info("Fetching Slack channel list");
-  const allChannels = await listChannels(config.token);
-  const channels = filterChannels(allChannels, config.channels, config.excludeChannels);
-  result.channels = channels.length;
+    const result: SlackSyncResult = {
+      channels: 0,
+      messagesIndexed: 0,
+      threadsIndexed: 0,
+      errors: [],
+    };
 
-  log.info({ channelCount: channels.length }, "Processing Slack channels");
+    log.info("Fetching Slack channel list");
+    const allChannels = await listChannels(config.token);
+    const channels = filterChannels(allChannels, config.channels, config.excludeChannels);
+    result.channels = channels.length;
 
-  for (const channel of channels) {
-    try {
-      log.info({ channel: channel.name }, "Syncing channel");
+    log.info({ channelCount: channels.length }, "Processing Slack channels");
 
-      const oldest = config.lastSync ?? undefined;
-      const messages = await fetchMessages(config.token, channel.id, oldest);
+    for (const channel of channels) {
+      try {
+        log.info({ channel: channel.name }, "Syncing channel");
 
-      // Separate thread parents from standalone messages
-      const threadParents = messages.filter(
-        (m) => m.reply_count != null && m.reply_count > 0 && !m.subtype,
-      );
-      const standaloneMessages = messages.filter(
-        (m) => (m.reply_count == null || m.reply_count === 0) && !m.thread_ts && !m.subtype,
-      );
+        const oldest = config.lastSync ?? undefined;
+        const messages = await fetchMessages(config.token, channel.id, oldest);
 
-      // Index standalone messages
-      for (const msg of standaloneMessages) {
-        if (!msg.text) continue;
+        // Separate thread parents from standalone messages
+        const threadParents = messages.filter(
+          (m) => m.reply_count != null && m.reply_count > 0 && !m.subtype,
+        );
+        const standaloneMessages = messages.filter(
+          (m) => (m.reply_count == null || m.reply_count === 0) && !m.thread_ts && !m.subtype,
+        );
 
-        const username = msg.user ? await resolveUser(config.token, msg.user) : "unknown";
-        const text = convertSlackMrkdwn(await resolveUserMentions(msg.text, config.token));
-        const title = `#${channel.name} — ${username}: ${truncateTitle(msg.text)}`;
+        // Index standalone messages
+        for (const msg of standaloneMessages) {
+          if (!msg.text) continue;
 
-        await indexDocument(db, provider, {
-          title,
-          content: `**${username}** (${formatTimestamp(msg.ts)}):\n${text}`,
-          sourceType: "manual",
-          url: `slack://${channel.name}/${msg.ts}`,
-          submittedBy: "crawler",
-        });
-        result.messagesIndexed++;
-      }
-
-      // Index threads
-      if (config.threadMode === "aggregate") {
-        for (const threadParent of threadParents) {
-          const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
-          const content = await buildThreadDocument(config.token, channel.name, replies);
-          const parentText = threadParent.text ?? "";
-          const title = `#${channel.name} thread: ${truncateTitle(parentText)}`;
+          const username = msg.user ? await resolveUser(config.token, msg.user) : "unknown";
+          const text = convertSlackMrkdwn(await resolveUserMentions(msg.text, config.token));
+          const title = `#${channel.name} — ${username}: ${truncateTitle(msg.text)}`;
 
           await indexDocument(db, provider, {
             title,
-            content,
+            content: `**${username}** (${formatTimestamp(msg.ts)}):\n${text}`,
             sourceType: "manual",
-            url: `slack://${channel.name}/thread/${threadParent.ts}`,
+            url: `slack://${channel.name}/${msg.ts}`,
             submittedBy: "crawler",
           });
-          result.threadsIndexed++;
+          result.messagesIndexed++;
         }
-      } else {
-        // separate mode: each reply is its own document
-        for (const threadParent of threadParents) {
-          const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
-          for (const reply of replies) {
-            if (!reply.text) continue;
 
-            const username = reply.user ? await resolveUser(config.token, reply.user) : "unknown";
-            const text = convertSlackMrkdwn(await resolveUserMentions(reply.text, config.token));
-            const title = `#${channel.name} thread reply — ${username}: ${truncateTitle(reply.text)}`;
+        // Index threads
+        if (config.threadMode === "aggregate") {
+          for (const threadParent of threadParents) {
+            const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
+            const content = await buildThreadDocument(config.token, channel.name, replies);
+            const parentText = threadParent.text ?? "";
+            const title = `#${channel.name} thread: ${truncateTitle(parentText)}`;
 
             await indexDocument(db, provider, {
               title,
-              content: `**${username}** (${formatTimestamp(reply.ts)}):\n${text}`,
+              content,
               sourceType: "manual",
-              url: `slack://${channel.name}/thread/${threadParent.ts}/${reply.ts}`,
+              url: `slack://${channel.name}/thread/${threadParent.ts}`,
               submittedBy: "crawler",
             });
-            result.messagesIndexed++;
+            result.threadsIndexed++;
           }
-          result.threadsIndexed++;
+        } else {
+          // separate mode: each reply is its own document
+          for (const threadParent of threadParents) {
+            const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
+            for (const reply of replies) {
+              if (!reply.text) continue;
+
+              const username = reply.user ? await resolveUser(config.token, reply.user) : "unknown";
+              const text = convertSlackMrkdwn(await resolveUserMentions(reply.text, config.token));
+              const title = `#${channel.name} thread reply — ${username}: ${truncateTitle(reply.text)}`;
+
+              await indexDocument(db, provider, {
+                title,
+                content: `**${username}** (${formatTimestamp(reply.ts)}):\n${text}`,
+                sourceType: "manual",
+                url: `slack://${channel.name}/thread/${threadParent.ts}/${reply.ts}`,
+                submittedBy: "crawler",
+              });
+              result.messagesIndexed++;
+            }
+            result.threadsIndexed++;
+          }
         }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        log.error({ channel: channel.name, err }, "Error syncing Slack channel");
+        result.errors.push({ channel: channel.name, error: errMsg });
       }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log.error({ channel: channel.name, err }, "Error syncing Slack channel");
-      result.errors.push({ channel: channel.name, error: errMsg });
     }
+
+    log.info(
+      {
+        channels: result.channels,
+        messages: result.messagesIndexed,
+        threads: result.threadsIndexed,
+      },
+      "Slack sync complete",
+    );
+
+    completeSync(db, syncId, {
+      added: result.messagesIndexed + result.threadsIndexed,
+      updated: 0,
+      deleted: 0,
+      errored: result.errors.length,
+    });
+
+    return result;
+  } catch (err) {
+    failSync(db, syncId, err instanceof Error ? err.message : String(err));
+    throw err;
   }
-
-  log.info(
-    {
-      channels: result.channels,
-      messages: result.messagesIndexed,
-      threads: result.threadsIndexed,
-    },
-    "Slack sync complete",
-  );
-
-  return result;
 }
 
 export function disconnectSlack(db: Database.Database): number {

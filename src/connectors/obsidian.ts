@@ -9,6 +9,7 @@ import { addTagsToDocument, createTag } from "../core/tags.js";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
+import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
 export interface ObsidianConfig {
   vaultPath: string;
@@ -301,149 +302,166 @@ export async function syncObsidianVault(
     throw new ValidationError("Vault path is required");
   }
 
-  const excludePatterns = [...DEFAULT_EXCLUDE, ...config.excludePatterns];
-  const vaultFiles = findMarkdownFiles(config.vaultPath, excludePatterns);
+  const syncId = startSync(db, "obsidian", config.vaultPath);
 
-  log.info({ vaultPath: config.vaultPath, fileCount: vaultFiles.length }, "Syncing Obsidian vault");
+  try {
+    const excludePatterns = [...DEFAULT_EXCLUDE, ...config.excludePatterns];
+    const vaultFiles = findMarkdownFiles(config.vaultPath, excludePatterns);
 
-  // Load existing vault state
-  const connectorConfig = loadConnectorConfig();
-  const vaultKey = `obsidian:${config.vaultPath}`;
-  const existingState = connectorConfig[vaultKey] as VaultState | undefined;
-  const trackedFiles = existingState?.files ?? {};
+    log.info(
+      { vaultPath: config.vaultPath, fileCount: vaultFiles.length },
+      "Syncing Obsidian vault",
+    );
 
-  const newTrackedFiles: Record<string, VaultFileEntry> = {};
-  const currentFileSet = new Set(vaultFiles);
+    // Load existing vault state
+    const connectorConfig = loadConnectorConfig();
+    const vaultKey = `obsidian:${config.vaultPath}`;
+    const existingState = connectorConfig[vaultKey] as VaultState | undefined;
+    const trackedFiles = existingState?.files ?? {};
 
-  // Process each file
-  for (const relPath of vaultFiles) {
-    const fullPath = join(config.vaultPath, relPath);
-    const source = buildSource(config.vaultPath, relPath);
+    const newTrackedFiles: Record<string, VaultFileEntry> = {};
+    const currentFileSet = new Set(vaultFiles);
 
-    try {
-      const stat = statSync(fullPath);
-      const mtime = stat.mtime.toISOString();
-      const tracked = trackedFiles[relPath];
+    // Process each file
+    for (const relPath of vaultFiles) {
+      const fullPath = join(config.vaultPath, relPath);
+      const source = buildSource(config.vaultPath, relPath);
 
-      // Skip unchanged files during incremental sync
-      if (tracked?.mtime === mtime) {
-        newTrackedFiles[relPath] = tracked;
-        continue;
-      }
+      try {
+        const stat = statSync(fullPath);
+        const mtime = stat.mtime.toISOString();
+        const tracked = trackedFiles[relPath];
 
-      const rawContent = readFileSync(fullPath, "utf-8");
-
-      // Resolve embeds first (before main parsing)
-      const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, vaultFiles);
-
-      const parsed = parseObsidianMarkdown(contentWithEmbeds, vaultFiles);
-
-      const title =
-        typeof parsed.frontmatter.title === "string"
-          ? parsed.frontmatter.title
-          : basename(relPath, ".md");
-
-      // Determine topic
-      let topicId: string | undefined;
-      if (config.topicMapping === "folder") {
-        const topicPath = folderToTopic(relPath);
-        if (topicPath) {
-          topicId = getOrCreateTopic(db, topicPath);
+        // Skip unchanged files during incremental sync
+        if (tracked?.mtime === mtime) {
+          newTrackedFiles[relPath] = tracked;
+          continue;
         }
-      } else if (config.topicMapping === "frontmatter") {
-        const fmTopic = parsed.frontmatter.topic;
-        if (typeof fmTopic === "string" && fmTopic) {
-          topicId = getOrCreateTopic(db, fmTopic);
+
+        const rawContent = readFileSync(fullPath, "utf-8");
+
+        // Resolve embeds first (before main parsing)
+        const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, vaultFiles);
+
+        const parsed = parseObsidianMarkdown(contentWithEmbeds, vaultFiles);
+
+        const title =
+          typeof parsed.frontmatter.title === "string"
+            ? parsed.frontmatter.title
+            : basename(relPath, ".md");
+
+        // Determine topic
+        let topicId: string | undefined;
+        if (config.topicMapping === "folder") {
+          const topicPath = folderToTopic(relPath);
+          if (topicPath) {
+            topicId = getOrCreateTopic(db, topicPath);
+          }
+        } else if (config.topicMapping === "frontmatter") {
+          const fmTopic = parsed.frontmatter.topic;
+          if (typeof fmTopic === "string" && fmTopic) {
+            topicId = getOrCreateTopic(db, fmTopic);
+          }
+        }
+
+        // If updating, delete old document first
+        if (tracked?.docId) {
+          try {
+            deleteDocument(db, tracked.docId);
+          } catch {
+            // Document may have been manually deleted
+          }
+        }
+
+        const indexed = await indexDocument(db, provider, {
+          title,
+          content: parsed.body,
+          sourceType: "manual",
+          topicId,
+          url: source,
+          submittedBy: "crawler",
+        });
+
+        // Add tags
+        if (parsed.tags.length > 0) {
+          for (const tag of parsed.tags) {
+            try {
+              createTag(db, tag);
+            } catch {
+              // Tag may already exist
+            }
+          }
+          try {
+            addTagsToDocument(db, indexed.id, parsed.tags);
+          } catch (err) {
+            log.debug({ err, docId: indexed.id }, "Failed to add some tags");
+          }
+        }
+
+        newTrackedFiles[relPath] = { mtime, docId: indexed.id };
+
+        if (tracked) {
+          result.updated++;
+        } else {
+          result.added++;
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        result.errors.push({ file: relPath, error: errMsg });
+        log.warn({ file: relPath, err }, "Failed to sync file");
+        // Preserve old tracking if it exists
+        const tracked = trackedFiles[relPath];
+        if (tracked) {
+          newTrackedFiles[relPath] = tracked;
         }
       }
+    }
 
-      // If updating, delete old document first
-      if (tracked?.docId) {
+    // Delete documents for files that no longer exist
+    for (const [relPath, entry] of Object.entries(trackedFiles)) {
+      if (!currentFileSet.has(relPath)) {
         try {
-          deleteDocument(db, tracked.docId);
+          deleteDocument(db, entry.docId);
+          result.deleted++;
         } catch {
           // Document may have been manually deleted
         }
       }
-
-      const indexed = await indexDocument(db, provider, {
-        title,
-        content: parsed.body,
-        sourceType: "manual",
-        topicId,
-        url: source,
-        submittedBy: "crawler",
-      });
-
-      // Add tags
-      if (parsed.tags.length > 0) {
-        for (const tag of parsed.tags) {
-          try {
-            createTag(db, tag);
-          } catch {
-            // Tag may already exist
-          }
-        }
-        try {
-          addTagsToDocument(db, indexed.id, parsed.tags);
-        } catch (err) {
-          log.debug({ err, docId: indexed.id }, "Failed to add some tags");
-        }
-      }
-
-      newTrackedFiles[relPath] = { mtime, docId: indexed.id };
-
-      if (tracked) {
-        result.updated++;
-      } else {
-        result.added++;
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      result.errors.push({ file: relPath, error: errMsg });
-      log.warn({ file: relPath, err }, "Failed to sync file");
-      // Preserve old tracking if it exists
-      const tracked = trackedFiles[relPath];
-      if (tracked) {
-        newTrackedFiles[relPath] = tracked;
-      }
     }
-  }
 
-  // Delete documents for files that no longer exist
-  for (const [relPath, entry] of Object.entries(trackedFiles)) {
-    if (!currentFileSet.has(relPath)) {
-      try {
-        deleteDocument(db, entry.docId);
-        result.deleted++;
-      } catch {
-        // Document may have been manually deleted
-      }
-    }
-  }
+    // Save updated state
+    connectorConfig[vaultKey] = {
+      type: "obsidian",
+      vaultPath: config.vaultPath,
+      lastSync: new Date().toISOString(),
+      topicMapping: config.topicMapping,
+      excludePatterns: config.excludePatterns,
+      files: newTrackedFiles,
+    } satisfies VaultState;
+    saveConnectorConfig(connectorConfig);
 
-  // Save updated state
-  connectorConfig[vaultKey] = {
-    type: "obsidian",
-    vaultPath: config.vaultPath,
-    lastSync: new Date().toISOString(),
-    topicMapping: config.topicMapping,
-    excludePatterns: config.excludePatterns,
-    files: newTrackedFiles,
-  } satisfies VaultState;
-  saveConnectorConfig(connectorConfig);
+    log.info(
+      {
+        added: result.added,
+        updated: result.updated,
+        deleted: result.deleted,
+        errors: result.errors.length,
+      },
+      "Obsidian vault sync complete",
+    );
 
-  log.info(
-    {
+    completeSync(db, syncId, {
       added: result.added,
       updated: result.updated,
       deleted: result.deleted,
-      errors: result.errors.length,
-    },
-    "Obsidian vault sync complete",
-  );
+      errored: result.errors.length,
+    });
 
-  return result;
+    return result;
+  } catch (err) {
+    failSync(db, syncId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 }
 
 export function disconnectVault(db: Database.Database, vaultPath: string): number {
