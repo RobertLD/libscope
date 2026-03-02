@@ -33,11 +33,13 @@ export function insertChunk(
   id: string,
   documentId: string,
   content: string,
+  chunkIndex = 0,
 ): void {
-  db.prepare(`INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, 0)`).run(
+  db.prepare(`INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)`).run(
     id,
     documentId,
     content,
+    chunkIndex,
   );
 }
 

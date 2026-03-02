@@ -330,19 +330,28 @@ program
   .option("--library <name>", "Filter by library")
   .option("--limit <n>", "Max results", "5")
   .option("--offset <n>", "Offset for pagination", "0")
+  .option("--context <n>", "Include N neighboring chunks before/after each result (0-2)", "0")
   .action(
     async (
       query: string,
-      opts: { topic?: string; library?: string; limit: string; offset: string },
+      opts: {
+        topic?: string;
+        library?: string;
+        limit: string;
+        offset: string;
+        context: string;
+      },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       try {
+        const contextChunks = parseIntOption(opts.context, "--context");
         const { results, totalCount } = await searchDocuments(db, provider, {
           query,
           topic: opts.topic,
           library: opts.library,
           limit: parseIntOption(opts.limit, "--limit"),
           offset: parseIntOption(opts.offset, "--offset"),
+          contextChunks: contextChunks > 0 ? contextChunks : undefined,
         });
 
         if (results.length === 0) {
@@ -353,7 +362,24 @@ program
             console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
             if (r.library) console.log(`  Library: ${r.library}`);
             if (r.url) console.log(`  Source: ${r.url}`);
+
+            if (r.contextBefore && r.contextBefore.length > 0) {
+              for (const c of r.contextBefore) {
+                const preview = c.content.slice(0, 120);
+                console.log(`  ↑ ${preview}${c.content.length > 120 ? "..." : ""}`);
+              }
+              console.log("  ─ ─ ─");
+            }
+
             console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+
+            if (r.contextAfter && r.contextAfter.length > 0) {
+              console.log("  ─ ─ ─");
+              for (const c of r.contextAfter) {
+                const preview = c.content.slice(0, 120);
+                console.log(`  ↓ ${preview}${c.content.length > 120 ? "..." : ""}`);
+              }
+            }
           }
         }
       } finally {

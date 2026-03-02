@@ -56,6 +56,7 @@ export interface SearchOptions {
   tags?: string[] | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
+  contextChunks?: number | undefined;
   analyticsEnabled?: boolean | undefined;
 }
 
@@ -73,6 +74,12 @@ export interface ScoreExplanation {
   details: string;
 }
 
+export interface ContextChunk {
+  chunkId: string;
+  content: string;
+  chunkIndex: number;
+}
+
 export interface SearchResult {
   documentId: string;
   chunkId: string;
@@ -86,6 +93,70 @@ export interface SearchResult {
   score: number;
   avgRating: number | null;
   scoreExplanation: ScoreExplanation;
+  contextBefore?: ContextChunk[] | undefined;
+  contextAfter?: ContextChunk[] | undefined;
+}
+
+interface ChunkRow {
+  id: string;
+  content: string;
+  chunk_index: number;
+}
+
+/** Fetch neighboring chunks for a given chunk within its document. */
+function fetchContextChunks(
+  db: Database.Database,
+  chunkId: string,
+  documentId: string,
+  contextSize: number,
+): { before: ContextChunk[]; after: ContextChunk[] } {
+  const currentRow = db
+    .prepare(`SELECT chunk_index FROM chunks WHERE id = ? AND document_id = ?`)
+    .get(chunkId, documentId) as { chunk_index: number } | undefined;
+
+  if (!currentRow) return { before: [], after: [] };
+
+  const idx = currentRow.chunk_index;
+
+  const beforeRows = db
+    .prepare(
+      `SELECT id, content, chunk_index FROM chunks
+       WHERE document_id = ? AND chunk_index >= ? AND chunk_index < ?
+       ORDER BY chunk_index ASC`,
+    )
+    .all(documentId, Math.max(0, idx - contextSize), idx) as ChunkRow[];
+
+  const afterRows = db
+    .prepare(
+      `SELECT id, content, chunk_index FROM chunks
+       WHERE document_id = ? AND chunk_index > ? AND chunk_index <= ?
+       ORDER BY chunk_index ASC`,
+    )
+    .all(documentId, idx, idx + contextSize) as ChunkRow[];
+
+  return {
+    before: beforeRows.map((r) => ({
+      chunkId: r.id,
+      content: r.content,
+      chunkIndex: r.chunk_index,
+    })),
+    after: afterRows.map((r) => ({ chunkId: r.id, content: r.content, chunkIndex: r.chunk_index })),
+  };
+}
+
+/** Attach context chunks to search results when requested. */
+function attachContext(
+  db: Database.Database,
+  results: SearchResult[],
+  contextSize: number,
+): SearchResult[] {
+  if (contextSize <= 0) return results;
+  const capped = Math.min(contextSize, 2);
+
+  return results.map((r) => {
+    const { before, after } = fetchContextChunks(db, r.chunkId, r.documentId, capped);
+    return { ...r, contextBefore: before, contextAfter: after };
+  });
 }
 
 /** Perform semantic search across indexed documents. */
@@ -242,6 +313,10 @@ export async function searchDocuments(
       });
     }
 
+    if (options.contextChunks) {
+      response.results = attachContext(db, response.results, options.contextChunks);
+    }
+
     return response;
   } catch (err) {
     if (!isVectorTableError(err)) {
@@ -265,6 +340,10 @@ export async function searchDocuments(
         topScore: response.results[0]?.score ?? null,
         searchType: method,
       });
+    }
+
+    if (options.contextChunks) {
+      response.results = attachContext(db, response.results, options.contextChunks);
     }
 
     return response;

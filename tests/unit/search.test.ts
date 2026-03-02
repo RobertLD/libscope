@@ -328,3 +328,145 @@ describe("search result scoring explanation (issue #89)", () => {
     expect(result.score).toBe(-result.scoreExplanation.rawScore);
   });
 });
+
+describe("context chunk expansion (issue #247)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should return contextBefore and contextAfter when contextChunks is set", async () => {
+    insertDoc(db, "doc1", "Multi-chunk Doc");
+    insertChunk(db, "c1-0", "doc1", "Chapter 1: Introduction", 0);
+    insertChunk(db, "c1-1", "doc1", "Chapter 2: Core concepts explained", 1);
+    insertChunk(db, "c1-2", "doc1", "Chapter 3: Advanced patterns", 2);
+    insertChunk(db, "c1-3", "doc1", "Chapter 4: Conclusion and summary", 3);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "Core concepts",
+      contextChunks: 1,
+    });
+
+    expect(results.length).toBe(1);
+    const result = results[0]!;
+    expect(result.content).toContain("Core concepts");
+    expect(result.contextBefore).toBeDefined();
+    expect(result.contextBefore!.length).toBe(1);
+    expect(result.contextBefore![0]!.content).toContain("Introduction");
+    expect(result.contextAfter).toBeDefined();
+    expect(result.contextAfter!.length).toBe(1);
+    expect(result.contextAfter![0]!.content).toContain("Advanced patterns");
+  });
+
+  it("should return up to 2 context chunks per side", async () => {
+    insertDoc(db, "doc1", "Big Doc");
+    insertChunk(db, "c0", "doc1", "Section zero", 0);
+    insertChunk(db, "c1", "doc1", "Section one", 1);
+    insertChunk(db, "c2", "doc1", "Section two target keyword", 2);
+    insertChunk(db, "c3", "doc1", "Section three", 3);
+    insertChunk(db, "c4", "doc1", "Section four", 4);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "target keyword",
+      contextChunks: 2,
+    });
+
+    expect(results.length).toBe(1);
+    const result = results[0]!;
+    expect(result.contextBefore!.length).toBe(2);
+    expect(result.contextBefore![0]!.content).toContain("Section zero");
+    expect(result.contextBefore![1]!.content).toContain("Section one");
+    expect(result.contextAfter!.length).toBe(2);
+    expect(result.contextAfter![0]!.content).toContain("Section three");
+    expect(result.contextAfter![1]!.content).toContain("Section four");
+  });
+
+  it("should handle first chunk with no context before", async () => {
+    insertDoc(db, "doc1", "Edge Doc");
+    insertChunk(db, "c0", "doc1", "First chunk searchable content", 0);
+    insertChunk(db, "c1", "doc1", "Second chunk", 1);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "searchable content",
+      contextChunks: 1,
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.contextBefore!.length).toBe(0);
+    expect(results[0]!.contextAfter!.length).toBe(1);
+  });
+
+  it("should handle last chunk with no context after", async () => {
+    insertDoc(db, "doc1", "Edge Doc");
+    insertChunk(db, "c0", "doc1", "First chunk", 0);
+    insertChunk(db, "c1", "doc1", "Last chunk searchable end", 1);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "searchable end",
+      contextChunks: 1,
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.contextBefore!.length).toBe(1);
+    expect(results[0]!.contextAfter!.length).toBe(0);
+  });
+
+  it("should not include context when contextChunks is 0 or unset", async () => {
+    insertDoc(db, "doc1", "No Context Doc");
+    insertChunk(db, "c0", "doc1", "Chunk zero", 0);
+    insertChunk(db, "c1", "doc1", "Chunk one with keyword", 1);
+    insertChunk(db, "c2", "doc1", "Chunk two", 2);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "keyword",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.contextBefore).toBeUndefined();
+    expect(results[0]!.contextAfter).toBeUndefined();
+  });
+
+  it("should cap contextChunks at 2 even if higher value is passed", async () => {
+    insertDoc(db, "doc1", "Cap Doc");
+    insertChunk(db, "c0", "doc1", "Section A", 0);
+    insertChunk(db, "c1", "doc1", "Section B", 1);
+    insertChunk(db, "c2", "doc1", "Section C", 2);
+    insertChunk(db, "c3", "doc1", "Section D target text", 3);
+    insertChunk(db, "c4", "doc1", "Section E", 4);
+    insertChunk(db, "c5", "doc1", "Section F", 5);
+    insertChunk(db, "c6", "doc1", "Section G", 6);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "target text",
+      contextChunks: 5,
+    });
+
+    expect(results.length).toBe(1);
+    // Capped at 2
+    expect(results[0]!.contextBefore!.length).toBe(2);
+    expect(results[0]!.contextAfter!.length).toBe(2);
+  });
+
+  it("should include chunkIndex in context chunks", async () => {
+    insertDoc(db, "doc1", "Index Doc");
+    insertChunk(db, "c0", "doc1", "Prologue", 0);
+    insertChunk(db, "c1", "doc1", "Main searchable section", 1);
+    insertChunk(db, "c2", "doc1", "Epilogue", 2);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "searchable section",
+      contextChunks: 1,
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.contextBefore![0]!.chunkIndex).toBe(0);
+    expect(results[0]!.contextAfter![0]!.chunkIndex).toBe(2);
+  });
+});
