@@ -147,7 +147,7 @@ async function main(): Promise<void> {
         results
           .map(
             (r, i) =>
-              `## Result ${i + 1}: ${r.title}\n` +
+              `## Result ${i + 1}: ${r.title} (score: ${r.score.toFixed(2)})\n` +
               (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
               (r.url ? `**Source:** ${r.url}\n` : "") +
               (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "") +
