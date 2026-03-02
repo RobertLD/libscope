@@ -176,9 +176,6 @@ export async function updateDocument(
   // Verify document exists
   const existing = getDocument(db, documentId);
 
-  // Snapshot current state before applying changes
-  saveVersion(db, documentId);
-
   if (input.title !== undefined && !input.title.trim()) {
     throw new ValidationError("Document title cannot be empty");
   }
@@ -209,6 +206,8 @@ export async function updateDocument(
     const embeddings = await provider.embedBatch(chunks);
 
     const transaction = db.transaction(() => {
+      saveVersion(db, documentId);
+
       try {
         db.prepare(
           "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
@@ -254,9 +253,15 @@ export async function updateDocument(
 
     transaction();
   } else {
-    db.prepare(
-      `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = datetime('now') WHERE id = ?`,
-    ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, documentId);
+    const transaction = db.transaction(() => {
+      saveVersion(db, documentId);
+
+      db.prepare(
+        `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, documentId);
+    });
+
+    transaction();
   }
 
   return getDocument(db, documentId);
