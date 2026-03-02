@@ -68,6 +68,37 @@ describe("dedup", () => {
 
       expect(embedSpy).not.toHaveBeenCalled();
     });
+
+    it("should fall through semantic path gracefully with strategy 'both'", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+      insertDocument(db, { content: "existing doc content" });
+
+      // strategy: "both" will try exact (no match) then semantic (catch block since no vec table)
+      const result = await checkDuplicate(db, provider, "different content", { strategy: "both" });
+
+      expect(result.isDuplicate).toBe(false);
+    });
+
+    it("should fall through semantic path gracefully with strategy 'semantic'", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+      insertDocument(db, { content: "some content" });
+
+      // strategy: "semantic" skips exact, goes straight to semantic (catch block)
+      const result = await checkDuplicate(db, provider, "other content", { strategy: "semantic" });
+
+      expect(result.isDuplicate).toBe(false);
+    });
+
+    it("uses default strategy and threshold when options not provided", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+
+      // No options = defaults to "both" strategy
+      const result = await checkDuplicate(db, provider, "unique content");
+      expect(result.isDuplicate).toBe(false);
+    });
   });
 
   describe("indexDocument with dedup", () => {
@@ -158,6 +189,50 @@ describe("dedup", () => {
 
       const groups = await findDuplicates(db, provider, { strategy: "exact" });
 
+      expect(groups.length).toBe(0);
+    });
+
+    it("should handle 'both' strategy (semantic catch block)", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+
+      insertDocument(db, { content: "unique A", title: "A" });
+      insertDocument(db, { content: "unique B", title: "B" });
+
+      // "both" runs exact phase (no dupes), then semantic phase (catch block since no vec)
+      const groups = await findDuplicates(db, provider, { strategy: "both" });
+      expect(groups.length).toBe(0);
+    });
+
+    it("should handle 'semantic' strategy only (catch block)", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+
+      insertDocument(db, { content: "doc one", title: "One" });
+      insertDocument(db, { content: "doc two", title: "Two" });
+
+      // "semantic" skips exact, goes to semantic (catch block)
+      const groups = await findDuplicates(db, provider, { strategy: "semantic" });
+      expect(groups.length).toBe(0);
+    });
+
+    it("should use default options when none provided", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+
+      // No options = defaults to "both"
+      const groups = await findDuplicates(db, provider);
+      expect(groups.length).toBe(0);
+    });
+
+    it("should handle semantic with only one remaining doc (skip phase 2)", async () => {
+      const db = createTestDb();
+      const provider = new MockEmbeddingProvider();
+
+      // Only one doc — semantic phase requires > 1 remaining
+      insertDocument(db, { content: "only doc", title: "Solo" });
+
+      const groups = await findDuplicates(db, provider, { strategy: "semantic" });
       expect(groups.length).toBe(0);
     });
   });

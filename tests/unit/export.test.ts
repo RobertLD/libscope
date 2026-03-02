@@ -118,6 +118,60 @@ describe("export/backup", () => {
       expect(() => importFromBackup(db, join(tempDir, "missing.json"))).toThrow();
     });
 
+    it("should throw when backup is not an object", () => {
+      const badPath = join(tempDir, "null.json");
+      writeFileSync(badPath, "null", "utf-8");
+      expect(() => importFromBackup(db, badPath)).toThrow("Invalid backup file");
+    });
+
+    it("should throw when documents is not an array", () => {
+      const badPath = join(tempDir, "bad-docs.json");
+      writeFileSync(
+        badPath,
+        JSON.stringify({
+          metadata: { version: "1.0" },
+          topics: [],
+          documents: "not-array",
+          chunks: [],
+          ratings: [],
+        }),
+        "utf-8",
+      );
+      expect(() => importFromBackup(db, badPath)).toThrow();
+    });
+
+    it("should throw when a document is missing required fields", () => {
+      const badPath = join(tempDir, "bad-doc-entry.json");
+      writeFileSync(
+        badPath,
+        JSON.stringify({
+          metadata: { version: "1.0" },
+          topics: [],
+          documents: [{ notAnId: true }],
+          chunks: [],
+          ratings: [],
+        }),
+        "utf-8",
+      );
+      expect(() => importFromBackup(db, badPath)).toThrow();
+    });
+
+    it("should throw when metadata.version is missing", () => {
+      const badPath = join(tempDir, "no-version.json");
+      writeFileSync(
+        badPath,
+        JSON.stringify({
+          metadata: {},
+          topics: [],
+          documents: [],
+          chunks: [],
+          ratings: [],
+        }),
+        "utf-8",
+      );
+      expect(() => importFromBackup(db, badPath)).toThrow("missing metadata");
+    });
+
     it("should handle older backups without content_hash", () => {
       const backupPath = join(tempDir, "old-backup.json");
       const oldData = {
