@@ -1,4 +1,5 @@
 {
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- .",
   "installCommand": "cd .. && npm install --include=dev --ignore-scripts",
   "buildCommand": "cd .. && npx vitepress build docs",
   "outputDirectory": ".vitepress/dist"
