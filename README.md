@@ -2,8 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/libscope)](https://www.npmjs.com/package/libscope)
 [![CI](https://github.com/RobertLD/libscope/actions/workflows/ci.yml/badge.svg)](https://github.com/RobertLD/libscope/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![License: Source Available](https://img.shields.io/badge/License-Source%20Available-orange.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 
 LibScope is a local knowledge base that makes your documentation searchable by AI assistants. Point it at markdown files, URLs, or connect it to Obsidian/Notion/Confluence/Slack, and it chunks, embeds, and indexes everything into a local SQLite database. Your AI tools query it through [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) or a REST API.
 

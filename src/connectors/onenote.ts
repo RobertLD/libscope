@@ -182,7 +182,7 @@ export function convertOneNoteHtml(html: string): string {
   let processed = html;
 
   // Remove style attributes
-  processed = processed.replace(/\s+style="[^"]*"/gi, "");
+  processed = processed.replace(/ +style="[^"]*"/gi, "");
 
   // Remove OneNote metadata divs
   processed = processed.replace(/<div[^>]*data-id="[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "");

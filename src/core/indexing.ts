@@ -39,7 +39,7 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
   const headingStack: Array<{ level: number; text: string }> = [];
 
   for (const line of lines) {
-    const headingMatch = /^(#{1,3})\s+(.+)$/.exec(line);
+    const headingMatch = /^(#{1,3}) +(\S.*)$/.exec(line);
 
     // Split on markdown headings (## or higher)
     if (headingMatch && currentChunk.length > 0) {

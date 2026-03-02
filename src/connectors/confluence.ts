@@ -92,8 +92,9 @@ export function convertConfluenceStorage(html: string): string {
 
   // Code blocks: <ac:structured-macro ac:name="code">
   processed = processed.replace(
-    /<ac:structured-macro\s[^>]*ac:name="code"[^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, inner: string) => {
+    /<ac:structured-macro\s([^>]*)>([\s\S]*?)<\/ac:structured-macro>/gi,
+    (_match, attrs: string, inner: string) => {
+      if (!/ac:name="code"/i.test(attrs)) return _match;
       const langMatch = /<ac:parameter\s+ac:name="language">(.*?)<\/ac:parameter>/i.exec(inner);
       const lang = langMatch?.[1] ?? "";
       const bodyMatch =
@@ -106,8 +107,11 @@ export function convertConfluenceStorage(html: string): string {
 
   // Info/note/warning/tip panels
   processed = processed.replace(
-    /<ac:structured-macro\s[^>]*ac:name="(info|note|warning|tip)"[^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, type: string, inner: string) => {
+    /<ac:structured-macro\s([^>]*)>([\s\S]*?)<\/ac:structured-macro>/gi,
+    (_match, attrs: string, inner: string) => {
+      const nameMatch = /ac:name="(info|note|warning|tip)"/i.exec(attrs);
+      if (!nameMatch) return _match;
+      const type = nameMatch[1] ?? "info";
       const bodyMatch = /<ac:rich-text-body>([\s\S]*?)<\/ac:rich-text-body>/i.exec(inner);
       const body = bodyMatch?.[1] ?? "";
       const prefix = type.charAt(0).toUpperCase() + type.slice(1);
@@ -223,7 +227,8 @@ export async function syncConfluence(
   }
 
   const auth = buildAuthHeader(config.email, config.token);
-  const base = config.baseUrl.replace(/\/+$/, "");
+  let base = config.baseUrl;
+  while (base.endsWith("/")) base = base.slice(0, -1);
   const syncId = startSync(db, "confluence", base);
 
   try {
