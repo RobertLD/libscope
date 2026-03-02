@@ -118,6 +118,10 @@ async function main(): Promise<void> {
       topic: z.string().optional().describe("Filter by topic ID"),
       library: z.string().optional().describe("Filter by library name"),
       version: z.string().optional().describe("Filter by library version"),
+      source: z
+        .string()
+        .optional()
+        .describe("Filter by source type (e.g., 'confluence', 'url', 'topic', 'file')"),
       minRating: z.number().min(1).max(5).optional().describe("Minimum average rating filter"),
       offset: z.number().min(0).optional().describe("Offset for pagination (default: 0)"),
       limit: z
@@ -141,6 +145,7 @@ async function main(): Promise<void> {
         topic: params.topic,
         library: params.library,
         version: params.version,
+        source: params.source,
         minRating: params.minRating,
         limit: params.limit,
         offset: params.offset,

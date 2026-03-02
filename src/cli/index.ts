@@ -330,6 +330,7 @@ program
   .description("Search indexed documents")
   .option("--topic <topicId>", "Filter by topic")
   .option("--library <name>", "Filter by library")
+  .option("--source <type>", "Filter by source type (e.g., 'confluence', 'url', 'topic', 'file')")
   .option("--limit <n>", "Max results", "5")
   .option("--offset <n>", "Offset for pagination", "0")
   .option("--context <n>", "Include N neighboring chunks before/after each result (0-2)", "0")
@@ -339,6 +340,7 @@ program
       opts: {
         topic?: string;
         library?: string;
+        source?: string;
         limit: string;
         offset: string;
         context: string;
@@ -351,6 +353,7 @@ program
           query,
           topic: opts.topic,
           library: opts.library,
+          source: opts.source,
           limit: parseIntOption(opts.limit, "--limit"),
           offset: parseIntOption(opts.offset, "--offset"),
           contextChunks: contextChunks > 0 ? contextChunks : undefined,

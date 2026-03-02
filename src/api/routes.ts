@@ -142,6 +142,7 @@ export async function handleRequest(
         return;
       }
       const topic = url.searchParams.get("topic") ?? undefined;
+      const source = url.searchParams.get("source") ?? undefined;
       const tag = url.searchParams.get("tag") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
@@ -151,7 +152,14 @@ export async function handleRequest(
       const offset = Number.isNaN(offsetParsed) ? undefined : offsetParsed;
       const tags = tag ? [tag] : undefined;
 
-      const result = await searchDocuments(db, provider, { query: q, topic, tags, limit, offset });
+      const result = await searchDocuments(db, provider, {
+        query: q,
+        topic,
+        tags,
+        source,
+        limit,
+        offset,
+      });
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, result, took);
       return;
