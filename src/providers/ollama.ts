@@ -26,11 +26,25 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     }
     try {
       return await withRetry<number[]>(async () => {
-        const response = await fetch(`${this.baseUrl}/api/embed`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: this.model, input: text }),
-        });
+        const timeoutMs = 30_000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        let response: Response;
+        try {
+          response = await fetch(`${this.baseUrl}/api/embed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: this.model, input: text }),
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") {
+            throw new EmbeddingError(`Request to ${this.name} timed out after ${timeoutMs}ms`);
+          }
+          throw err;
+        } finally {
+          clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
           throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
@@ -75,11 +89,25 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     // Ollama supports batch input
     try {
       return await withRetry<number[][]>(async () => {
-        const response = await fetch(`${this.baseUrl}/api/embed`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: this.model, input: texts }),
-        });
+        const timeoutMs = 60_000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        let response: Response;
+        try {
+          response = await fetch(`${this.baseUrl}/api/embed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: this.model, input: texts }),
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") {
+            throw new EmbeddingError(`Request to ${this.name} timed out after ${timeoutMs}ms`);
+          }
+          throw err;
+        } finally {
+          clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
           throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
