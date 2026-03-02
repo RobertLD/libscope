@@ -329,6 +329,69 @@ describe("search result scoring explanation (issue #89)", () => {
   });
 });
 
+describe("deduplicate search results by document (issue #245)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should return all chunks without dedup by default", async () => {
+    insertDoc(db, "doc1", "TypeScript Guide");
+    insertChunk(db, "c1-0", "doc1", "TypeScript basics and fundamentals", 0);
+    insertChunk(db, "c1-1", "doc1", "TypeScript advanced generics", 1);
+    insertChunk(db, "c1-2", "doc1", "TypeScript utility types overview", 2);
+
+    const { results } = await searchDocuments(db, provider, { query: "TypeScript" });
+
+    expect(results.length).toBe(3);
+    expect(results.every((r) => r.documentId === "doc1")).toBe(true);
+  });
+
+  it("should limit to 1 chunk per document with maxChunksPerDocument=1", async () => {
+    insertDoc(db, "doc1", "TypeScript Guide");
+    insertChunk(db, "c1-0", "doc1", "TypeScript basics and fundamentals", 0);
+    insertChunk(db, "c1-1", "doc1", "TypeScript advanced generics", 1);
+    insertChunk(db, "c1-2", "doc1", "TypeScript utility types overview", 2);
+
+    insertDoc(db, "doc2", "JavaScript Guide");
+    insertChunk(db, "c2-0", "doc2", "TypeScript vs JavaScript comparison", 0);
+    insertChunk(db, "c2-1", "doc2", "TypeScript migration from JavaScript", 1);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      maxChunksPerDocument: 1,
+    });
+
+    const doc1Results = results.filter((r) => r.documentId === "doc1");
+    const doc2Results = results.filter((r) => r.documentId === "doc2");
+
+    expect(doc1Results.length).toBe(1);
+    expect(doc2Results.length).toBe(1);
+  });
+
+  it("should limit to at most 2 chunks per document with maxChunksPerDocument=2", async () => {
+    insertDoc(db, "doc1", "TypeScript Guide");
+    insertChunk(db, "c1-0", "doc1", "TypeScript basics and fundamentals", 0);
+    insertChunk(db, "c1-1", "doc1", "TypeScript advanced generics", 1);
+    insertChunk(db, "c1-2", "doc1", "TypeScript utility types overview", 2);
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      maxChunksPerDocument: 2,
+    });
+
+    expect(results.length).toBe(2);
+    expect(results.every((r) => r.documentId === "doc1")).toBe(true);
+  });
+});
+
 describe("context chunk expansion (issue #247)", () => {
   let db: Database.Database;
   let provider: MockEmbeddingProvider;

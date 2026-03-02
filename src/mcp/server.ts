@@ -130,6 +130,14 @@ async function main(): Promise<void> {
         .max(50)
         .optional()
         .describe("Maximum results to return (default: 10)"),
+      maxChunksPerDocument: z
+        .number()
+        .min(0)
+        .max(50)
+        .optional()
+        .describe(
+          "Maximum chunks per document in results (default: no limit, set to 2 for diversity)",
+        ),
       contextChunks: z
         .number()
         .min(0)
@@ -149,6 +157,7 @@ async function main(): Promise<void> {
         minRating: params.minRating,
         limit: params.limit,
         offset: params.offset,
+        maxChunksPerDocument: params.maxChunksPerDocument,
         contextChunks: params.contextChunks,
       });
 

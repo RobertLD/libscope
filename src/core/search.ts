@@ -56,6 +56,7 @@ export interface SearchOptions {
   tags?: string[] | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
+  maxChunksPerDocument?: number | undefined;
   contextChunks?: number | undefined;
   analyticsEnabled?: boolean | undefined;
 }
@@ -313,6 +314,17 @@ export async function searchDocuments(
       });
     }
 
+    // Deduplicate by document — keep top N chunks per document
+    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
+      const countByDoc = new Map<string, number>();
+      response.results = response.results.filter((r) => {
+        const count = countByDoc.get(r.documentId) ?? 0;
+        if (count >= options.maxChunksPerDocument!) return false;
+        countByDoc.set(r.documentId, count + 1);
+        return true;
+      });
+    }
+
     if (options.contextChunks) {
       response.results = attachContext(db, response.results, options.contextChunks);
     }
@@ -339,6 +351,17 @@ export async function searchDocuments(
         resultCount: response.results.length,
         topScore: response.results[0]?.score ?? null,
         searchType: method,
+      });
+    }
+
+    // Deduplicate by document — keep top N chunks per document
+    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
+      const countByDoc = new Map<string, number>();
+      response.results = response.results.filter((r) => {
+        const count = countByDoc.get(r.documentId) ?? 0;
+        if (count >= options.maxChunksPerDocument!) return false;
+        countByDoc.set(r.documentId, count + 1);
+        return true;
       });
     }
 

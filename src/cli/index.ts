@@ -336,6 +336,7 @@ program
   )
   .option("--limit <n>", "Max results", "5")
   .option("--offset <n>", "Offset for pagination", "0")
+  .option("--max-chunks-per-doc <n>", "Max chunks per document in results (default: no limit)")
   .option("--context <n>", "Include N neighboring chunks before/after each result (0-2)", "0")
   .action(
     async (
@@ -346,12 +347,16 @@ program
         source?: string;
         limit: string;
         offset: string;
+        maxChunksPerDoc?: string;
         context: string;
       },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       try {
         const contextChunks = parseIntOption(opts.context, "--context");
+        const maxChunksPerDoc = opts.maxChunksPerDoc
+          ? parseIntOption(opts.maxChunksPerDoc, "--max-chunks-per-doc")
+          : undefined;
         const { results, totalCount } = await searchDocuments(db, provider, {
           query,
           topic: opts.topic,
@@ -359,6 +364,7 @@ program
           source: opts.source,
           limit: parseIntOption(opts.limit, "--limit"),
           offset: parseIntOption(opts.offset, "--offset"),
+          maxChunksPerDocument: maxChunksPerDoc,
           contextChunks: contextChunks > 0 ? contextChunks : undefined,
         });
 
