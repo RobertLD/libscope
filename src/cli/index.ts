@@ -710,19 +710,27 @@ program
 // serve
 program
   .command("serve")
-  .description("Start the MCP server (or REST API with --api)")
+  .description("Start the MCP server, REST API (--api), or web dashboard (--dashboard)")
   .option("--api", "Start the REST API server instead of MCP")
-  .option("--port <port>", "API server port", "3378")
-  .option("--host <host>", "API server host", "localhost")
-  .action(async (opts: { api?: boolean; port: string; host: string }) => {
-    if (opts.api) {
+  .option("--dashboard", "Start the web dashboard UI")
+  .option("--port <port>", "Server port (default: 3378 for API, 3377 for dashboard)")
+  .option("--host <host>", "Server host", "localhost")
+  .action(async (opts: { api?: boolean; dashboard?: boolean; port?: string; host: string }) => {
+    if (opts.dashboard) {
+      const { db, provider } = initializeAppWithEmbedding();
+      const { startWebServer } = await import("../web/server.js");
+      const defaultPort = 3377;
+      const port = opts.port ? parseIntOption(opts.port, "--port") : defaultPort;
+      await startWebServer(db, provider, { port, host: opts.host });
+      console.log(`LibScope dashboard running at http://${opts.host}:${port}`);
+      console.log("Press Ctrl+C to stop");
+    } else if (opts.api) {
       const { db, provider } = initializeAppWithEmbedding();
       const { startApiServer } = await import("../api/server.js");
-      const { port } = await startApiServer(db, provider, {
-        port: parseIntOption(opts.port, "--port"),
-        host: opts.host,
-      });
-      console.log(`LibScope API server listening on http://${opts.host}:${port}`);
+      const defaultPort = 3378;
+      const port = opts.port ? parseIntOption(opts.port, "--port") : defaultPort;
+      const result = await startApiServer(db, provider, { port, host: opts.host });
+      console.log(`LibScope API server listening on http://${opts.host}:${result.port}`);
       console.log("Press Ctrl+C to stop");
     } else {
       await import("../mcp/server.js");
