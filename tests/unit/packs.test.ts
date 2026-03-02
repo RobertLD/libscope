@@ -270,6 +270,134 @@ describe("knowledge packs", () => {
 
       await expect(installPack(db, provider, packPath)).rejects.toThrow(/not an object/);
     });
+
+    it("should reject missing version", async () => {
+      const bad = {
+        name: "x",
+        version: "",
+        description: "y",
+        documents: [],
+        metadata: { author: "a", license: "MIT", createdAt: "2024-01-01" },
+      };
+      const packPath = join(tempDir, "no-version.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /missing or invalid 'version'/,
+      );
+    });
+
+    it("should reject non-string description", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: 42,
+        documents: [],
+        metadata: { author: "a", license: "MIT", createdAt: "2024-01-01" },
+      };
+      const packPath = join(tempDir, "bad-desc.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /missing or invalid 'description'/,
+      );
+    });
+
+    it("should reject non-array documents", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: "y",
+        documents: "not-array",
+        metadata: { author: "a", license: "MIT", createdAt: "2024-01-01" },
+      };
+      const packPath = join(tempDir, "bad-docs-type.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /'documents' must be an array/,
+      );
+    });
+
+    it("should reject document missing source", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: "y",
+        documents: [{ title: "t", content: "c" }],
+        metadata: { author: "a", license: "MIT", createdAt: "2024-01-01" },
+      };
+      const packPath = join(tempDir, "no-source.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /missing or invalid 'source'/,
+      );
+    });
+
+    it("should reject metadata missing license", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: "y",
+        documents: [],
+        metadata: { author: "a", createdAt: "2024-01-01" },
+      };
+      const packPath = join(tempDir, "no-license.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /metadata missing 'license'/,
+      );
+    });
+
+    it("should reject metadata missing createdAt", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: "y",
+        documents: [],
+        metadata: { author: "a", license: "MIT" },
+      };
+      const packPath = join(tempDir, "no-created.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /metadata missing 'createdAt'/,
+      );
+    });
+
+    it("should reject metadata missing author", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: "y",
+        documents: [],
+        metadata: { license: "MIT", createdAt: "2024-01-01" },
+      };
+      const packPath = join(tempDir, "no-author.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /metadata missing 'author'/,
+      );
+    });
+
+    it("should reject null metadata", async () => {
+      const bad = {
+        name: "x",
+        version: "1.0.0",
+        description: "y",
+        documents: [],
+        metadata: null,
+      };
+      const packPath = join(tempDir, "null-meta.json");
+      writeFileSync(packPath, JSON.stringify(bad), "utf-8");
+
+      await expect(installPack(db, provider, packPath)).rejects.toThrow(
+        /missing or invalid 'metadata'/,
+      );
+    });
   });
 
   describe("security validations", () => {
