@@ -140,6 +140,14 @@ export function pruneVersions(
   documentId: string,
   maxVersions: number = MAX_VERSIONS_DEFAULT,
 ): number {
+  const countResult = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM document_versions WHERE document_id = ?`)
+    .get(documentId) as { cnt: number } | undefined;
+
+  if (!countResult || countResult.cnt <= maxVersions) {
+    return 0;
+  }
+
   const result = db
     .prepare(
       `DELETE FROM document_versions

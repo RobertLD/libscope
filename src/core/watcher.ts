@@ -75,7 +75,9 @@ export class FileWatcher {
 
     const timer = setTimeout(() => {
       this.debounceTimers.delete(fullPath);
-      void this.processFile(fullPath);
+      this.processFile(fullPath).catch((err: unknown) => {
+        this.log.error({ path: fullPath, err }, "Unhandled error processing file");
+      });
     }, this.debounceMs);
 
     this.debounceTimers.set(fullPath, timer);

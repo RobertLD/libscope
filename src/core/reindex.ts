@@ -87,6 +87,7 @@ export async function reindex(
       const embeddings = await provider.embedBatch(texts);
 
       let batchFailed = 0;
+      let batchSucceeded = 0;
       const upsert = db.transaction(() => {
         for (let j = 0; j < ids.length; j++) {
           const chunkId = ids[j]!;
@@ -100,6 +101,7 @@ export async function reindex(
             deleteStmt.run(chunkId);
             const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
             insertStmt.run(chunkId, vecBuffer);
+            batchSucceeded++;
           } catch (err) {
             log.warn({ chunkId, err }, "Failed to update embedding for chunk");
             failedChunkIds.push(chunkId);
@@ -110,7 +112,7 @@ export async function reindex(
 
       upsert();
       failed += batchFailed;
-      completed += ids.length - batchFailed;
+      completed += batchSucceeded;
     } catch (err) {
       log.error({ err, batchStart: i }, "Batch embedding failed");
       for (const id of ids) {

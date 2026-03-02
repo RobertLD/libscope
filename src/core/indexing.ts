@@ -326,7 +326,12 @@ export async function indexDocument(
         insertEmbedding.run(chunkId, vecBuffer);
         insertMeta?.run(chunkId, provider.name, "unknown");
       } catch (err) {
-        log.debug({ chunkId, err }, "Skipped vector insertion (sqlite-vec may not be loaded)");
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("no such table")) {
+          log.debug({ chunkId, err }, "Skipped vector insertion (sqlite-vec may not be loaded)");
+        } else {
+          log.warn({ chunkId, err }, "Failed to insert vector embedding");
+        }
       }
     }
   });

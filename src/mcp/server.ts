@@ -89,8 +89,8 @@ async function main(): Promise<void> {
 
   try {
     llmProvider = createLlmProvider(config);
-  } catch {
-    // LLM provider is optional; ask-question tool will report the error
+  } catch (err) {
+    getLogger().warn({ err }, "LLM provider unavailable — ask-question tool will not work");
   }
 
   process.on("SIGINT", () => {
