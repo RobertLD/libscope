@@ -51,6 +51,8 @@ import {
   createPack,
 } from "../core/packs.js";
 
+import { execSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
 import {
@@ -79,12 +81,15 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
+const _require = createRequire(import.meta.url);
+const _pkg = _require("../../package.json") as { version: string };
+
 const program = new Command();
 
 program
   .name("libscope")
   .description("AI-powered knowledge base with MCP integration")
-  .version("0.1.0")
+  .version(_pkg.version)
   .option("--verbose", "Enable verbose logging")
   .option("--log-level <level>", "Set log level (debug, info, warn, error, silent)")
   .option("--workspace <name>", "Use a specific workspace");
@@ -1823,6 +1828,30 @@ disconnectCmd
       console.log(`✓ Removed ${removed} Confluence documents`);
     } finally {
       closeDatabase();
+    }
+  });
+
+// update
+program
+  .command("update")
+  .description("Update libscope to the latest version")
+  .action(() => {
+    const currentVersion = _pkg.version;
+    console.log(`Current version: ${currentVersion}`);
+
+    try {
+      const latest = execSync("npm view libscope version", { encoding: "utf-8" }).trim();
+      if (latest === currentVersion) {
+        console.log("✓ Already up to date.");
+        return;
+      }
+      console.log(`Latest version:  ${latest}`);
+      console.log("Updating...");
+      execSync("npm install -g libscope@latest", { stdio: "inherit" });
+      console.log(`✓ Updated to ${latest}`);
+    } catch {
+      console.error("Failed to update. Try manually: npm install -g libscope@latest");
+      process.exit(1);
     }
   });
 
