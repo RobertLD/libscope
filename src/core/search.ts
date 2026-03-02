@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 import { validateCountRow } from "../utils/db-validation.js";
-import { logSearch } from "./analytics.js";
+import { logSearch, recordSearchQuery } from "./analytics.js";
 import { performance } from "node:perf_hooks";
 
 /** Build SQL clause and params for AND-logic tag filtering on a document alias. */
@@ -234,6 +234,12 @@ export async function searchDocuments(
         latencyMs: performance.now() - startTime,
         documentIds: response.results.map((r) => r.documentId),
       });
+      recordSearchQuery(db, {
+        query: options.query,
+        resultCount: response.results.length,
+        topScore: response.results[0]?.score ?? null,
+        searchType: "vector",
+      });
     }
 
     return response;
@@ -245,12 +251,19 @@ export async function searchDocuments(
     const response = keywordSearch(db, options, limit, offset);
 
     if (analyticsEnabled) {
+      const method = response.results[0]?.scoreExplanation.method ?? "keyword";
       logSearch(db, {
         query: options.query,
-        searchMethod: response.results[0]?.scoreExplanation.method ?? "keyword",
+        searchMethod: method,
         resultCount: response.totalCount,
         latencyMs: performance.now() - startTime,
         documentIds: response.results.map((r) => r.documentId),
+      });
+      recordSearchQuery(db, {
+        query: options.query,
+        resultCount: response.results.length,
+        topScore: response.results[0]?.score ?? null,
+        searchType: method,
       });
     }
 

@@ -156,3 +156,95 @@ export function getSearchTrends(db: Database.Database, days = 30): SearchTrend[]
     )
     .all(`-${days} days`) as SearchTrend[];
 }
+
+// --- Search-query analytics (search_queries table, migration v11) ---
+
+export interface RecordSearchQueryInput {
+  query: string;
+  resultCount: number;
+  topScore: number | null;
+  searchType: string;
+}
+
+/** Persist a search query into the search_queries analytics table. */
+export function recordSearchQuery(db: Database.Database, entry: RecordSearchQueryInput): void {
+  try {
+    db.prepare(
+      "INSERT INTO search_queries (query, result_count, top_score, search_type) VALUES (?, ?, ?, ?)",
+    ).run(entry.query, entry.resultCount, entry.topScore, entry.searchType);
+  } catch {
+    // silently ignore if table doesn't exist yet
+  }
+}
+
+export interface SearchAnalytics {
+  totalSearches: number;
+  avgResultCount: number;
+  topQueries: Array<{ query: string; count: number }>;
+  zeroResultQueries: Array<{ query: string; count: number }>;
+  queriesPerDay: Array<{ date: string; count: number }>;
+}
+
+/** Aggregate search analytics from the search_queries table. */
+export function getSearchAnalytics(db: Database.Database, days = 30): SearchAnalytics {
+  const since = `-${days} days`;
+
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) AS total, AVG(result_count) AS avg_results
+       FROM search_queries WHERE created_at >= datetime('now', ?)`,
+    )
+    .get(since) as { total: number; avg_results: number | null };
+
+  const topQueries = db
+    .prepare(
+      `SELECT query, COUNT(*) AS count FROM search_queries
+       WHERE created_at >= datetime('now', ?)
+       GROUP BY query ORDER BY count DESC LIMIT 10`,
+    )
+    .all(since) as Array<{ query: string; count: number }>;
+
+  const zeroResultQueries = db
+    .prepare(
+      `SELECT query, COUNT(*) AS count FROM search_queries
+       WHERE result_count = 0 AND created_at >= datetime('now', ?)
+       GROUP BY query ORDER BY count DESC LIMIT 10`,
+    )
+    .all(since) as Array<{ query: string; count: number }>;
+
+  const queriesPerDay = db
+    .prepare(
+      `SELECT DATE(created_at) AS date, COUNT(*) AS count FROM search_queries
+       WHERE created_at >= datetime('now', ?)
+       GROUP BY DATE(created_at) ORDER BY date ASC`,
+    )
+    .all(since) as Array<{ date: string; count: number }>;
+
+  return {
+    totalSearches: totals.total,
+    avgResultCount: Math.round((totals.avg_results ?? 0) * 100) / 100,
+    topQueries,
+    zeroResultQueries,
+    queriesPerDay,
+  };
+}
+
+export interface KnowledgeGap {
+  query: string;
+  count: number;
+  lastSearched: string;
+}
+
+/** Identify knowledge gaps: queries that consistently return zero results. */
+export function getKnowledgeGaps(db: Database.Database, days = 30): KnowledgeGap[] {
+  return db
+    .prepare(
+      `SELECT query, COUNT(*) AS count, MAX(created_at) AS lastSearched
+       FROM search_queries
+       WHERE result_count = 0 AND created_at >= datetime('now', ?)
+       GROUP BY query
+       ORDER BY count DESC
+       LIMIT 20`,
+    )
+    .all(`-${days} days`) as KnowledgeGap[];
+}

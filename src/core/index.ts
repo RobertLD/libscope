@@ -9,19 +9,25 @@ export type { SearchOptions, SearchResult, SearchMethod, ScoreExplanation } from
 
 export {
   logSearch,
+  recordSearchQuery,
   getStats,
   getPopularDocuments,
   getStaleDocuments,
   getTopQueries,
   getSearchTrends,
+  getSearchAnalytics,
+  getKnowledgeGaps,
 } from "./analytics.js";
 export type {
   SearchLogEntry,
+  RecordSearchQueryInput,
   OverviewStats,
   PopularDocument,
   StaleDocument,
   TopQuery,
   SearchTrend,
+  SearchAnalytics,
+  KnowledgeGap,
 } from "./analytics.js";
 
 export { rateDocument, getDocumentRatings, listRatings } from "./ratings.js";

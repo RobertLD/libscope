@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 12;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -182,6 +182,23 @@ const MIGRATIONS: Record<number, string> = {
     INSERT INTO schema_version (version) VALUES (9);
   `,
   10: `
+    -- placeholder for concurrent feature branch
+    INSERT INTO schema_version (version) VALUES (10);
+  `,
+  11: `
+    CREATE TABLE IF NOT EXISTS search_queries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT NOT NULL,
+      result_count INTEGER DEFAULT 0,
+      top_score REAL,
+      search_type TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_search_queries_created ON search_queries(created_at);
+
+    INSERT INTO schema_version (version) VALUES (11);
+  `,
+  12: `
     CREATE TABLE IF NOT EXISTS connector_syncs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       connector_type TEXT NOT NULL,
@@ -196,7 +213,7 @@ const MIGRATIONS: Record<number, string> = {
       error_message TEXT
     );
 
-    INSERT INTO schema_version (version) VALUES (10);
+    INSERT INTO schema_version (version) VALUES (12);
   `,
 };
 
