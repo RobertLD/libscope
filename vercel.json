@@ -1,5 +1,5 @@
 {
-  "installCommand": "npm install --include=dev",
+  "installCommand": "npm install --include=dev --ignore-scripts",
   "buildCommand": "npm run docs:build",
   "outputDirectory": "docs/.vitepress/dist"
 }
