@@ -237,11 +237,15 @@ export function buildKnowledgeGraph(
       // Pairwise similarity
       const docIdList = [...docEmbeddings.keys()];
       for (let i = 0; i < docIdList.length; i++) {
-        const idA = docIdList[i]!;
-        const vecA = docEmbeddings.get(idA)!;
+        const idA = docIdList[i];
+        if (!idA) continue;
+        const vecA = docEmbeddings.get(idA);
+        if (!vecA) continue;
         for (let j = i + 1; j < docIdList.length; j++) {
-          const idB = docIdList[j]!;
-          const vecB = docEmbeddings.get(idB)!;
+          const idB = docIdList[j];
+          if (!idB) continue;
+          const vecB = docEmbeddings.get(idB);
+          if (!vecB) continue;
           const sim = cosineSimilarity(vecA, vecB);
           if (sim >= threshold) {
             edges.push({

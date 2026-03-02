@@ -346,7 +346,7 @@ export function createPack(db: Database.Database, options: CreatePackOptions): K
   }
 
   let query = "SELECT id, title, content, url, topic_id FROM documents";
-  const params: string[] = [];
+  const params: unknown[] = [];
 
   if (options.topic) {
     query += " WHERE topic_id = ?";

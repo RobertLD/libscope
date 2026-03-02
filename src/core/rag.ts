@@ -138,12 +138,17 @@ function createOpenAiProvider(
       }
 
       const data = (await res.json()) as {
-        choices: Array<{ message: { content: string } }>;
+        choices?: Array<{ message: { content: string } }>;
         usage?: { total_tokens: number };
       };
 
+      const firstChoice = data.choices?.[0];
+      if (!firstChoice) {
+        throw new Error("OpenAI API error: LLM returned no choices in response");
+      }
+
       return {
-        text: data.choices[0]?.message.content ?? "",
+        text: firstChoice.message.content,
         tokensUsed: data.usage?.total_tokens,
       };
     },
