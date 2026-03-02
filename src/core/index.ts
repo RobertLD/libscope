@@ -156,6 +156,15 @@ export type { Workspace } from "./workspace.js";
 export { buildKnowledgeGraph, detectClusters } from "./graph.js";
 export type { KnowledgeGraph, GraphNode, GraphEdge, GraphOptions } from "./graph.js";
 
+export {
+  createLink,
+  getDocumentLinks,
+  deleteLink,
+  getPrerequisiteChain,
+  listLinks,
+} from "./links.js";
+export type { LinkType, DocumentLink, DocumentLinkWithTitle, DocumentLinks } from "./links.js";
+
 export { startApiServer } from "../api/server.js";
 export type { ApiServerOptions } from "../api/server.js";
 

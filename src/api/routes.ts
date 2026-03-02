@@ -20,7 +20,11 @@ import {
   askQuestion,
   askQuestionStream,
   createLlmProvider,
+  createLink,
+  getDocumentLinks,
+  deleteLink,
 } from "../core/index.js";
+import type { LinkType } from "../core/index.js";
 import { loadConfig } from "../config.js";
 import { DocumentNotFoundError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -61,6 +65,33 @@ function matchDocumentTags(segments: string[]): string | null {
     segments[1] === "v1" &&
     segments[2] === "documents" &&
     segments[4] === "tags"
+  ) {
+    return segments[3] ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/documents/:id/links */
+function matchDocumentLinks(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "documents" &&
+    segments[4] === "links"
+  ) {
+    return segments[3] ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/links/:id */
+function matchLinkId(segments: string[]): string | null {
+  if (
+    segments.length === 4 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "links"
   ) {
     return segments[3] ?? null;
   }
@@ -370,6 +401,39 @@ export async function handleRequest(
 
     if (docId && method === "DELETE") {
       deleteDocument(db, docId);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { deleted: true }, took);
+      return;
+    }
+
+    // Document links: GET/POST /api/v1/documents/:id/links
+    const linksDocId = matchDocumentLinks(segments);
+    if (linksDocId && method === "GET") {
+      const links = getDocumentLinks(db, linksDocId);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, links, took);
+      return;
+    }
+    if (linksDocId && method === "POST") {
+      const body = (await parseJsonBody(req)) as {
+        targetId?: string;
+        linkType?: string;
+        label?: string;
+      };
+      if (!body.targetId || !body.linkType) {
+        sendError(res, 400, "VALIDATION_ERROR", "targetId and linkType are required");
+        return;
+      }
+      const link = createLink(db, linksDocId, body.targetId, body.linkType as LinkType, body.label);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 201, link, took);
+      return;
+    }
+
+    // Delete link: DELETE /api/v1/links/:id
+    const linkId = matchLinkId(segments);
+    if (linkId && method === "DELETE") {
+      deleteLink(db, linkId);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, { deleted: true }, took);
       return;

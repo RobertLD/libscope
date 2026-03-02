@@ -11,6 +11,8 @@ import { getDocument, listDocuments, deleteDocument } from "../core/documents.js
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
 import { listTopics } from "../core/topics.js";
+import { createLink, getDocumentLinks, deleteLink } from "../core/links.js";
+import type { LinkType } from "../core/links.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger, getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
@@ -836,6 +838,84 @@ async function main(): Promise<void> {
         ...gaps.map((g) => `  ${g.count}x  ${g.query} (last: ${g.lastSearched})`),
       ];
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    }),
+  );
+
+  // Tool: link-documents
+  server.tool(
+    "link-documents",
+    "Create a relationship between two documents (see_also, prerequisite, supersedes, related)",
+    {
+      sourceId: z.string().describe("The source document ID"),
+      targetId: z.string().describe("The target document ID"),
+      linkType: z
+        .enum(["see_also", "prerequisite", "supersedes", "related"])
+        .describe("Type of relationship"),
+      label: z.string().optional().describe("Optional human-readable description of the link"),
+    },
+    withErrorHandling((params) => {
+      const link = createLink(
+        db,
+        params.sourceId,
+        params.targetId,
+        params.linkType as LinkType,
+        params.label,
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✓ Link created: ${link.sourceId} → ${link.targetId} (${link.linkType})${link.label ? ` — ${link.label}` : ""}`,
+          },
+        ],
+      };
+    }),
+  );
+
+  // Tool: get-document-links
+  server.tool(
+    "get-document-links",
+    "Get all cross-reference links for a document (both outgoing and incoming)",
+    {
+      documentId: z.string().describe("The document ID"),
+    },
+    withErrorHandling((params) => {
+      const { outgoing, incoming } = getDocumentLinks(db, params.documentId);
+      if (outgoing.length === 0 && incoming.length === 0) {
+        return { content: [{ type: "text" as const, text: "No links found for this document." }] };
+      }
+
+      const lines: string[] = [];
+      if (outgoing.length > 0) {
+        lines.push("**Outgoing links:**");
+        for (const l of outgoing) {
+          lines.push(
+            `  → [${l.linkType}] ${l.targetTitle} (${l.targetId})${l.label ? ` — ${l.label}` : ""}`,
+          );
+        }
+      }
+      if (incoming.length > 0) {
+        lines.push("**Incoming links:**");
+        for (const l of incoming) {
+          lines.push(
+            `  ← [${l.linkType}] ${l.sourceTitle} (${l.sourceId})${l.label ? ` — ${l.label}` : ""}`,
+          );
+        }
+      }
+      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+    }),
+  );
+
+  // Tool: delete-link
+  server.tool(
+    "delete-link",
+    "Remove a cross-reference link between documents",
+    {
+      linkId: z.string().describe("The link ID to delete"),
+    },
+    withErrorHandling((params) => {
+      deleteLink(db, params.linkId);
+      return { content: [{ type: "text" as const, text: `✓ Link ${params.linkId} deleted.` }] };
     }),
   );
 
