@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import type Database from "better-sqlite3";
@@ -454,7 +454,7 @@ describe("API routes", () => {
       const events = body
         .split("\n\n")
         .filter((line: string) => line.startsWith("data: "))
-        .map((line: string) => JSON.parse(line.replace("data: ", "")));
+        .map((line: string) => JSON.parse(line.replace("data: ", "")) as Record<string, unknown>);
 
       expect(events.length).toBeGreaterThanOrEqual(2);
       expect(events[0]).toHaveProperty("token");
@@ -468,7 +468,7 @@ describe("API routes", () => {
     it("should return normal JSON when Accept header is not SSE", async () => {
       const req = createMockReq("POST", "/api/v1/ask", { question: "test" });
       req.headers["accept"] = "application/json";
-      const { res, getStatus, getHeaders } = createMockRes();
+      const { res, getHeaders } = createMockRes();
 
       // This will fail because no LLM is configured, but it should NOT return SSE headers
       await handleRequest(req, res, db, provider);
