@@ -71,6 +71,7 @@ libscope search "deploy process" --context 1    # include neighboring chunks
 | `--source <type>` | Filter by source type (e.g., `library`, `topic`, `manual`, `model-generated`) |
 | `--limit <n>` | Max results (default: 10) |
 | `--min-rating <n>` | Minimum average rating |
+| `--max-chunks-per-doc <n>` | Max chunks per document in results (default: no limit) |
 | `--context <n>` | Include N neighboring chunks before/after each result (0-2, default: 0) |
 
 ### `libscope ask`

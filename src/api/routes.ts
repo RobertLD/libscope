@@ -151,6 +151,9 @@ export async function handleRequest(
       const offsetParsed = offsetRaw ? parseInt(offsetRaw, 10) : NaN;
       const offset = Number.isNaN(offsetParsed) ? undefined : offsetParsed;
       const tags = tag ? [tag] : undefined;
+      const maxChunksRaw = url.searchParams.get("maxChunksPerDocument");
+      const maxChunksParsed = maxChunksRaw ? parseInt(maxChunksRaw, 10) : NaN;
+      const maxChunksPerDocument = Number.isNaN(maxChunksParsed) ? undefined : maxChunksParsed;
 
       const result = await searchDocuments(db, provider, {
         query: q,
@@ -159,6 +162,7 @@ export async function handleRequest(
         source,
         limit,
         offset,
+        maxChunksPerDocument,
       });
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, result, took);
