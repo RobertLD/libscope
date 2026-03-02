@@ -90,10 +90,15 @@ describe("Confluence connector", () => {
   };
 
   describe("buildAuthHeader", () => {
-    it("should encode email:token as base64", () => {
-      const header = buildAuthHeader("user@co.com", "mytoken");
+    it("should encode email:token as base64 for Cloud", () => {
+      const header = buildAuthHeader("cloud", "user@co.com", "mytoken");
       const expected = Buffer.from("user@co.com:mytoken").toString("base64");
       expect(header).toBe(`Basic ${expected}`);
+    });
+
+    it("should use Bearer token for Server/Data Center", () => {
+      const header = buildAuthHeader("server", undefined, "my-pat-token");
+      expect(header).toBe("Bearer my-pat-token");
     });
   });
 
@@ -190,12 +195,28 @@ describe("Confluence connector", () => {
       await expect(syncConfluence(db, provider, { ...baseConfig, baseUrl: "" })).rejects.toThrow(
         "baseUrl is required",
       );
-      await expect(syncConfluence(db, provider, { ...baseConfig, email: "" })).rejects.toThrow(
-        "email is required",
-      );
+      await expect(
+        syncConfluence(db, provider, { ...baseConfig, type: "cloud", email: "" }),
+      ).rejects.toThrow("email is required for Cloud");
       await expect(syncConfluence(db, provider, { ...baseConfig, token: "" })).rejects.toThrow(
         "token is required",
       );
+    });
+
+    it("should not require email for Server/Data Center", async () => {
+      fetchMock.mockResolvedValueOnce(mockFetchResponse(makeSpacesResponse([])));
+
+      const result = await syncConfluence(db, provider, {
+        baseUrl: "https://confluence.internal",
+        type: "server",
+        token: "my-pat",
+        spaces: ["ENG"],
+      });
+
+      expect(result.spaces).toBe(0);
+      const firstCall = fetchMock.mock.calls[0] as [string, RequestInit];
+      const headers = firstCall[1].headers as Record<string, string>;
+      expect(headers["Authorization"]).toBe("Bearer my-pat");
     });
 
     it("should list spaces and index pages", async () => {
@@ -451,7 +472,7 @@ describe("Confluence connector", () => {
 
       await syncConfluence(db, provider, baseConfig);
 
-      const expectedAuth = buildAuthHeader(baseConfig.email, baseConfig.token);
+      const expectedAuth = buildAuthHeader("cloud", baseConfig.email, baseConfig.token);
       const firstCall = fetchMock.mock.calls[0] as [string, RequestInit];
       const headers = firstCall[1].headers as Record<string, string>;
       expect(headers["Authorization"]).toBe(expectedAuth);

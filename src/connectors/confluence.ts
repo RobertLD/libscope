@@ -12,7 +12,10 @@ import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
 export interface ConfluenceConfig {
   baseUrl: string;
-  email: string;
+  /** "cloud" uses Basic auth (email:token). "server" uses Bearer PAT. Default: "cloud". */
+  type?: "cloud" | "server" | undefined;
+  /** Email for Confluence Cloud (Basic auth). Required when type is "cloud". */
+  email?: string | undefined;
   token: string;
   spaces: string[];
   lastSync?: string | undefined;
@@ -47,8 +50,15 @@ interface PaginatedResponse<T> {
   _links?: { next?: string };
 }
 
-function buildAuthHeader(email: string, token: string): string {
-  const encoded = Buffer.from(`${email}:${token}`).toString("base64");
+function buildAuthHeader(
+  type: "cloud" | "server",
+  email: string | undefined,
+  token: string,
+): string {
+  if (type === "server") {
+    return `Bearer ${token}`;
+  }
+  const encoded = Buffer.from(`${email ?? ""}:${token}`).toString("base64");
   return `Basic ${encoded}`;
 }
 
@@ -224,14 +234,18 @@ export async function syncConfluence(
   if (!config.baseUrl.trim()) {
     throw new ValidationError("Confluence baseUrl is required");
   }
-  if (!config.email.trim()) {
-    throw new ValidationError("Confluence email is required");
-  }
   if (!config.token.trim()) {
     throw new ValidationError("Confluence token is required");
   }
 
-  const auth = buildAuthHeader(config.email, config.token);
+  const confluenceType = config.type ?? "cloud";
+  if (confluenceType === "cloud" && !config.email?.trim()) {
+    throw new ValidationError(
+      "Confluence email is required for Cloud. For Server/Data Center, use --type server",
+    );
+  }
+
+  const auth = buildAuthHeader(confluenceType, config.email, config.token);
   let base = config.baseUrl;
   while (base.endsWith("/")) base = base.slice(0, -1);
   const syncId = startSync(db, "confluence", base);

@@ -1656,14 +1656,16 @@ connectCmd
   .command("confluence")
   .description("Sync Confluence spaces and pages")
   .option("--url <url>", "Confluence base URL (e.g. https://acme.atlassian.net)")
-  .option("--email <email>", "Confluence user email")
-  .option("--token <token>", "API token or PAT")
+  .option("--type <type>", "Confluence type: cloud or server (Data Center)", "cloud")
+  .option("--email <email>", "Confluence user email (Cloud only)")
+  .option("--token <token>", "API token (Cloud) or Personal Access Token (Server/Data Center)")
   .option("--spaces <keys>", "Comma-separated space keys, or 'all'", "all")
   .option("--exclude-spaces <keys>", "Comma-separated space keys to exclude")
   .option("--sync", "Sync using previously saved config")
   .action(
     async (opts: {
       url?: string;
+      type?: string;
       email?: string;
       token?: string;
       spaces?: string;
@@ -1674,7 +1676,8 @@ connectCmd
       const { db, provider } = initializeAppWithEmbedding();
       try {
         const url = opts.url ?? process.env["CONFLUENCE_URL"] ?? "";
-        const email = opts.email ?? process.env["CONFLUENCE_EMAIL"] ?? "";
+        const confluenceType = opts.type === "server" ? "server" : ("cloud" as "cloud" | "server");
+        const email = opts.email ?? process.env["CONFLUENCE_EMAIL"] ?? undefined;
         const token = opts.token ?? process.env["CONFLUENCE_TOKEN"] ?? "";
 
         const spaces = (opts.spaces ?? "all").split(",").map((s) => s.trim());
@@ -1684,7 +1687,8 @@ connectCmd
 
         const result = await syncConfluence(db, provider, {
           baseUrl: url,
-          email,
+          type: confluenceType,
+          ...(email ? { email } : {}),
           token,
           spaces,
           excludeSpaces,
