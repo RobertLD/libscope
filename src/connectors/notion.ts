@@ -107,6 +107,7 @@ async function notionFetch<T>(
 }
 
 async function searchNotion(token: string, lastSync?: string): Promise<NotionSearchResult[]> {
+  const log = getLogger();
   const allResults: NotionSearchResult[] = [];
   let cursor: string | null = null;
   let hasMore = true;
@@ -126,28 +127,54 @@ async function searchNotion(token: string, lastSync?: string): Promise<NotionSea
     allResults.push(...response.results);
     hasMore = response.has_more;
     cursor = response.next_cursor;
+
+    if (hasMore && !cursor) {
+      log.warn("API returned hasMore=true but no cursor — stopping pagination");
+      break;
+    }
   }
 
   return allResults;
 }
 
-async function fetchBlockChildren(token: string, blockId: string): Promise<NotionBlock[]> {
+async function fetchBlockChildren(
+  token: string,
+  blockId: string,
+  depth: number = 0,
+  maxDepth: number = 20,
+): Promise<NotionBlock[]> {
+  const log = getLogger();
+
+  if (depth >= maxDepth) {
+    log.warn({ blockId, depth, maxDepth }, "Max recursion depth reached in fetchBlockChildren");
+    return [];
+  }
+
   const allBlocks: NotionBlock[] = [];
   let cursor: string | null = null;
   let hasMore = true;
 
   while (hasMore) {
-    const endpoint: string = `/v1/blocks/${blockId}/children${cursor ? `?start_cursor=${cursor}` : ""}`;
+    const url = new URL(`${NOTION_API_BASE}/v1/blocks/${blockId}/children`);
+    if (cursor) {
+      url.searchParams.set("start_cursor", cursor);
+    }
+    const endpoint = url.pathname + url.search;
     const response: NotionBlocksResponse = await notionFetch<NotionBlocksResponse>(endpoint, token);
     allBlocks.push(...response.results);
     hasMore = response.has_more;
     cursor = response.next_cursor;
+
+    if (hasMore && !cursor) {
+      log.warn("API returned hasMore=true but no cursor — stopping pagination");
+      break;
+    }
   }
 
   // Recursively fetch children
   for (const block of allBlocks) {
     if (block.has_children) {
-      const children = await fetchBlockChildren(token, block.id);
+      const children = await fetchBlockChildren(token, block.id, depth + 1, maxDepth);
       (block as Record<string, unknown>)["children"] = children;
     }
   }
@@ -173,6 +200,12 @@ async function queryDatabase(token: string, databaseId: string): Promise<NotionS
     allRows.push(...response.results);
     hasMore = response.has_more;
     cursor = response.next_cursor;
+
+    if (hasMore && !cursor) {
+      const log = getLogger();
+      log.warn("API returned hasMore=true but no cursor — stopping pagination");
+      break;
+    }
   }
 
   return allRows;

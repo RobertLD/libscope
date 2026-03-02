@@ -113,7 +113,12 @@ async function resolveUser(token: string, userId: string): Promise<string> {
     const displayName = user?.profile?.display_name ?? user?.real_name ?? user?.name ?? userId;
     userCache.set(userId, displayName);
     return displayName;
-  } catch {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const authErrors = ["invalid_auth", "token_revoked", "not_authed"];
+    if (authErrors.some((e) => message.includes(e))) {
+      throw err;
+    }
     userCache.set(userId, userId);
     return userId;
   }

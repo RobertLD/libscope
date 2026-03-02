@@ -78,14 +78,11 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
     log.debug({ waitMs }, "Rate limit reached, waiting");
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
-  requestTimestamps.push(Date.now());
   unlock!();
 
   let lastError: unknown;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      requestTimestamps.push(Date.now());
-    }
+    requestTimestamps.push(Date.now());
     const response = await fetch(url, options);
 
     if (response.status === 429) {
