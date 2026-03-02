@@ -206,3 +206,16 @@ export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confl
 
 export { resolveSelector, bulkDelete, bulkRetag, bulkMove } from "./bulk.js";
 export type { BulkSelector, BulkResult } from "./bulk.js";
+
+export {
+  createWebhook,
+  listWebhooks,
+  getWebhook,
+  deleteWebhook,
+  updateWebhook,
+  signPayload,
+  buildPayload,
+  fireWebhooks,
+  WEBHOOK_EVENTS,
+} from "./webhooks.js";
+export type { Webhook, WebhookEvent, WebhookPayload } from "./webhooks.js";

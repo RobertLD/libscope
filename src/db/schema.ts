@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -242,6 +242,20 @@ const MIGRATIONS: Record<number, string> = {
     );
 
     INSERT INTO schema_version (version) VALUES (14);
+  `,
+  15: `
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      events TEXT NOT NULL,
+      secret TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_triggered_at TEXT,
+      failure_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    INSERT INTO schema_version (version) VALUES (15);
   `,
 };
 

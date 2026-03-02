@@ -40,6 +40,15 @@ import { getLogger } from "../logger.js";
 import { parseJsonBody, sendJson, sendError } from "./middleware.js";
 import { OPENAPI_SPEC } from "./openapi.js";
 import { getConnectorStatus, getSyncHistory } from "../connectors/sync-tracker.js";
+import {
+  createWebhook,
+  listWebhooks,
+  deleteWebhook,
+  getWebhook,
+  buildPayload,
+  signPayload,
+} from "../core/webhooks.js";
+import type { WebhookEvent } from "../core/webhooks.js";
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
@@ -142,6 +151,35 @@ function matchSearchRun(segments: string[]): string | null {
     segments[1] === "v1" &&
     segments[2] === "searches" &&
     segments[4] === "run"
+  ) {
+    return segments[3] ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/webhooks/:id */
+function matchWebhookId(segments: string[]): string | null {
+  if (
+    segments.length === 4 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "webhooks"
+  ) {
+    const id = segments[3];
+    if (id === "test") return null;
+    return id ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/webhooks/:id/test */
+function matchWebhookTest(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "webhooks" &&
+    segments[4] === "test"
   ) {
     return segments[3] ?? null;
   }
@@ -645,6 +683,65 @@ export async function handleRequest(
     const savedSearchId = matchSearchId(segments);
     if (savedSearchId && method === "DELETE") {
       deleteSavedSearch(db, savedSearchId);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { deleted: true }, took);
+      return;
+    }
+
+    // Webhooks: list + create
+    if (
+      segments.length === 3 &&
+      segments[0] === "api" &&
+      segments[1] === "v1" &&
+      segments[2] === "webhooks"
+    ) {
+      if (method === "GET") {
+        const webhooks = listWebhooks(db);
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 200, webhooks, took);
+        return;
+      }
+      if (method === "POST") {
+        const body = (await parseJsonBody(req)) as {
+          url?: string;
+          events?: string[];
+          secret?: string;
+        };
+        if (!body.url || !body.events) {
+          sendError(res, 400, "VALIDATION_ERROR", "url and events are required");
+          return;
+        }
+        const webhook = createWebhook(db, body.url, body.events as WebhookEvent[], body.secret);
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 201, webhook, took);
+        return;
+      }
+    }
+
+    // Webhooks: test ping
+    const webhookTestId = matchWebhookTest(segments);
+    if (webhookTestId && method === "POST") {
+      const webhook = getWebhook(db, webhookTestId);
+      const body = buildPayload("document.created", { test: true, message: "Webhook test ping" });
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (webhook.secret) {
+        headers["X-LibScope-Signature"] = signPayload(body, webhook.secret);
+      }
+      const resp = await fetch(webhook.url, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { status: resp.status, statusText: resp.statusText }, took);
+      return;
+    }
+
+    // Webhooks: delete
+    const webhookId = matchWebhookId(segments);
+    if (webhookId && method === "DELETE") {
+      deleteWebhook(db, webhookId);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, { deleted: true }, took);
       return;
