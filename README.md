@@ -232,6 +232,8 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
 | `LIBSCOPE_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
 | `LIBSCOPE_LLM_PROVIDER` | LLM for RAG (`openai` / `ollama`) | — |
 | `LIBSCOPE_LLM_MODEL` | LLM model override | — |
+| `LIBSCOPE_ALLOW_PRIVATE_URLS` | Allow fetching from private/internal IPs | `false` |
+| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates | `false` |
 | `ONENOTE_CLIENT_ID` | Microsoft app registration client ID | — |
 | `ONENOTE_TENANT_ID` | Microsoft tenant ID | `common` |
 | `NOTION_TOKEN` | Notion integration token | — |
@@ -261,11 +263,34 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
   },
   "logging": {
     "level": "info"
+  },
+  "indexing": {
+    "allowPrivateUrls": false,
+    "allowSelfSignedCerts": false
   }
 }
 ```
 
 </details>
+
+### Corporate / Internal Networks
+
+If you're indexing docs from internal servers (Confluence, wikis, etc.), you may need:
+
+```bash
+# Allow fetching from private/internal IP addresses
+libscope config set indexing.allowPrivateUrls true
+
+# Accept self-signed or corporate TLS certificates
+libscope config set indexing.allowSelfSignedCerts true
+```
+
+Or via environment variables:
+
+```bash
+export LIBSCOPE_ALLOW_PRIVATE_URLS=true
+export LIBSCOPE_ALLOW_SELF_SIGNED_CERTS=true
+```
 
 ## Other Tools
 

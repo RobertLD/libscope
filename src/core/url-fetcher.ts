@@ -21,6 +21,8 @@ export interface FetchOptions {
   maxBodySize?: number;
   /** Allow fetching from private/internal IP addresses (default: false). */
   allowPrivateUrls?: boolean;
+  /** Accept self-signed or untrusted TLS certificates (default: false). */
+  allowSelfSignedCerts?: boolean;
 }
 
 export const DEFAULT_FETCH_OPTIONS: Required<FetchOptions> = {
@@ -28,6 +30,7 @@ export const DEFAULT_FETCH_OPTIONS: Required<FetchOptions> = {
   maxRedirects: 5,
   maxBodySize: 10 * 1024 * 1024, // 10 MB
   allowPrivateUrls: false,
+  allowSelfSignedCerts: false,
 } as const;
 
 /** Check whether an IP address belongs to a private/reserved range. */
@@ -151,6 +154,32 @@ async function fetchWithRedirects(
   timeout: number,
   maxRedirects: number,
   allowPrivateUrls: boolean,
+  allowSelfSignedCerts: boolean,
+): Promise<Response> {
+  // Temporarily disable TLS verification when self-signed certs are allowed.
+  // Node's native fetch (undici) reads this env var at connection time.
+  const prevTls = process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
+  if (allowSelfSignedCerts) {
+    process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+  }
+  try {
+    return await _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls);
+  } finally {
+    if (allowSelfSignedCerts) {
+      if (prevTls === undefined) {
+        delete process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
+      } else {
+        process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = prevTls;
+      }
+    }
+  }
+}
+
+async function _fetchWithRedirects(
+  url: string,
+  timeout: number,
+  maxRedirects: number,
+  allowPrivateUrls: boolean,
 ): Promise<Response> {
   let current = url;
   for (let i = 0; i <= maxRedirects; i++) {
@@ -212,7 +241,7 @@ export async function fetchAndConvert(
   const log = getLogger();
   log.info({ url }, "Fetching URL");
 
-  const { timeout, maxRedirects, maxBodySize, allowPrivateUrls } = {
+  const { timeout, maxRedirects, maxBodySize, allowPrivateUrls, allowSelfSignedCerts } = {
     ...DEFAULT_FETCH_OPTIONS,
     ...options,
   };
@@ -220,7 +249,13 @@ export async function fetchAndConvert(
   try {
     await validateUrl(url, allowPrivateUrls);
 
-    const response = await fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls);
+    const response = await fetchWithRedirects(
+      url,
+      timeout,
+      maxRedirects,
+      allowPrivateUrls,
+      allowSelfSignedCerts,
+    );
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);

@@ -138,6 +138,7 @@ program
           console.log(`Fetching ${fileOrUrl}...`);
           const fetched = await fetchAndConvert(fileOrUrl, {
             allowPrivateUrls: config.indexing.allowPrivateUrls,
+            allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
           });
           content = fetched.content;
           title = opts.title ?? fetched.title;
@@ -731,6 +732,10 @@ configCmd
       const bool = value === "true";
       saveUserConfig({ indexing: { ...loadConfig().indexing, allowPrivateUrls: bool } });
       console.log(`✓ indexing.allowPrivateUrls set to: ${bool}`);
+    } else if (key === "indexing.allowSelfSignedCerts") {
+      const bool = value === "true";
+      saveUserConfig({ indexing: { ...loadConfig().indexing, allowSelfSignedCerts: bool } });
+      console.log(`✓ indexing.allowSelfSignedCerts set to: ${bool}`);
     } else {
       console.error(`Unknown config key: ${key}`);
       process.exit(1);

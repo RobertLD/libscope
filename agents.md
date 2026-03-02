@@ -7,7 +7,7 @@
 LibScope is an **AI-powered knowledge base with MCP (Model Context Protocol) integration**. It indexes documentation (library docs, internal wikis, topics) into a local SQLite + vector store and serves them to AI assistants via semantic search.
 
 - **Language:** TypeScript (strict mode, ESM-only)
-- **Runtime:** Node.js ≥ 18
+- **Runtime:** Node.js ≥ 20
 - **Package manager:** npm
 - **Module system:** ES Modules (`"type": "module"` in package.json)
 
@@ -143,7 +143,7 @@ The factory in `src/providers/index.ts` selects the provider based on config. De
 
 Environment variables > project `.libscope.json` > user `~/.libscope/config.json` > hardcoded defaults.
 
-Env vars: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_OPENAI_API_KEY`, `LIBSCOPE_OLLAMA_URL`.
+Env vars: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_OPENAI_API_KEY`, `LIBSCOPE_OLLAMA_URL`, `LIBSCOPE_ALLOW_PRIVATE_URLS`, `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS`.
 
 ## Testing
 
@@ -253,4 +253,25 @@ git worktree remove ../libscope-<branch-name>
 4. Write unit tests in `tests/unit/` using `MockEmbeddingProvider` and `createTestDb()`.
 5. Add integration coverage in `tests/integration/workflow.test.ts` if it's a core flow.
 6. Run `npm run typecheck && npm test && npm run lint` — all must pass.
-7. Update `README.md` if the feature is user-facing.
+7. **Update documentation** — see the Documentation section below.
+
+## Documentation
+
+Every user-facing change **must** update all relevant documentation. Documentation lives in multiple places — check each one:
+
+| Location | What it covers |
+|----------|---------------|
+| `README.md` | Top-level overview, quickstart, config tables, CLI summary |
+| `docs/guide/getting-started.md` | First-run walkthrough |
+| `docs/guide/configuration.md` | Config guide with env var table and examples |
+| `docs/reference/cli.md` | Full CLI command reference |
+| `docs/reference/configuration.md` | Complete config key reference, env vars, example config |
+| `agents.md` | Agent/Copilot guide — architecture, conventions, config precedence |
+
+**What to update for common change types:**
+
+- **New config key:** `src/config.ts` (interface + defaults + env override) → `README.md` (env var table, example config) → `docs/guide/configuration.md` (env var table) → `docs/reference/configuration.md` (config keys table, env vars table, example config) → `agents.md` (config precedence env var list)
+- **New CLI command:** `src/cli/index.ts` → `README.md` (CLI table) → `docs/reference/cli.md` (command reference)
+- **New MCP tool:** `src/mcp/server.ts` → `README.md` (MCP tools list) → `agents.md` (MCP Server section)
+- **New connector:** `src/connectors/` → `README.md` (connectors section) → `docs/guide/` (new guide page) → `docs/reference/cli.md` (sync/disconnect commands)
+- **New env var:** All env var tables: `README.md`, `docs/guide/configuration.md`, `docs/reference/configuration.md`

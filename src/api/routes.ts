@@ -200,6 +200,7 @@ export async function handleRequest(
       }
       const fetched = await fetchAndConvert(b["url"], {
         allowPrivateUrls: loadConfig().indexing.allowPrivateUrls,
+        allowSelfSignedCerts: loadConfig().indexing.allowSelfSignedCerts,
       });
       const topicId = typeof b["topic"] === "string" ? b["topic"] : undefined;
       const doc = await indexDocument(db, provider, {
