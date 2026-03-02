@@ -149,6 +149,7 @@ export function loadConfig(): LibScopeConfig {
       ...DEFAULT_CONFIG.indexing,
       ...userConfig.indexing,
       ...projectConfig.indexing,
+      ...envOverrides.indexing,
     },
     logging: {
       ...DEFAULT_CONFIG.logging,
