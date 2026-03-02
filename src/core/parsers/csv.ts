@@ -15,13 +15,18 @@ export class CsvParser implements DocumentParser {
       }
 
       const header = records[0]!;
+      const colCount = header.length;
       const rows = records.slice(1);
 
+      const escapeCell = (cell: string): string => cell.replace(/\|/g, "\\|").replace(/\n/g, " ");
+
       const lines: string[] = [];
-      lines.push("| " + header.join(" | ") + " |");
+      lines.push("| " + header.map(escapeCell).join(" | ") + " |");
       lines.push("| " + header.map(() => "---").join(" | ") + " |");
       for (const row of rows) {
-        lines.push("| " + row.join(" | ") + " |");
+        // Normalize row length to match header
+        const normalized = Array.from({ length: colCount }, (_, i) => row[i] ?? "");
+        lines.push("| " + normalized.map(escapeCell).join(" | ") + " |");
       }
 
       return Promise.resolve(lines.join("\n"));

@@ -8,7 +8,7 @@ import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
-import { getParserForFile } from "./parsers/index.js";
+import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 
 export interface IndexDocumentInput {
   title: string;
@@ -365,12 +365,18 @@ export async function indexFile(
   options: IndexFileOptions = {},
 ): Promise<IndexedDocument> {
   const log = getLogger();
-  const effectiveName = options.format ? `file${options.format}` : filePath;
+  const rawFormat = options.format?.trim();
+  const normalizedFormat =
+    rawFormat && rawFormat.length > 0
+      ? (rawFormat.startsWith(".") ? rawFormat : `.${rawFormat}`).toLowerCase()
+      : undefined;
+  const effectiveName = normalizedFormat ? `file${normalizedFormat}` : filePath;
   const parser = getParserForFile(effectiveName);
 
   if (!parser) {
+    const supported = getSupportedExtensions().join(", ");
     throw new ValidationError(
-      `Unsupported file format: "${filePath}". Supported extensions: .md, .markdown, .mdx, .json, .yaml, .yml, .csv, .pdf, .docx`,
+      `Unsupported file format: "${filePath}". Supported extensions: ${supported}`,
     );
   }
 
