@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2](https://github.com/RobertLD/libscope/compare/v1.2.1...v1.2.2) (2026-03-02)
+
+
+### Bug Fixes
+
+* resolve CodeQL alerts and add allowPrivateUrls config option ([#226](https://github.com/RobertLD/libscope/issues/226)) ([7875e37](https://github.com/RobertLD/libscope/commit/7875e371c2625abd4eabea9c6a40d8744c8a5469))
+
 ## [1.2.1](https://github.com/RobertLD/libscope/compare/v1.2.0...v1.2.1) (2026-03-02)
 
 
