@@ -9,7 +9,7 @@ import { searchDocuments } from "../core/search.js";
 import { askQuestion, createLlmProvider } from "../core/rag.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
-import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
+import { getDocument, listDocuments, deleteDocument, updateDocument } from "../core/documents.js";
 import { createLink, getDocumentLinks, deleteLink, getPrerequisiteChain } from "../core/links.js";
 import type { LinkType } from "../core/links.js";
 import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
@@ -705,6 +705,55 @@ docsCmd
       closeDatabase();
     }
   });
+
+docsCmd
+  .command("update <documentId>")
+  .description("Update an existing document")
+  .option("--title <title>", "New title")
+  .option("--content <content>", "New content (will re-chunk and re-index)")
+  .option("--library <name>", "New library name")
+  .option("--version <ver>", "New version")
+  .option("--url <url>", "New URL")
+  .option("--topic <topicId>", "New topic ID")
+  .action(
+    async (
+      documentId: string,
+      opts: {
+        title?: string;
+        content?: string;
+        library?: string;
+        version?: string;
+        url?: string;
+        topic?: string;
+      },
+    ) => {
+      const { db, provider } = initializeAppWithEmbedding();
+      try {
+        const metadata: Record<string, string | null | undefined> = {};
+        if (opts.library !== undefined) metadata.library = opts.library;
+        if (opts.version !== undefined) metadata.version = opts.version;
+        if (opts.url !== undefined) metadata.url = opts.url;
+        if (opts.topic !== undefined) metadata.topicId = opts.topic;
+
+        const doc = await updateDocument(db, provider, documentId, {
+          title: opts.title,
+          content: opts.content,
+          metadata:
+            Object.keys(metadata).length > 0
+              ? (metadata as {
+                  library?: string | null;
+                  version?: string | null;
+                  url?: string | null;
+                  topicId?: string | null;
+                })
+              : undefined,
+        });
+        console.log(`✓ Updated "${doc.title}" (${doc.id})`);
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
 
 // tag
 const tagCmd = program.command("tag").description("Manage document tags");

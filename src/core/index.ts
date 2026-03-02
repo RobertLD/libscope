@@ -39,8 +39,8 @@ export type {
 export { rateDocument, getDocumentRatings, listRatings } from "./ratings.js";
 export type { RateDocumentInput, Rating, RatingSummary } from "./ratings.js";
 
-export { getDocument, deleteDocument, listDocuments } from "./documents.js";
-export type { Document } from "./documents.js";
+export { getDocument, deleteDocument, listDocuments, updateDocument } from "./documents.js";
+export type { Document, UpdateDocumentInput } from "./documents.js";
 
 export {
   saveVersion,
