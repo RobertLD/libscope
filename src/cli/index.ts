@@ -84,6 +84,16 @@ process.on("SIGTERM", () => {
 const _require = createRequire(import.meta.url);
 const _pkg = _require("../../package.json") as { version: string };
 
+/** Parse a CLI option string as an integer, exiting with an error if the value is not a valid number. */
+function parseIntOption(value: string, name: string): number {
+  const n = parseInt(value, 10);
+  if (Number.isNaN(n)) {
+    console.error(`Error: "${value}" is not a valid number for ${name}`);
+    process.exit(1);
+  }
+  return n;
+}
+
 const program = new Command();
 
 program
@@ -284,7 +294,7 @@ program
         const startTime = Date.now();
 
         const result = await batchImport(db, provider, files, {
-          concurrency: parseInt(opts.concurrency, 10),
+          concurrency: parseIntOption(opts.concurrency, "--concurrency"),
           library: opts.library,
           version: opts.version,
           topicId: opts.topic,
@@ -331,8 +341,8 @@ program
           query,
           topic: opts.topic,
           library: opts.library,
-          limit: parseInt(opts.limit, 10),
-          offset: parseInt(opts.offset, 10),
+          limit: parseIntOption(opts.limit, "--limit"),
+          offset: parseIntOption(opts.offset, "--offset"),
         });
 
         if (results.length === 0) {
@@ -385,7 +395,7 @@ program
 
         const result = await askQuestion(db, provider, llmProvider, {
           question,
-          topK: parseInt(opts.topK, 10),
+          topK: parseIntOption(opts.topK, "--top-k"),
           topic: opts.topic,
           library: opts.library,
         });
@@ -498,7 +508,7 @@ docsCmd
         library: opts.library,
         topicId: opts.topic,
         sourceType: opts.sourceType,
-        limit: parseInt(opts.limit, 10),
+        limit: parseIntOption(opts.limit, "--limit"),
       });
 
       if (docs.length === 0) {
@@ -657,7 +667,12 @@ docsCmd
   .action(async (documentId: string, version: string) => {
     const { db, provider } = initializeAppWithEmbedding();
     try {
-      const restored = await rollbackToVersion(db, provider, documentId, parseInt(version, 10));
+      const restored = await rollbackToVersion(
+        db,
+        provider,
+        documentId,
+        parseIntOption(version, "<version>"),
+      );
       console.log(`✓ Rolled back to version ${version}, saved as v${restored.version}`);
     } finally {
       closeDatabase();
@@ -704,7 +719,7 @@ program
       const { db, provider } = initializeAppWithEmbedding();
       const { startApiServer } = await import("../api/server.js");
       const { port } = await startApiServer(db, provider, {
-        port: parseInt(opts.port, 10),
+        port: parseIntOption(opts.port, "--port"),
         host: opts.host,
       });
       console.log(`LibScope API server listening on http://${opts.host}:${port}`);
@@ -830,7 +845,7 @@ program
   .action(async (directory: string, opts: { extensions: string; debounce: string }) => {
     const { db, provider } = initializeAppWithEmbedding();
     const extensions = opts.extensions.split(",").map((e) => e.trim().toLowerCase());
-    const debounceMs = parseInt(opts.debounce, 10);
+    const debounceMs = parseIntOption(opts.debounce, "--debounce");
 
     // Initial scan
     const extensionSet = new Set(extensions);
@@ -910,7 +925,7 @@ program
         documentIds: opts.doc,
         since: opts.since,
         before: opts.before,
-        batchSize: parseInt(opts.batchSize, 10),
+        batchSize: parseIntOption(opts.batchSize, "--batch-size"),
         onProgress: (progress) => {
           const done = progress.completed + progress.failed;
           console.log(`  [${done}/${progress.total}] chunks processed`);
@@ -941,7 +956,7 @@ program
   .action(async (opts: { limit: string }) => {
     const { db, provider } = initializeAppWithEmbedding();
     try {
-      await startRepl({ db, provider, limit: parseInt(opts.limit, 10) });
+      await startRepl({ db, provider, limit: parseIntOption(opts.limit, "--limit") });
     } finally {
       closeDatabase();
     }
@@ -1039,7 +1054,7 @@ statsCmd
   .action((opts: { limit: string }) => {
     const { db } = initializeApp();
     try {
-      const docs = getPopularDocuments(db, parseInt(opts.limit, 10));
+      const docs = getPopularDocuments(db, parseIntOption(opts.limit, "--limit"));
       if (docs.length === 0) {
         console.log("No search data yet.");
         return;
@@ -1065,7 +1080,7 @@ statsCmd
   .action((opts: { days: string }) => {
     const { db } = initializeApp();
     try {
-      const docs = getStaleDocuments(db, parseInt(opts.days, 10));
+      const docs = getStaleDocuments(db, parseIntOption(opts.days, "--days"));
       if (docs.length === 0) {
         console.log("No stale documents found.");
         return;
@@ -1090,7 +1105,7 @@ statsCmd
   .action((opts: { limit: string }) => {
     const { db } = initializeApp();
     try {
-      const queries = getTopQueries(db, parseInt(opts.limit, 10));
+      const queries = getTopQueries(db, parseIntOption(opts.limit, "--limit"));
       if (queries.length === 0) {
         console.log("No search data yet.");
         return;
@@ -1116,7 +1131,7 @@ statsCmd
   .action((opts: { days: string }) => {
     const { db } = initializeApp();
     try {
-      const days = parseInt(opts.days, 10);
+      const days = parseIntOption(opts.days, "--days");
       const analytics = getSearchAnalytics(db, days);
       const gaps = getKnowledgeGaps(db, days);
 

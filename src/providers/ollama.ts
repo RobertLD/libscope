@@ -36,13 +36,13 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
           throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
         }
 
-        const data = (await response.json()) as { embeddings: number[][] };
+        const data = (await response.json()) as Record<string, unknown>;
         if (!data.embeddings || !Array.isArray(data.embeddings)) {
           throw new EmbeddingError(
             `Unexpected Ollama response shape: ${JSON.stringify(Object.keys(data))}`,
           );
         }
-        const embedding = data.embeddings[0];
+        const embedding = data.embeddings[0] as number[] | undefined;
         if (!embedding) {
           throw new Error("Ollama returned empty embeddings");
         }
@@ -85,25 +85,26 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
           throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
         }
 
-        const data = (await response.json()) as { embeddings: number[][] };
+        const data = (await response.json()) as Record<string, unknown>;
         if (!data.embeddings || !Array.isArray(data.embeddings)) {
           throw new EmbeddingError(
             `Unexpected Ollama response shape: ${JSON.stringify(Object.keys(data))}`,
           );
         }
-        if (data.embeddings.length !== texts.length) {
+        const embeddings = data.embeddings as number[][];
+        if (embeddings.length !== texts.length) {
           throw new EmbeddingError(
-            `Ollama returned ${data.embeddings.length} embeddings for ${texts.length} inputs`,
+            `Ollama returned ${embeddings.length} embeddings for ${texts.length} inputs`,
           );
         }
-        for (const emb of data.embeddings) {
+        for (const emb of embeddings) {
           if (emb.length !== this.dimensions) {
             throw new EmbeddingError(
               `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
             );
           }
         }
-        return data.embeddings;
+        return embeddings;
       });
     } catch (err) {
       if (err instanceof EmbeddingError) throw err;
