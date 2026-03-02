@@ -34,8 +34,8 @@ export function startWebServer(
         res.end(JSON.stringify({ error: "Too many requests" }));
         return;
       }
-      handleRequest(db, provider, req, res).catch((err) => {
-        sendJson(res, 500, { error: String(err) });
+      handleRequest(db, provider, req, res).catch((_err) => {
+        sendJson(res, 500, { error: "Internal server error" });
       });
     });
 

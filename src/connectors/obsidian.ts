@@ -207,7 +207,7 @@ function parseSimpleYaml(yaml: string): Record<string, unknown> {
       currentKey = undefined;
     }
 
-    const kvMatch = /^(\w[\w-]*)\s*:\s*(.*)$/.exec(line);
+    const kvMatch = /^(\w[\w-]*):[ ]*(.*)$/.exec(line);
     if (!kvMatch) continue;
 
     const key = kvMatch[1] ?? "";

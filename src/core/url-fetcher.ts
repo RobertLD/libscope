@@ -139,7 +139,10 @@ async function fetchWithRedirects(
     // Validate and resolve DNS before fetching (SSRF protection)
     await validateUrl(current);
 
+    // SSRF protection: validateUrl() above resolves DNS and blocks private/internal IPs.
+    // Redirect following is manual with per-hop validation. DNS rebinding is checked post-fetch.
     const response = await fetch(current, {
+      // codeql[js/request-forgery] — URL validated via validateUrl() above
       headers: {
         "User-Agent": "LibScope/0.1.0 (documentation indexer)",
         Accept: "text/html, text/markdown, text/plain, */*",
