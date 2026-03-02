@@ -121,7 +121,7 @@ async function main(): Promise<void> {
       source: z
         .string()
         .optional()
-        .describe("Filter by source type (e.g., 'confluence', 'url', 'topic', 'file')"),
+        .describe("Filter by source type (e.g., 'library', 'topic', 'manual', 'model-generated')"),
       minRating: z.number().min(1).max(5).optional().describe("Minimum average rating filter"),
       offset: z.number().min(0).optional().describe("Offset for pagination (default: 0)"),
       limit: z

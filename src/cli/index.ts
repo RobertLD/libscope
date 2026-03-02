@@ -330,7 +330,10 @@ program
   .description("Search indexed documents")
   .option("--topic <topicId>", "Filter by topic")
   .option("--library <name>", "Filter by library")
-  .option("--source <type>", "Filter by source type (e.g., 'confluence', 'url', 'topic', 'file')")
+  .option(
+    "--source <type>",
+    "Filter by source type (e.g., 'library', 'topic', 'manual', 'model-generated')",
+  )
   .option("--limit <n>", "Max results", "5")
   .option("--offset <n>", "Offset for pagination", "0")
   .option("--context <n>", "Include N neighboring chunks before/after each result (0-2)", "0")

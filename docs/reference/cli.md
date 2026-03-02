@@ -68,7 +68,7 @@ libscope search "deploy process" --context 1    # include neighboring chunks
 |--------|-------------|
 | `--library <name>` | Filter by library |
 | `--topic <name>` | Filter by topic |
-| `--source <type>` | Filter by source type (e.g., `confluence`, `url`, `topic`, `file`) |
+| `--source <type>` | Filter by source type (e.g., `library`, `topic`, `manual`, `model-generated`) |
 | `--limit <n>` | Max results (default: 10) |
 | `--min-rating <n>` | Minimum average rating |
 | `--context <n>` | Include N neighboring chunks before/after each result (0-2, default: 0) |
