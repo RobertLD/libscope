@@ -19,6 +19,7 @@ import {
   runSavedSearch,
   deleteSavedSearch,
 } from "../core/saved-searches.js";
+import { suggestTags } from "../core/tags.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger, getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
@@ -1014,6 +1015,27 @@ async function main(): Promise<void> {
           {
             type: "text" as const,
             text: JSON.stringify(saved, null, 2),
+          },
+        ],
+      };
+    }),
+  );
+
+  // Tool: suggest-tags
+  server.tool(
+    "suggest-tags",
+    "Suggest tags for a document based on content analysis",
+    {
+      documentId: z.string().describe("Document ID"),
+      maxSuggestions: z.number().min(1).max(20).optional().describe("Max suggestions (default: 5)"),
+    },
+    withErrorHandling((params) => {
+      const suggestions = suggestTags(db, params.documentId, params.maxSuggestions);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ documentId: params.documentId, suggestions }, null, 2),
           },
         ],
       };

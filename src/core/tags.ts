@@ -1,8 +1,111 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { ValidationError } from "../errors.js";
+import { DocumentNotFoundError, ValidationError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import type { Document } from "./documents.js";
+
+const STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "shall",
+  "should",
+  "may",
+  "might",
+  "must",
+  "can",
+  "could",
+  "that",
+  "this",
+  "with",
+  "from",
+  "for",
+  "not",
+  "but",
+  "and",
+  "or",
+  "nor",
+  "so",
+  "yet",
+  "both",
+  "either",
+  "neither",
+  "each",
+  "every",
+  "all",
+  "any",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "than",
+  "too",
+  "very",
+  "just",
+  "about",
+  "above",
+  "after",
+  "again",
+  "against",
+  "below",
+  "between",
+  "during",
+  "into",
+  "through",
+  "under",
+  "until",
+  "also",
+  "how",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "who",
+  "whom",
+  "why",
+  "its",
+  "our",
+  "their",
+  "your",
+  "his",
+  "her",
+  "our",
+  "out",
+  "then",
+  "there",
+  "these",
+  "those",
+  "them",
+  "they",
+  "you",
+  "your",
+  "only",
+  "own",
+  "same",
+  "here",
+  "over",
+  "once",
+  "use",
+  "used",
+]);
 
 export interface Tag {
   id: string;
@@ -207,4 +310,77 @@ export function getDocumentsByTag(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
+}
+
+/** Tokenize text into lowercase words, filtering stopwords and short words. */
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+}
+
+/** Suggest tags for a document based on content analysis (TF-IDF-like keyword extraction). */
+export function suggestTags(
+  db: Database.Database,
+  documentId: string,
+  maxSuggestions?: number,
+): string[] {
+  const log = createChildLogger({ operation: "suggestTags" });
+  const limit = maxSuggestions ?? 5;
+
+  const row = db.prepare("SELECT title, content FROM documents WHERE id = ?").get(documentId) as
+    | { title: string; content: string }
+    | undefined;
+
+  if (!row) {
+    throw new DocumentNotFoundError(documentId);
+  }
+
+  const fullText = `${row.title} ${row.content}`;
+  const tokens = tokenize(fullText);
+  if (tokens.length === 0) {
+    return [];
+  }
+
+  // Calculate term frequency
+  const tf = new Map<string, number>();
+  for (const token of tokens) {
+    tf.set(token, (tf.get(token) ?? 0) + 1);
+  }
+
+  // Get existing tags already on this document (to exclude them)
+  const existingTags = new Set(
+    (
+      db
+        .prepare(
+          `SELECT t.name FROM tags t
+           JOIN document_tags dt ON dt.tag_id = t.id
+           WHERE dt.document_id = ?`,
+        )
+        .all(documentId) as Array<{ name: string }>
+    ).map((r) => r.name),
+  );
+
+  // Get all known tags in the system for boosting
+  const knownTags = new Set(
+    (db.prepare("SELECT name FROM tags").all() as Array<{ name: string }>).map((r) => r.name),
+  );
+
+  // Score each term: TF normalized + boost for known tags
+  const maxTf = Math.max(...tf.values());
+  const scored: Array<{ term: string; score: number }> = [];
+
+  for (const [term, count] of tf) {
+    if (existingTags.has(term)) continue;
+    const normalizedTf = count / maxTf;
+    const knownBoost = knownTags.has(term) ? 2.0 : 1.0;
+    scored.push({ term, score: normalizedTf * knownBoost });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const suggestions = scored.slice(0, limit).map((s) => s.term);
+  log.info({ documentId, suggestionCount: suggestions.length }, "Tags suggested");
+  return suggestions;
 }

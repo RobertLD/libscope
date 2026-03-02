@@ -8,8 +8,9 @@ import {
   removeTagFromDocument,
   getDocumentTags,
   getDocumentsByTag,
+  suggestTags,
 } from "../../src/core/tags.js";
-import { ValidationError } from "../../src/errors.js";
+import { ValidationError, DocumentNotFoundError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 
 function insertDocument(db: Database.Database, id: string, title: string): void {
@@ -17,6 +18,18 @@ function insertDocument(db: Database.Database, id: string, title: string): void 
     `INSERT INTO documents (id, source_type, title, content, submitted_by)
      VALUES (?, 'manual', ?, 'content', 'manual')`,
   ).run(id, title);
+}
+
+function insertDocumentWithContent(
+  db: Database.Database,
+  id: string,
+  title: string,
+  content: string,
+): void {
+  db.prepare(
+    `INSERT INTO documents (id, source_type, title, content, submitted_by)
+     VALUES (?, 'manual', ?, ?, 'manual')`,
+  ).run(id, title, content);
 }
 
 describe("tags", () => {
@@ -162,6 +175,73 @@ describe("tags", () => {
       const tags = listTags(db);
       const orphan = tags.find((t) => t.name === "orphan-tag");
       expect(orphan?.documentCount).toBe(0);
+    });
+  });
+
+  describe("suggestTags", () => {
+    it("should suggest tags based on document content", () => {
+      insertDocumentWithContent(
+        db,
+        "doc-s1",
+        "TypeScript Guide",
+        "TypeScript is a programming language. TypeScript adds types to JavaScript. TypeScript compiler checks types.",
+      );
+
+      const suggestions = suggestTags(db, "doc-s1");
+      expect(suggestions.length).toBeGreaterThan(0);
+      expect(suggestions).toContain("typescript");
+    });
+
+    it("should exclude tags already on the document", () => {
+      insertDocumentWithContent(
+        db,
+        "doc-s2",
+        "React Tutorial",
+        "React components render JSX. React hooks enable state management. React is popular.",
+      );
+      addTagsToDocument(db, "doc-s2", ["react"]);
+
+      const suggestions = suggestTags(db, "doc-s2");
+      expect(suggestions).not.toContain("react");
+    });
+
+    it("should boost known system tags", () => {
+      // Create a known tag in the system
+      insertDocument(db, "doc-other", "Other Doc");
+      addTagsToDocument(db, "doc-other", ["javascript"]);
+
+      insertDocumentWithContent(
+        db,
+        "doc-s3",
+        "Web Development",
+        "JavaScript and frameworks. JavaScript runs in the browser. Performance optimization techniques.",
+      );
+
+      const suggestions = suggestTags(db, "doc-s3");
+      expect(suggestions[0]).toBe("javascript");
+    });
+
+    it("should return empty array for content with only stopwords", () => {
+      insertDocumentWithContent(db, "doc-s4", "a", "the is are was were be an");
+
+      const suggestions = suggestTags(db, "doc-s4");
+      expect(suggestions).toHaveLength(0);
+    });
+
+    it("should respect maxSuggestions limit", () => {
+      insertDocumentWithContent(
+        db,
+        "doc-s5",
+        "Many Topics",
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa",
+      );
+
+      const suggestions = suggestTags(db, "doc-s5", 3);
+      expect(suggestions).toHaveLength(3);
+    });
+
+    it("should throw DocumentNotFoundError for missing document", () => {
+      expect(() => suggestTags(db, "nonexistent")).toThrow(DocumentNotFoundError);
     });
   });
 });
