@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { readFileSync, writeFileSync } from "node:fs";
 import { getLogger } from "../logger.js";
-import { DatabaseError } from "../errors.js";
+import { DatabaseError, ValidationError } from "../errors.js";
 
 const EXPORT_VERSION = "1.0";
 
@@ -77,6 +77,22 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
         throw new DatabaseError(`Invalid backup file: missing ${key}`);
       }
     }
+    if (!Array.isArray(record["documents"])) {
+      throw new ValidationError("Invalid backup file: documents must be an array");
+    }
+    for (const doc of record["documents"] as unknown[]) {
+      if (
+        doc == null ||
+        typeof doc !== "object" ||
+        typeof (doc as Record<string, unknown>)["id"] !== "string" ||
+        typeof (doc as Record<string, unknown>)["title"] !== "string"
+      ) {
+        throw new ValidationError(
+          "Invalid backup file: each document must have an id (string) and title (string)",
+        );
+      }
+    }
+
     const parsed = data as ExportData;
 
     if (!parsed.metadata?.version) {

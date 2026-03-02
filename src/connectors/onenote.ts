@@ -259,7 +259,20 @@ export async function authenticateDeviceCode(
     throw new LibScopeError(`Device code request failed: ${text}`, "ONENOTE_AUTH_ERROR");
   }
 
-  const dcData = (await dcRes.json()) as {
+  const dcJson: unknown = await dcRes.json();
+  if (
+    dcJson == null ||
+    typeof dcJson !== "object" ||
+    typeof (dcJson as Record<string, unknown>)["device_code"] !== "string" ||
+    typeof (dcJson as Record<string, unknown>)["user_code"] !== "string" ||
+    typeof (dcJson as Record<string, unknown>)["verification_uri"] !== "string"
+  ) {
+    throw new LibScopeError(
+      "Invalid device code response: missing device_code, user_code, or verification_uri",
+      "ONENOTE_AUTH_ERROR",
+    );
+  }
+  const dcData = dcJson as {
     device_code: string;
     user_code: string;
     verification_uri: string;

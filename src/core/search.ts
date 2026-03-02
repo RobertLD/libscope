@@ -95,8 +95,8 @@ export async function searchDocuments(
   options: SearchOptions,
 ): Promise<SearchResponse> {
   const log = withCorrelationId({ operation: "searchDocuments" });
-  const limit = options.limit ?? 10;
-  const offset = options.offset ?? 0;
+  const limit = Math.max(1, Math.min(options.limit ?? 10, 1000));
+  const offset = Math.max(0, options.offset ?? 0);
 
   const analyticsEnabled = options.analyticsEnabled ?? true;
   const startTime = performance.now();
