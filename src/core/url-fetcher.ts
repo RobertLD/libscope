@@ -16,12 +16,15 @@ export interface FetchOptions {
   maxRedirects?: number;
   /** Maximum response body size in bytes (default: 10 MB). */
   maxBodySize?: number;
+  /** Allow fetching from private/internal IP addresses (default: false). */
+  allowPrivateUrls?: boolean;
 }
 
 export const DEFAULT_FETCH_OPTIONS: Required<FetchOptions> = {
   timeout: 30_000,
   maxRedirects: 5,
   maxBodySize: 10 * 1024 * 1024, // 10 MB
+  allowPrivateUrls: false,
 } as const;
 
 /** Check whether an IP address belongs to a private/reserved range. */
@@ -59,7 +62,7 @@ export function isPrivateIP(ip: string): boolean {
  * private/internal IP address (SSRF protection).
  * Returns the resolved addresses for DNS pinning.
  */
-async function validateUrl(url: string): Promise<string[]> {
+async function validateUrl(url: string, allowPrivateUrls = false): Promise<string[]> {
   const parsed = new URL(url);
 
   // Only allow http and https schemes
@@ -82,9 +85,9 @@ async function validateUrl(url: string): Promise<string[]> {
   }
 
   for (const addr of addresses) {
-    if (isPrivateIP(addr)) {
+    if (!allowPrivateUrls && isPrivateIP(addr)) {
       throw new FetchError(
-        `Blocked request to private/internal IP ${addr} (resolved from ${hostname})`,
+        `Blocked request to private/internal IP ${addr} (resolved from ${hostname}). Set LIBSCOPE_ALLOW_PRIVATE_URLS=true to allow.`,
       );
     }
   }
@@ -133,11 +136,12 @@ async function fetchWithRedirects(
   url: string,
   timeout: number,
   maxRedirects: number,
+  allowPrivateUrls: boolean,
 ): Promise<Response> {
   let current = url;
   for (let i = 0; i <= maxRedirects; i++) {
     // Validate and resolve DNS before fetching (SSRF protection)
-    await validateUrl(current);
+    await validateUrl(current, allowPrivateUrls);
 
     // SSRF protection: validateUrl() above resolves DNS and blocks private/internal IPs.
     // Redirect following is manual with per-hop validation. DNS rebinding is checked post-fetch.
@@ -161,7 +165,7 @@ async function fetchWithRedirects(
       if (r.status === "fulfilled") currentAddresses.push(...r.value);
     }
     for (const addr of currentAddresses) {
-      if (isPrivateIP(addr)) {
+      if (!allowPrivateUrls && isPrivateIP(addr)) {
         throw new FetchError(
           `DNS rebinding detected: ${hostname} now resolves to private IP ${addr}`,
         );
@@ -194,15 +198,15 @@ export async function fetchAndConvert(
   const log = getLogger();
   log.info({ url }, "Fetching URL");
 
-  const { timeout, maxRedirects, maxBodySize } = {
+  const { timeout, maxRedirects, maxBodySize, allowPrivateUrls } = {
     ...DEFAULT_FETCH_OPTIONS,
     ...options,
   };
 
   try {
-    await validateUrl(url);
+    await validateUrl(url, allowPrivateUrls);
 
-    const response = await fetchWithRedirects(url, timeout, maxRedirects);
+    const response = await fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);

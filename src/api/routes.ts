@@ -198,7 +198,9 @@ export async function handleRequest(
         sendError(res, 400, "VALIDATION_ERROR", "Field 'url' is required");
         return;
       }
-      const fetched = await fetchAndConvert(b["url"]);
+      const fetched = await fetchAndConvert(b["url"], {
+        allowPrivateUrls: loadConfig().indexing.allowPrivateUrls,
+      });
       const topicId = typeof b["topic"] === "string" ? b["topic"] : undefined;
       const doc = await indexDocument(db, provider, {
         content: fetched.content,

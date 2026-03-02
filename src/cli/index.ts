@@ -123,7 +123,7 @@ program
       fileOrUrl: string,
       opts: { topic?: string; library?: string; version?: string; title?: string; dedup?: string },
     ) => {
-      const { db, provider } = initializeAppWithEmbedding();
+      const { config, db, provider } = initializeAppWithEmbedding();
       try {
         let content: string;
         let title: string;
@@ -131,7 +131,9 @@ program
 
         if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
           console.log(`Fetching ${fileOrUrl}...`);
-          const fetched = await fetchAndConvert(fileOrUrl);
+          const fetched = await fetchAndConvert(fileOrUrl, {
+            allowPrivateUrls: config.indexing.allowPrivateUrls,
+          });
           content = fetched.content;
           title = opts.title ?? fetched.title;
           url = fileOrUrl;

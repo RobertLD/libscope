@@ -92,8 +92,11 @@ export function convertConfluenceStorage(html: string): string {
 
   // Code blocks: <ac:structured-macro ac:name="code">
   processed = processed.replace(
-    /<ac:structured-macro\s([^>]*)>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, attrs: string, inner: string) => {
+    /<ac:structured-macro [^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
+    (_match, inner: string) => {
+      // Extract attrs from the opening tag
+      const tagEnd = _match.indexOf(">");
+      const attrs = _match.slice(0, tagEnd);
       if (!/ac:name="code"/i.test(attrs)) return _match;
       const langMatch = /<ac:parameter\s+ac:name="language">(.*?)<\/ac:parameter>/i.exec(inner);
       const lang = langMatch?.[1] ?? "";
@@ -107,8 +110,10 @@ export function convertConfluenceStorage(html: string): string {
 
   // Info/note/warning/tip panels
   processed = processed.replace(
-    /<ac:structured-macro\s([^>]*)>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, attrs: string, inner: string) => {
+    /<ac:structured-macro [^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
+    (_match, inner: string) => {
+      const tagEnd = _match.indexOf(">");
+      const attrs = _match.slice(0, tagEnd);
       const nameMatch = /ac:name="(info|note|warning|tip)"/i.exec(attrs);
       if (!nameMatch) return _match;
       const type = nameMatch[1] ?? "info";
