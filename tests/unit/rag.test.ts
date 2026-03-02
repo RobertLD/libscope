@@ -278,3 +278,94 @@ describe("createLlmProvider", () => {
     }
   });
 });
+
+describe("askQuestionStream", () => {
+  it("yields token events then a done event with sources (fallback path)", async () => {
+    const mockLlm = createMockLlmProvider("Streamed answer.");
+    const mockEmbedding = {
+      name: "mock",
+      dimensions: 4,
+      embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3, 0.4]),
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3, 0.4]]),
+    };
+
+    const searchModule = await import("../../src/core/search.js");
+    vi.spyOn(searchModule, "searchDocuments").mockResolvedValue({
+      results: [makeSearchResult({ title: "Stream Doc" })],
+      totalCount: 1,
+    });
+
+    const { askQuestionStream } = await import("../../src/core/rag.js");
+    const mockDb = {} as Parameters<typeof askQuestionStream>[0];
+
+    try {
+      const events = [];
+      for await (const event of askQuestionStream(mockDb, mockEmbedding, mockLlm, {
+        question: "Stream test?",
+      })) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(2);
+      expect(events[0]).toEqual({ token: "Streamed answer." });
+      expect(events[1]).toMatchObject({
+        done: true,
+        model: "mock-model",
+      });
+      // Check sources in done event
+      const done = events[1] as { done: true; sources: unknown[] };
+      expect(done.sources).toHaveLength(1);
+    } finally {
+      vi.mocked(searchModule.searchDocuments).mockRestore();
+    }
+  });
+
+  it("uses completeStream when provider supports it", async () => {
+    async function* fakeStream(): AsyncIterable<string> {
+      await Promise.resolve();
+      yield "Hello ";
+      yield "world!";
+    }
+
+    const mockLlm: LlmProvider = {
+      model: "streaming-model",
+      complete: vi.fn().mockResolvedValue({ text: "", tokensUsed: 0 }),
+      completeStream: vi.fn().mockReturnValue(fakeStream()),
+    };
+
+    const mockEmbedding = {
+      name: "mock",
+      dimensions: 4,
+      embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3, 0.4]),
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3, 0.4]]),
+    };
+
+    const searchModule = await import("../../src/core/search.js");
+    vi.spyOn(searchModule, "searchDocuments").mockResolvedValue({
+      results: [],
+      totalCount: 0,
+    });
+
+    const { askQuestionStream } = await import("../../src/core/rag.js");
+    const mockDb = {} as Parameters<typeof askQuestionStream>[0];
+
+    try {
+      const events = [];
+      for await (const event of askQuestionStream(mockDb, mockEmbedding, mockLlm, {
+        question: "Stream test?",
+      })) {
+        events.push(event);
+      }
+
+      expect(events).toHaveLength(3);
+      expect(events[0]).toEqual({ token: "Hello " });
+      expect(events[1]).toEqual({ token: "world!" });
+      expect(events[2]).toMatchObject({ done: true, model: "streaming-model" });
+      // complete should NOT have been called
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockLlm.complete).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(searchModule.searchDocuments).mockRestore();
+    }
+  });
+});
