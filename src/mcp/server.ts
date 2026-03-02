@@ -13,6 +13,12 @@ import { indexDocument } from "../core/indexing.js";
 import { listTopics } from "../core/topics.js";
 import { createLink, getDocumentLinks, deleteLink } from "../core/links.js";
 import type { LinkType } from "../core/links.js";
+import {
+  createSavedSearch,
+  listSavedSearches,
+  runSavedSearch,
+  deleteSavedSearch,
+} from "../core/saved-searches.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger, getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
@@ -969,6 +975,101 @@ async function main(): Promise<void> {
     withErrorHandling((params) => {
       deleteLink(db, params.linkId);
       return { content: [{ type: "text" as const, text: `✓ Link ${params.linkId} deleted.` }] };
+    }),
+  );
+
+  // Tool: save-search
+  server.tool(
+    "save-search",
+    "Save a search query with optional filters for later re-use",
+    {
+      name: z.string().describe("A unique name for this saved search"),
+      query: z.string().describe("The search query"),
+      topic: z.string().optional().describe("Filter by topic ID"),
+      library: z.string().optional().describe("Filter by library name"),
+      version: z.string().optional().describe("Filter by library version"),
+      source: z.string().optional().describe("Filter by source type"),
+      minRating: z.number().min(1).max(5).optional().describe("Minimum average rating filter"),
+      limit: z.number().min(1).max(50).optional().describe("Maximum results to return"),
+      tags: z.array(z.string()).optional().describe("Filter by tags"),
+    },
+    withErrorHandling((params) => {
+      const { name, query, ...rest } = params;
+      const filters: Record<string, unknown> = {};
+      if (rest.topic !== undefined) filters.topic = rest.topic;
+      if (rest.library !== undefined) filters.library = rest.library;
+      if (rest.version !== undefined) filters.version = rest.version;
+      if (rest.source !== undefined) filters.source = rest.source;
+      if (rest.minRating !== undefined) filters.minRating = rest.minRating;
+      if (rest.limit !== undefined) filters.limit = rest.limit;
+      if (rest.tags !== undefined) filters.tags = rest.tags;
+      const saved = createSavedSearch(
+        db,
+        name,
+        query,
+        Object.keys(filters).length > 0 ? filters : undefined,
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(saved, null, 2),
+          },
+        ],
+      };
+    }),
+  );
+
+  // Tool: list-saved-searches
+  server.tool(
+    "list-saved-searches",
+    "List all saved searches",
+    {},
+    withErrorHandling(() => {
+      const searches = listSavedSearches(db);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: searches.length === 0 ? "No saved searches." : JSON.stringify(searches, null, 2),
+          },
+        ],
+      };
+    }),
+  );
+
+  // Tool: run-saved-search
+  server.tool(
+    "run-saved-search",
+    "Execute a saved search by name or ID and return results",
+    {
+      nameOrId: z.string().describe("The name or ID of the saved search to run"),
+    },
+    withErrorHandling(async (params) => {
+      const { search, results } = await runSavedSearch(db, provider, params.nameOrId);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ search, resultCount: results.length, results }, null, 2),
+          },
+        ],
+      };
+    }),
+  );
+
+  // Tool: delete-saved-search
+  server.tool(
+    "delete-saved-search",
+    "Delete a saved search by name or ID",
+    {
+      nameOrId: z.string().describe("The name or ID of the saved search to delete"),
+    },
+    withErrorHandling((params) => {
+      deleteSavedSearch(db, params.nameOrId);
+      return {
+        content: [{ type: "text" as const, text: `✓ Saved search "${params.nameOrId}" deleted.` }],
+      };
     }),
   );
 

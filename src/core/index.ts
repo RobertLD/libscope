@@ -188,6 +188,15 @@ export {
 export type { ConnectorConfig } from "../connectors/index.js";
 
 export {
+  createSavedSearch,
+  listSavedSearches,
+  getSavedSearch,
+  deleteSavedSearch,
+  runSavedSearch,
+} from "./saved-searches.js";
+export type { SavedSearch } from "./saved-searches.js";
+
+export {
   syncConfluence,
   convertConfluenceStorage,
   disconnectConfluence,

@@ -25,6 +25,10 @@ The OpenAPI 3.0 spec is available at `GET /openapi.json`.
 | `POST` | `/api/v1/topics` | Create a topic |
 | `GET` | `/api/v1/tags` | List all tags |
 | `GET` | `/api/v1/stats` | Usage statistics |
+| `GET` | `/api/v1/searches` | List saved searches |
+| `POST` | `/api/v1/searches` | Create a saved search |
+| `POST` | `/api/v1/searches/:id/run` | Run a saved search |
+| `DELETE` | `/api/v1/searches/:id` | Delete a saved search |
 | `GET` | `/openapi.json` | OpenAPI 3.0 specification |
 
 ## Examples
