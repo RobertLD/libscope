@@ -38,10 +38,11 @@ interface ConfluenceSpace {
 interface ConfluencePage {
   id: string;
   title: string;
-  spaceId: string;
+  spaceId?: string | undefined;
   version: { number: number };
   body?: { storage?: { value: string } };
   labels?: { results: Array<{ name: string }> };
+  metadata?: { labels?: { results: Array<{ name: string }> } };
   _links?: { webui?: string };
 }
 
@@ -60,6 +61,34 @@ function buildAuthHeader(
   }
   const encoded = Buffer.from(`${email ?? ""}:${token}`).toString("base64");
   return `Basic ${encoded}`;
+}
+
+interface ApiUrls {
+  spaces: string;
+  spacePages: (spaceIdOrKey: string) => string;
+  pageContent: (pageId: string) => string;
+  defaultPageUrl: (spaceKey: string, pageId: string) => string;
+}
+
+function getApiUrls(base: string, type: "cloud" | "server"): ApiUrls {
+  if (type === "server") {
+    return {
+      spaces: `${base}/rest/api/space`,
+      spacePages: (spaceKey: string) =>
+        `${base}/rest/api/content?spaceKey=${encodeURIComponent(spaceKey)}&type=page&expand=version&limit=25`,
+      pageContent: (pageId: string) =>
+        `${base}/rest/api/content/${pageId}?expand=body.storage,version,metadata.labels`,
+      defaultPageUrl: (_spaceKey: string, pageId: string) =>
+        `${base}/pages/viewpage.action?pageId=${pageId}`,
+    };
+  }
+  return {
+    spaces: `${base}/wiki/api/v2/spaces`,
+    spacePages: (spaceId: string) => `${base}/wiki/api/v2/spaces/${spaceId}/pages`,
+    pageContent: (pageId: string) => `${base}/wiki/api/v2/pages/${pageId}?body-format=storage`,
+    defaultPageUrl: (spaceKey: string, pageId: string) =>
+      `${base}/wiki/spaces/${spaceKey}/pages/${pageId}`,
+  };
 }
 
 async function confluenceFetch<T>(url: string, auth: string): Promise<T> {
@@ -221,7 +250,8 @@ export function convertConfluenceStorage(html: string): string {
 }
 
 function extractLabels(page: ConfluencePage): string[] {
-  return page.labels?.results.map((l) => l.name) ?? [];
+  const results = page.labels?.results ?? page.metadata?.labels?.results ?? [];
+  return results.map((l) => l.name);
 }
 
 export async function syncConfluence(
@@ -248,6 +278,7 @@ export async function syncConfluence(
   const auth = buildAuthHeader(confluenceType, config.email, config.token);
   let base = config.baseUrl;
   while (base.endsWith("/")) base = base.slice(0, -1);
+  const urls = getApiUrls(base, confluenceType);
   const syncId = startSync(db, "confluence", base);
 
   try {
@@ -261,11 +292,7 @@ export async function syncConfluence(
     log.info({ baseUrl: base }, "Starting Confluence sync");
 
     // Fetch all spaces
-    const allSpaces = await fetchAllPages<ConfluenceSpace>(
-      `${base}/wiki/api/v2/spaces`,
-      base,
-      auth,
-    );
+    const allSpaces = await fetchAllPages<ConfluenceSpace>(urls.spaces, base, auth);
 
     // Filter spaces
     const excludeSet = new Set(config.excludeSpaces ?? []);
@@ -282,14 +309,11 @@ export async function syncConfluence(
       // Create or get topic for this space
       const topic = createTopic(db, { name: space.name });
 
-      // Fetch pages in space
+      // Fetch pages in space (Cloud uses space.id, Server uses space.key)
       let pages: ConfluencePage[];
       try {
-        pages = await fetchAllPages<ConfluencePage>(
-          `${base}/wiki/api/v2/spaces/${space.id}/pages`,
-          base,
-          auth,
-        );
+        const spaceRef = confluenceType === "server" ? space.key : space.id;
+        pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
@@ -300,15 +324,12 @@ export async function syncConfluence(
       for (const page of pages) {
         try {
           // Fetch full page content with body
-          const fullPage = await confluenceFetch<ConfluencePage>(
-            `${base}/wiki/api/v2/pages/${page.id}?body-format=storage`,
-            auth,
-          );
+          const fullPage = await confluenceFetch<ConfluencePage>(urls.pageContent(page.id), auth);
 
           const storageHtml = fullPage.body?.storage?.value ?? "";
           const pageUrl = fullPage._links?.webui
             ? `${base}${fullPage._links.webui}`
-            : `${base}/wiki/spaces/${space.key}/pages/${page.id}`;
+            : urls.defaultPageUrl(space.key, page.id);
 
           // Incremental sync: check existing doc version
           const existingDoc = db
@@ -416,4 +437,4 @@ export function disconnectConfluence(db: Database.Database): number {
   return rows.length;
 }
 
-export { buildAuthHeader };
+export { buildAuthHeader, getApiUrls };

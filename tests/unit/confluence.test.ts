@@ -6,6 +6,7 @@ import {
   convertConfluenceStorage,
   disconnectConfluence,
   buildAuthHeader,
+  getApiUrls,
 } from "../../src/connectors/confluence.js";
 import type { ConfluenceConfig } from "../../src/connectors/confluence.js";
 import type Database from "better-sqlite3";
@@ -99,6 +100,26 @@ describe("Confluence connector", () => {
     it("should use Bearer token for Server/Data Center", () => {
       const header = buildAuthHeader("server", undefined, "my-pat-token");
       expect(header).toBe("Bearer my-pat-token");
+    });
+  });
+
+  describe("getApiUrls", () => {
+    it("should return Cloud v2 API paths", () => {
+      const urls = getApiUrls("https://acme.atlassian.net", "cloud");
+      expect(urls.spaces).toBe("https://acme.atlassian.net/wiki/api/v2/spaces");
+      expect(urls.spacePages("123")).toBe(
+        "https://acme.atlassian.net/wiki/api/v2/spaces/123/pages",
+      );
+      expect(urls.pageContent("456")).toContain("/wiki/api/v2/pages/456");
+      expect(urls.defaultPageUrl("ENG", "456")).toContain("/wiki/spaces/ENG/pages/456");
+    });
+
+    it("should return Server v1 REST API paths", () => {
+      const urls = getApiUrls("https://confluence.internal", "server");
+      expect(urls.spaces).toBe("https://confluence.internal/rest/api/space");
+      expect(urls.spacePages("MDOG")).toContain("/rest/api/content?spaceKey=MDOG");
+      expect(urls.pageContent("789")).toContain("/rest/api/content/789");
+      expect(urls.defaultPageUrl("MDOG", "789")).toContain("pageId=789");
     });
   });
 
@@ -217,6 +238,8 @@ describe("Confluence connector", () => {
       const firstCall = fetchMock.mock.calls[0] as [string, RequestInit];
       const headers = firstCall[1].headers as Record<string, string>;
       expect(headers["Authorization"]).toBe("Bearer my-pat");
+      // Should use Server v1 REST API path
+      expect(firstCall[0]).toContain("/rest/api/space");
     });
 
     it("should list spaces and index pages", async () => {
