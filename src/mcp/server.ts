@@ -275,7 +275,9 @@ async function main(): Promise<void> {
 
       // If URL is provided and no content, fetch it
       if (url && !content) {
-        const fetched = await fetchAndConvert(url);
+        const fetched = await fetchAndConvert(url, {
+          allowPrivateUrls: config.indexing.allowPrivateUrls,
+        });
         content = fetched.content;
         title ??= fetched.title;
       }

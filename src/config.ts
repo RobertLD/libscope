@@ -23,6 +23,7 @@ export interface LibScopeConfig {
   };
   indexing: {
     maxDocumentSize: number;
+    allowPrivateUrls: boolean;
   };
   logging: {
     level: "debug" | "info" | "warn" | "error" | "silent";
@@ -41,6 +42,7 @@ const DEFAULT_CONFIG: LibScopeConfig = {
   },
   indexing: {
     maxDocumentSize: 100 * 1024 * 1024, // 100MB
+    allowPrivateUrls: false,
   },
   logging: {
     level: "info",
@@ -90,6 +92,15 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
 
   const llmProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
   const llmModel = process.env["LIBSCOPE_LLM_MODEL"];
+  const allowPrivate = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
+
+  if (allowPrivate === "true" || allowPrivate === "1") {
+    overrides.indexing = {
+      ...DEFAULT_CONFIG.indexing,
+      allowPrivateUrls: true,
+    };
+  }
+
   if (llmProvider === "openai" || llmProvider === "ollama" || llmModel) {
     overrides.llm = {
       ...(llmProvider === "openai" || llmProvider === "ollama" ? { provider: llmProvider } : {}),

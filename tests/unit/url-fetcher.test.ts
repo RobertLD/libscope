@@ -307,6 +307,7 @@ describe("FetchOptions configuration", () => {
       timeout: 30_000,
       maxRedirects: 5,
       maxBodySize: 10 * 1024 * 1024,
+      allowPrivateUrls: false,
     });
   });
 
