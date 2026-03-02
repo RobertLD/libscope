@@ -4,7 +4,8 @@ import { Command } from "commander";
 import { loadConfig, saveUserConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
-import { indexDocument } from "../core/indexing.js";
+import { indexDocument, indexFile } from "../core/indexing.js";
+import { getSupportedExtensions } from "../core/parsers/index.js";
 import { searchDocuments } from "../core/search.js";
 import { askQuestion, createLlmProvider } from "../core/rag.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
@@ -138,22 +139,30 @@ program
 // add
 program
   .command("add <fileOrUrl>")
-  .description("Index a document from a file or URL")
+  .description(
+    "Index a document from a file or URL (supports: " + getSupportedExtensions().join(", ") + ")",
+  )
   .option("--topic <topicId>", "Assign to a topic")
   .option("--library <name>", "Mark as library documentation")
   .option("--version <version>", "Library version")
   .option("--title <title>", "Override document title")
+  .option("--format <ext>", "Force file format (e.g. .pdf, .csv, .yaml)")
   .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
   .action(
     async (
       fileOrUrl: string,
-      opts: { topic?: string; library?: string; version?: string; title?: string; dedup?: string },
+      opts: {
+        topic?: string;
+        library?: string;
+        version?: string;
+        title?: string;
+        format?: string;
+        dedup?: string;
+      },
     ) => {
       const { config, db, provider } = initializeAppWithEmbedding();
       try {
-        let content: string;
-        let title: string;
-        let url: string | undefined;
+        let result;
 
         if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
           console.log(`Fetching ${fileOrUrl}...`);
@@ -161,26 +170,31 @@ program
             allowPrivateUrls: config.indexing.allowPrivateUrls,
             allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
           });
-          content = fetched.content;
-          title = opts.title ?? fetched.title;
-          url = fileOrUrl;
+          const title = opts.title ?? fetched.title;
+          result = await indexDocument(db, provider, {
+            title,
+            content: fetched.content,
+            sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+            library: opts.library,
+            version: opts.version,
+            topicId: opts.topic,
+            url: fileOrUrl,
+            dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
+          });
+          console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
         } else {
-          content = readFileSync(fileOrUrl, "utf-8");
-          title = opts.title ?? basename(fileOrUrl).replace(/\.[^.]+$/, "");
+          result = await indexFile(db, provider, fileOrUrl, {
+            title: opts.title,
+            topic: opts.topic,
+            library: opts.library,
+            version: opts.version,
+            format: opts.format,
+            dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
+          });
+          const title = opts.title ?? basename(fileOrUrl).replace(/\.[^.]+$/, "");
+          console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
         }
 
-        const result = await indexDocument(db, provider, {
-          title,
-          content,
-          sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
-          library: opts.library,
-          version: opts.version,
-          topicId: opts.topic,
-          url,
-          dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
-        });
-
-        console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
         console.log(`  ID: ${result.id}`);
       } finally {
         closeDatabase();
@@ -191,11 +205,15 @@ program
 // import
 program
   .command("import <directory>")
-  .description("Bulk import markdown files from a directory")
+  .description("Bulk import files from a directory (supports all document formats)")
   .option("--topic <topicId>", "Assign all to a topic")
   .option("--library <name>", "Mark all as library documentation")
   .option("--version <version>", "Library version")
-  .option("--extensions <exts>", "Comma-separated file extensions to include", ".md,.mdx,.txt")
+  .option(
+    "--extensions <exts>",
+    "Comma-separated file extensions to include",
+    ".md,.mdx,.txt,.pdf,.docx,.csv,.yaml,.yml,.json",
+  )
   .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
   .action(
     async (
@@ -225,16 +243,10 @@ program
 
         for (const file of files) {
           try {
-            const content = readFileSync(file, "utf-8");
-            const title = basename(file).replace(/\.[^.]+$/, "");
-
-            const result = await indexDocument(db, provider, {
-              title,
-              content,
-              sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+            const result = await indexFile(db, provider, file, {
+              topic: opts.topic,
               library: opts.library,
               version: opts.version,
-              topicId: opts.topic,
               dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
             });
 

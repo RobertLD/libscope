@@ -1,11 +1,14 @@
 import type Database from "better-sqlite3";
 import { randomUUID, createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import type { Readable } from "node:stream";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
+import { getParserForFile } from "./parsers/index.js";
 
 export interface IndexDocumentInput {
   title: string;
@@ -340,4 +343,50 @@ export async function indexDocument(
 
   log.info({ docId, chunkCount: chunks.length }, "Document indexed successfully");
   return { id: docId, chunkCount: chunks.length };
+}
+
+export interface IndexFileOptions {
+  topic?: string | undefined;
+  library?: string | undefined;
+  version?: string | undefined;
+  title?: string | undefined;
+  format?: string | undefined;
+  dedup?: "skip" | "warn" | "force" | undefined;
+}
+
+/**
+ * Index a file: auto-detect format from extension, parse to text, then index.
+ * Supports PDF, Word (.docx), CSV, YAML, JSON, and Markdown.
+ */
+export async function indexFile(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  filePath: string,
+  options: IndexFileOptions = {},
+): Promise<IndexedDocument> {
+  const log = getLogger();
+  const effectiveName = options.format ? `file${options.format}` : filePath;
+  const parser = getParserForFile(effectiveName);
+
+  if (!parser) {
+    throw new ValidationError(
+      `Unsupported file format: "${filePath}". Supported extensions: .md, .markdown, .mdx, .json, .yaml, .yml, .csv, .pdf, .docx`,
+    );
+  }
+
+  log.info({ filePath, parser: parser.extensions[0] }, "Parsing file for indexing");
+  const buffer = readFileSync(filePath);
+  const content = await parser.parse(buffer);
+
+  const title = options.title ?? basename(filePath).replace(/\.[^.]+$/, "");
+
+  return indexDocument(db, provider, {
+    title,
+    content,
+    sourceType: options.library ? "library" : options.topic ? "topic" : "manual",
+    library: options.library,
+    version: options.version,
+    topicId: options.topic,
+    dedup: options.dedup,
+  });
 }
