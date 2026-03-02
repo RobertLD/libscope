@@ -1310,8 +1310,12 @@ packCmd
       return;
     }
     const { db } = initializeApp();
-    removePack(db, name);
-    console.log(`✓ Pack "${name}" removed.`);
+    try {
+      removePack(db, name);
+      console.log(`✓ Pack "${name}" removed.`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 packCmd
@@ -1332,14 +1336,18 @@ packCmd
       }
     } else {
       const { db } = initializeApp();
-      const packs = listInstalledPacks(db);
-      if (packs.length === 0) {
-        console.log("No packs installed.");
-        return;
-      }
-      console.log("Installed packs:\n");
-      for (const p of packs) {
-        console.log(`  ${p.name} v${p.version} — ${p.description ?? ""} (${p.docCount} docs)`);
+      try {
+        const packs = listInstalledPacks(db);
+        if (packs.length === 0) {
+          console.log("No packs installed.");
+          return;
+        }
+        console.log("Installed packs:\n");
+        for (const p of packs) {
+          console.log(`  ${p.name} v${p.version} — ${p.description ?? ""} (${p.docCount} docs)`);
+        }
+      } finally {
+        closeDatabase();
       }
     }
   });
@@ -1363,18 +1371,22 @@ packCmd
       output?: string;
     }) => {
       const { db } = initializeApp();
-      const outputPath = opts.output ?? `${opts.name}.json`;
-      const pack = createPack(db, {
-        name: opts.name,
-        version: opts.version,
-        description: opts.description,
-        author: opts.author,
-        topic: opts.topic,
-        outputPath,
-      });
-      console.log(
-        `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
-      );
+      try {
+        const outputPath = opts.output ?? `${opts.name}.json`;
+        const pack = createPack(db, {
+          name: opts.name,
+          version: opts.version,
+          description: opts.description,
+          author: opts.author,
+          topic: opts.topic,
+          outputPath,
+        });
+        console.log(
+          `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
+        );
+      } finally {
+        closeDatabase();
+      }
     },
   );
 
@@ -1546,33 +1558,37 @@ connectCmd
       const provider = createEmbeddingProvider(config);
       createVectorTable(db, provider.dimensions);
 
-      const { syncObsidianVault } = await import("../connectors/obsidian.js");
+      try {
+        const { syncObsidianVault } = await import("../connectors/obsidian.js");
 
-      const topicMapping: "folder" | "frontmatter" =
-        cmdOpts.topicMapping === "frontmatter" ? "frontmatter" : "folder";
-      const obsConfig = {
-        vaultPath: join(process.cwd(), vaultPath).replace(/\/+$/, ""),
-        topicMapping,
-        excludePatterns: cmdOpts.exclude ?? [],
-      };
+        const topicMapping: "folder" | "frontmatter" =
+          cmdOpts.topicMapping === "frontmatter" ? "frontmatter" : "folder";
+        const obsConfig = {
+          vaultPath: join(process.cwd(), vaultPath).replace(/\/+$/, ""),
+          topicMapping,
+          excludePatterns: cmdOpts.exclude ?? [],
+        };
 
-      // Use absolute path if provided
-      if (vaultPath.startsWith("/")) {
-        obsConfig.vaultPath = vaultPath;
-      }
-
-      console.log(`Syncing Obsidian vault: ${obsConfig.vaultPath}`);
-      const result = await syncObsidianVault(db, provider, obsConfig);
-
-      console.log(`✓ Sync complete:`);
-      console.log(`  Added:   ${result.added}`);
-      console.log(`  Updated: ${result.updated}`);
-      console.log(`  Deleted: ${result.deleted}`);
-      if (result.errors.length > 0) {
-        console.log(`  Errors:  ${result.errors.length}`);
-        for (const e of result.errors) {
-          console.log(`    - ${e.file}: ${e.error}`);
+        // Use absolute path if provided
+        if (vaultPath.startsWith("/")) {
+          obsConfig.vaultPath = vaultPath;
         }
+
+        console.log(`Syncing Obsidian vault: ${obsConfig.vaultPath}`);
+        const result = await syncObsidianVault(db, provider, obsConfig);
+
+        console.log(`✓ Sync complete:`);
+        console.log(`  Added:   ${result.added}`);
+        console.log(`  Updated: ${result.updated}`);
+        console.log(`  Deleted: ${result.deleted}`);
+        if (result.errors.length > 0) {
+          console.log(`  Errors:  ${result.errors.length}`);
+          for (const e of result.errors) {
+            console.log(`    - ${e.file}: ${e.error}`);
+          }
+        }
+      } finally {
+        closeDatabase();
       }
     },
   );
@@ -1725,16 +1741,19 @@ disconnectCmd
       return;
     }
     const { db } = initializeApp();
+    try {
+      const { disconnectVault } = await import("../connectors/obsidian.js");
 
-    const { disconnectVault } = await import("../connectors/obsidian.js");
+      let resolvedPath = vaultPath;
+      if (!vaultPath.startsWith("/")) {
+        resolvedPath = join(process.cwd(), vaultPath);
+      }
 
-    let resolvedPath = vaultPath;
-    if (!vaultPath.startsWith("/")) {
-      resolvedPath = join(process.cwd(), vaultPath);
+      const removed = disconnectVault(db, resolvedPath);
+      console.log(`✓ Disconnected vault. Removed ${removed} documents.`);
+    } finally {
+      closeDatabase();
     }
-
-    const removed = disconnectVault(db, resolvedPath);
-    console.log(`✓ Disconnected vault. Removed ${removed} documents.`);
   });
 
 connectCmd
@@ -1793,8 +1812,12 @@ disconnectCmd
       return;
     }
     const { db } = initializeApp();
-    const removed = await disconnectNotion(db);
-    console.log(`✓ Removed ${removed} Notion documents.`);
+    try {
+      const removed = await disconnectNotion(db);
+      console.log(`✓ Removed ${removed} Notion documents.`);
+    } finally {
+      closeDatabase();
+    }
   });
 
 disconnectCmd

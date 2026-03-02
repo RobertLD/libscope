@@ -127,16 +127,19 @@ async function readBodyWithLimit(response: Response, limit: number): Promise<str
   const chunks: Uint8Array[] = [];
   let received = 0;
 
-  let result = await reader.read();
-  while (!result.done) {
-    const chunk = result.value;
-    received += chunk.byteLength;
-    if (received > limit) {
-      await reader.cancel();
-      throw new FetchError(`Response body too large: exceeded ${limit} bytes`);
+  try {
+    let result = await reader.read();
+    while (!result.done) {
+      const chunk = result.value;
+      received += chunk.byteLength;
+      if (received > limit) {
+        throw new FetchError(`Response body too large: exceeded ${limit} bytes`);
+      }
+      chunks.push(chunk);
+      result = await reader.read();
     }
-    chunks.push(chunk);
-    result = await reader.read();
+  } finally {
+    await reader.cancel();
   }
 
   const combined = new Uint8Array(received);
