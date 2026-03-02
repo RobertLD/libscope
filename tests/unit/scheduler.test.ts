@@ -79,16 +79,16 @@ describe("ConnectorScheduler", () => {
     db.close();
   });
 
-  it("starts with no jobs when given empty entries", () => {
+  it("starts with no jobs when given empty entries", async () => {
     const scheduler = new ConnectorScheduler(db, provider);
     scheduler.start([]);
     const status = scheduler.getStatus();
     expect(status.running).toBe(true);
     expect(status.jobs).toHaveLength(0);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
-  it("registers a valid cron job", () => {
+  it("registers a valid cron job", async () => {
     const scheduler = new ConnectorScheduler(db, provider);
     scheduler.start([
       { connectorType: "notion", connectorName: "my-notion", cronExpression: "0 */6 * * *" },
@@ -100,10 +100,10 @@ describe("ConnectorScheduler", () => {
     expect(status.jobs[0]!.connectorName).toBe("my-notion");
     expect(status.jobs[0]!.cronExpression).toBe("0 */6 * * *");
     expect(status.jobs[0]!.running).toBe(false);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
-  it("skips invalid cron expressions", () => {
+  it("skips invalid cron expressions", async () => {
     const scheduler = new ConnectorScheduler(db, provider);
     scheduler.start([
       { connectorType: "notion", connectorName: "bad-cron", cronExpression: "not a cron" },
@@ -111,10 +111,10 @@ describe("ConnectorScheduler", () => {
     const status = scheduler.getStatus();
     expect(status.running).toBe(true);
     expect(status.jobs).toHaveLength(0);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
-  it("registers multiple jobs", () => {
+  it("registers multiple jobs", async () => {
     const scheduler = new ConnectorScheduler(db, provider);
     scheduler.start([
       { connectorType: "notion", connectorName: "my-notion", cronExpression: "0 */6 * * *" },
@@ -122,21 +122,21 @@ describe("ConnectorScheduler", () => {
     ]);
     const status = scheduler.getStatus();
     expect(status.jobs).toHaveLength(2);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
-  it("stop clears all jobs", () => {
+  it("stop clears all jobs", async () => {
     const scheduler = new ConnectorScheduler(db, provider);
     scheduler.start([
       { connectorType: "notion", connectorName: "my-notion", cronExpression: "0 */6 * * *" },
     ]);
     expect(scheduler.getStatus().running).toBe(true);
-    scheduler.stop();
+    await scheduler.stop();
     expect(scheduler.getStatus().running).toBe(false);
     expect(scheduler.getStatus().jobs).toHaveLength(0);
   });
 
-  it("warns when starting an already-started scheduler", () => {
+  it("warns when starting an already-started scheduler", async () => {
     const scheduler = new ConnectorScheduler(db, provider);
     scheduler.start([]);
     // Second start should not throw
@@ -145,7 +145,7 @@ describe("ConnectorScheduler", () => {
     ]);
     // Should still have 0 jobs from first start
     expect(scheduler.getStatus().jobs).toHaveLength(0);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
   describe("runSync via cron callback", () => {
@@ -175,7 +175,7 @@ describe("ConnectorScheduler", () => {
       const status = scheduler.getStatus();
       expect(status.jobs[0]!.lastRun).toBeDefined();
       expect(status.jobs[0]!.running).toBe(false);
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("runs a slack sync successfully", async () => {
@@ -196,7 +196,7 @@ describe("ConnectorScheduler", () => {
         deleted: 0,
         errored: 0,
       });
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("runs a confluence sync successfully", async () => {
@@ -221,7 +221,7 @@ describe("ConnectorScheduler", () => {
         deleted: 0,
         errored: 0,
       });
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("runs an obsidian sync successfully", async () => {
@@ -246,7 +246,7 @@ describe("ConnectorScheduler", () => {
         deleted: 1,
         errored: 0,
       });
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("runs a onenote sync successfully", async () => {
@@ -271,7 +271,7 @@ describe("ConnectorScheduler", () => {
         deleted: 0,
         errored: 0,
       });
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("handles sync failure and calls failSync", async () => {
@@ -291,7 +291,7 @@ describe("ConnectorScheduler", () => {
       const status = scheduler.getStatus();
       expect(status.jobs[0]!.running).toBe(false);
       expect(status.jobs[0]!.lastRun).toBeDefined();
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("handles unknown connector type", async () => {
@@ -314,7 +314,7 @@ describe("ConnectorScheduler", () => {
         "sync-id-1",
         "Unknown connector type: unknown-type",
       );
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("skips sync when job is already running", async () => {
@@ -352,7 +352,7 @@ describe("ConnectorScheduler", () => {
 
       // syncNotion should only have been called once (second was skipped)
       expect(syncNotion).toHaveBeenCalledTimes(1);
-      scheduler.stop();
+      await scheduler.stop();
     });
 
     it("handles non-Error thrown values in sync", async () => {
@@ -369,7 +369,7 @@ describe("ConnectorScheduler", () => {
       });
 
       expect(failSync).toHaveBeenCalledWith(db, "sync-id-1", "string error");
-      scheduler.stop();
+      await scheduler.stop();
     });
   });
 });
