@@ -154,6 +154,49 @@ libscope docs update <documentId> --library vue --version 3.0.0
 | `--url <url>` | New source URL |
 | `--topic <topicId>` | New topic ID |
 
+## Bulk Operations
+
+Perform operations on multiple documents at once using filter criteria.
+
+### `libscope bulk delete`
+
+Delete all documents matching the specified filters.
+
+```bash
+libscope bulk delete --library react --dry-run
+libscope bulk delete --topic topic-1 --source-type manual --yes
+```
+
+### `libscope bulk retag`
+
+Add or remove tags from all matching documents.
+
+```bash
+libscope bulk retag --library react --add-tags important,v2 --dry-run
+libscope bulk retag --topic topic-1 --remove-tags deprecated --yes
+```
+
+### `libscope bulk move`
+
+Move all matching documents to a different topic.
+
+```bash
+libscope bulk move --library react --to new-topic-id --dry-run
+libscope bulk move --topic old-topic --to new-topic --yes
+```
+
+| Option | Description |
+|--------|-------------|
+| `--topic <topicId>` | Filter by topic ID |
+| `--library <name>` | Filter by library name |
+| `--source-type <type>` | Filter by source type |
+| `--tags <tags>` | Filter by tags (comma-separated) |
+| `--to <targetTopicId>` | Target topic (move only) |
+| `--add-tags <tags>` | Tags to add (retag only, comma-separated) |
+| `--remove-tags <tags>` | Tags to remove (retag only, comma-separated) |
+| `--dry-run` | Preview affected documents without making changes |
+| `-y, --yes` | Skip confirmation prompt |
+
 ## Document Links (Cross-references)
 
 | Command | Description |

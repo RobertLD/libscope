@@ -202,3 +202,6 @@ export {
   disconnectConfluence,
 } from "../connectors/confluence.js";
 export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confluence.js";
+
+export { resolveSelector, bulkDelete, bulkRetag, bulkMove } from "./bulk.js";
+export type { BulkSelector, BulkResult } from "./bulk.js";

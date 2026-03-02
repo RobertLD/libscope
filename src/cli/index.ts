@@ -37,6 +37,8 @@ import {
   listTags,
   getDocumentTags,
 } from "../core/tags.js";
+import { bulkDelete, bulkRetag, bulkMove } from "../core/bulk.js";
+import type { BulkSelector } from "../core/bulk.js";
 import {
   createWorkspace,
   deleteWorkspace,
@@ -2174,5 +2176,185 @@ program
       process.exit(1);
     }
   });
+
+// bulk
+const bulkCmd = program.command("bulk").description("Bulk operations on documents");
+
+bulkCmd
+  .command("delete")
+  .description("Delete multiple documents matching filters")
+  .option("--topic <topicId>", "Filter by topic ID")
+  .option("--library <name>", "Filter by library name")
+  .option("--source-type <type>", "Filter by source type")
+  .option("--tags <tags>", "Filter by tags (comma-separated)")
+  .option("--dry-run", "Show what would be affected without making changes")
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(
+    async (opts: {
+      topic?: string;
+      library?: string;
+      sourceType?: string;
+      tags?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+    }) => {
+      const { db } = initializeApp();
+      try {
+        const selector: BulkSelector = {};
+        if (opts.topic) selector.topicId = opts.topic;
+        if (opts.library) selector.library = opts.library;
+        if (opts.sourceType) selector.sourceType = opts.sourceType;
+        if (opts.tags) selector.tags = opts.tags.split(",").map((t) => t.trim());
+
+        const result = bulkDelete(db, selector, true);
+        console.log(`Found ${result.affected} document(s) matching filters.`);
+
+        if (result.affected === 0) return;
+
+        if (opts.dryRun) {
+          for (const id of result.documentIds) {
+            console.log(`  - ${id}`);
+          }
+          console.log("(dry run — no changes made)");
+          return;
+        }
+
+        if (
+          !(await confirmAction(
+            `Delete ${result.affected} document(s)? This cannot be undone.`,
+            !!opts.yes,
+          ))
+        ) {
+          console.log("Cancelled.");
+          return;
+        }
+
+        const actual = bulkDelete(db, selector);
+        console.log(`✓ Deleted ${actual.affected} document(s).`);
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
+
+bulkCmd
+  .command("retag")
+  .description("Add or remove tags from multiple documents")
+  .option("--topic <topicId>", "Filter by topic ID")
+  .option("--library <name>", "Filter by library name")
+  .option("--source-type <type>", "Filter by source type")
+  .option("--tags <tags>", "Filter by tags (comma-separated)")
+  .option("--add-tags <tags>", "Tags to add (comma-separated)")
+  .option("--remove-tags <tags>", "Tags to remove (comma-separated)")
+  .option("--dry-run", "Show what would be affected without making changes")
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(
+    async (opts: {
+      topic?: string;
+      library?: string;
+      sourceType?: string;
+      tags?: string;
+      addTags?: string;
+      removeTags?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+    }) => {
+      const { db } = initializeApp();
+      try {
+        const selector: BulkSelector = {};
+        if (opts.topic) selector.topicId = opts.topic;
+        if (opts.library) selector.library = opts.library;
+        if (opts.sourceType) selector.sourceType = opts.sourceType;
+        if (opts.tags) selector.tags = opts.tags.split(",").map((t) => t.trim());
+
+        const addTags = opts.addTags ? opts.addTags.split(",").map((t) => t.trim()) : undefined;
+        const removeTags = opts.removeTags
+          ? opts.removeTags.split(",").map((t) => t.trim())
+          : undefined;
+
+        const result = bulkRetag(db, selector, addTags, removeTags, true);
+        console.log(`Found ${result.affected} document(s) matching filters.`);
+
+        if (result.affected === 0) return;
+
+        if (opts.dryRun) {
+          for (const id of result.documentIds) {
+            console.log(`  - ${id}`);
+          }
+          console.log("(dry run — no changes made)");
+          return;
+        }
+
+        if (!(await confirmAction(`Retag ${result.affected} document(s)?`, !!opts.yes))) {
+          console.log("Cancelled.");
+          return;
+        }
+
+        const actual = bulkRetag(db, selector, addTags, removeTags);
+        console.log(`✓ Retagged ${actual.affected} document(s).`);
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
+
+bulkCmd
+  .command("move")
+  .description("Move multiple documents to a different topic")
+  .option("--topic <topicId>", "Filter by topic ID")
+  .option("--library <name>", "Filter by library name")
+  .option("--source-type <type>", "Filter by source type")
+  .option("--tags <tags>", "Filter by tags (comma-separated)")
+  .requiredOption("--to <targetTopicId>", "Target topic ID to move documents to")
+  .option("--dry-run", "Show what would be affected without making changes")
+  .option("-y, --yes", "Skip confirmation prompt")
+  .action(
+    async (opts: {
+      topic?: string;
+      library?: string;
+      sourceType?: string;
+      tags?: string;
+      to: string;
+      dryRun?: boolean;
+      yes?: boolean;
+    }) => {
+      const { db } = initializeApp();
+      try {
+        const selector: BulkSelector = {};
+        if (opts.topic) selector.topicId = opts.topic;
+        if (opts.library) selector.library = opts.library;
+        if (opts.sourceType) selector.sourceType = opts.sourceType;
+        if (opts.tags) selector.tags = opts.tags.split(",").map((t) => t.trim());
+
+        const result = bulkMove(db, selector, opts.to, true);
+        console.log(`Found ${result.affected} document(s) matching filters.`);
+
+        if (result.affected === 0) return;
+
+        if (opts.dryRun) {
+          for (const id of result.documentIds) {
+            console.log(`  - ${id}`);
+          }
+          console.log("(dry run — no changes made)");
+          return;
+        }
+
+        if (
+          !(await confirmAction(
+            `Move ${result.affected} document(s) to topic "${opts.to}"?`,
+            !!opts.yes,
+          ))
+        ) {
+          console.log("Cancelled.");
+          return;
+        }
+
+        const actual = bulkMove(db, selector, opts.to);
+        console.log(`✓ Moved ${actual.affected} document(s) to topic "${opts.to}".`);
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
 
 program.parse();

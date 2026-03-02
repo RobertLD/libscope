@@ -28,8 +28,11 @@ import {
   listSavedSearches,
   runSavedSearch,
   deleteSavedSearch,
+  bulkDelete,
+  bulkRetag,
+  bulkMove,
 } from "../core/index.js";
-import type { LinkType } from "../core/index.js";
+import type { LinkType, BulkSelector } from "../core/index.js";
 import { loadConfig } from "../config.js";
 import { DocumentNotFoundError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -554,6 +557,60 @@ export async function handleRequest(
         const saved = createSavedSearch(db, body.name, body.query, body.filters);
         const took = Math.round(performance.now() - start);
         sendJson(res, 201, saved, took);
+        return;
+      }
+    }
+
+    // Bulk operations: POST /api/v1/bulk/:operation
+    if (
+      segments.length === 4 &&
+      segments[0] === "api" &&
+      segments[1] === "v1" &&
+      segments[2] === "bulk" &&
+      method === "POST"
+    ) {
+      const operation = segments[3];
+      const body = (await parseJsonBody(req)) as {
+        selector?: BulkSelector;
+        dryRun?: boolean;
+        addTags?: string[];
+        removeTags?: string[];
+        targetTopicId?: string;
+      };
+
+      if (!body.selector) {
+        sendError(res, 400, "VALIDATION_ERROR", "selector is required");
+        return;
+      }
+
+      if (operation === "delete") {
+        const result = bulkDelete(db, body.selector, body.dryRun ?? false);
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 200, result, took);
+        return;
+      }
+
+      if (operation === "retag") {
+        const result = bulkRetag(
+          db,
+          body.selector,
+          body.addTags,
+          body.removeTags,
+          body.dryRun ?? false,
+        );
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 200, result, took);
+        return;
+      }
+
+      if (operation === "move") {
+        if (!body.targetTopicId) {
+          sendError(res, 400, "VALIDATION_ERROR", "targetTopicId is required");
+          return;
+        }
+        const result = bulkMove(db, body.selector, body.targetTopicId, body.dryRun ?? false);
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 200, result, took);
         return;
       }
     }

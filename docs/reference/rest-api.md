@@ -30,6 +30,9 @@ The OpenAPI 3.0 spec is available at `GET /openapi.json`.
 | `POST` | `/api/v1/searches/:id/run` | Run a saved search |
 | `DELETE` | `/api/v1/searches/:id` | Delete a saved search |
 | `GET` | `/openapi.json` | OpenAPI 3.0 specification |
+| `POST` | `/api/v1/bulk/delete` | Bulk delete documents |
+| `POST` | `/api/v1/bulk/retag` | Bulk add/remove tags |
+| `POST` | `/api/v1/bulk/move` | Bulk move documents to a topic |
 
 ## Examples
 
