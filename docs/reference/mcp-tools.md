@@ -170,3 +170,41 @@ List installed or available knowledge packs.
 |-----------|------|----------|-------------|
 | `available` | boolean | | If true, list from registry instead of installed |
 | `registryUrl` | string | | Custom registry URL |
+
+## save-search
+
+Save a search query with optional filters for later re-use.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | ✅ | Unique name for this saved search |
+| `query` | string | ✅ | The search query |
+| `topic` | string | | Filter by topic ID |
+| `library` | string | | Filter by library name |
+| `version` | string | | Filter by library version |
+| `source` | string | | Filter by source type |
+| `minRating` | number | | Minimum average rating filter |
+| `limit` | number | | Maximum results to return |
+| `tags` | string[] | | Filter by tags |
+
+## list-saved-searches
+
+List all saved searches.
+
+*No parameters.*
+
+## run-saved-search
+
+Execute a saved search by name or ID and return results.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `nameOrId` | string | ✅ | The name or ID of the saved search to run |
+
+## delete-saved-search
+
+Delete a saved search by name or ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `nameOrId` | string | ✅ | The name or ID of the saved search to delete |

@@ -72,6 +72,12 @@ import {
   loadNamedConnectorConfig,
   hasNamedConnectorConfig,
 } from "../connectors/index.js";
+import {
+  createSavedSearch,
+  listSavedSearches,
+  runSavedSearch,
+  deleteSavedSearch,
+} from "../core/saved-searches.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -338,6 +344,7 @@ program
   .option("--offset <n>", "Offset for pagination", "0")
   .option("--max-chunks-per-doc <n>", "Max chunks per document in results (default: no limit)")
   .option("--context <n>", "Include N neighboring chunks before/after each result (0-2)", "0")
+  .option("--save <name>", "Save this search with the given name for later re-use")
   .action(
     async (
       query: string,
@@ -349,6 +356,7 @@ program
         offset: string;
         maxChunksPerDoc?: string;
         context: string;
+        save?: string;
       },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
@@ -396,11 +404,89 @@ program
             }
           }
         }
+
+        if (opts.save) {
+          const filters: Record<string, unknown> = {};
+          if (opts.topic) filters.topic = opts.topic;
+          if (opts.library) filters.library = opts.library;
+          if (opts.source) filters.source = opts.source;
+          const saved = createSavedSearch(
+            db,
+            opts.save,
+            query,
+            Object.keys(filters).length > 0 ? filters : undefined,
+          );
+          console.log(`\n✓ Search saved as "${saved.name}" (${saved.id})`);
+        }
       } finally {
         closeDatabase();
       }
     },
   );
+
+// saved searches
+const searchesCmd = program.command("searches").description("Manage saved searches");
+
+searchesCmd
+  .command("list")
+  .description("List all saved searches")
+  .action(() => {
+    const { db } = initializeApp();
+    try {
+      const searches = listSavedSearches(db);
+      if (searches.length === 0) {
+        console.log("No saved searches.");
+      } else {
+        console.log(`Found ${searches.length} saved searches:\n`);
+        for (const s of searches) {
+          console.log(`  ${s.name}`);
+          console.log(`    ID: ${s.id}`);
+          console.log(`    Query: "${s.query}"`);
+          if (s.filters) console.log(`    Filters: ${JSON.stringify(s.filters)}`);
+          if (s.lastRunAt) console.log(`    Last run: ${s.lastRunAt} (${s.resultCount} results)`);
+          console.log();
+        }
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+searchesCmd
+  .command("run <nameOrId>")
+  .description("Run a saved search")
+  .action(async (nameOrId: string) => {
+    const { db, provider } = initializeAppWithEmbedding();
+    try {
+      const { search, results } = await runSavedSearch(db, provider, nameOrId);
+      console.log(`\nRunning saved search "${search.name}" (query: "${search.query}"):\n`);
+      if (results.length === 0) {
+        console.log("No results found.");
+      } else {
+        console.log(`Found ${results.length} results:\n`);
+        for (const r of results) {
+          console.log(`── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
+          if (r.library) console.log(`  Library: ${r.library}`);
+          console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+        }
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+searchesCmd
+  .command("delete <nameOrId>")
+  .description("Delete a saved search")
+  .action((nameOrId: string) => {
+    const { db } = initializeApp();
+    try {
+      deleteSavedSearch(db, nameOrId);
+      console.log(`✓ Saved search "${nameOrId}" deleted.`);
+    } finally {
+      closeDatabase();
+    }
+  });
 
 // ask (RAG question answering)
 program

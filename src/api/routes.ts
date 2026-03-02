@@ -24,6 +24,10 @@ import {
   createLink,
   getDocumentLinks,
   deleteLink,
+  createSavedSearch,
+  listSavedSearches,
+  runSavedSearch,
+  deleteSavedSearch,
 } from "../core/index.js";
 import type { LinkType } from "../core/index.js";
 import { loadConfig } from "../config.js";
@@ -93,6 +97,33 @@ function matchLinkId(segments: string[]): string | null {
     segments[0] === "api" &&
     segments[1] === "v1" &&
     segments[2] === "links"
+  ) {
+    return segments[3] ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/searches/:id */
+function matchSearchId(segments: string[]): string | null {
+  if (
+    segments.length === 4 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "searches"
+  ) {
+    return segments[3] ?? null;
+  }
+  return null;
+}
+
+/** Match /api/v1/searches/:id/run */
+function matchSearchRun(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "searches" &&
+    segments[4] === "run"
   ) {
     return segments[3] ?? null;
   }
@@ -483,6 +514,54 @@ export async function handleRequest(
     const linkId = matchLinkId(segments);
     if (linkId && method === "DELETE") {
       deleteLink(db, linkId);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { deleted: true }, took);
+      return;
+    }
+
+    // Saved searches: run must be matched before generic :id routes
+    const searchRunId = matchSearchRun(segments);
+    if (searchRunId && method === "POST") {
+      const { search, results } = await runSavedSearch(db, provider, searchRunId);
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { search, resultCount: results.length, results }, took);
+      return;
+    }
+
+    // Saved searches: list + create
+    if (
+      segments.length === 3 &&
+      segments[0] === "api" &&
+      segments[1] === "v1" &&
+      segments[2] === "searches"
+    ) {
+      if (method === "GET") {
+        const searches = listSavedSearches(db);
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 200, searches, took);
+        return;
+      }
+      if (method === "POST") {
+        const body = (await parseJsonBody(req)) as {
+          name?: string;
+          query?: string;
+          filters?: Record<string, unknown>;
+        };
+        if (!body.name || !body.query) {
+          sendError(res, 400, "VALIDATION_ERROR", "name and query are required");
+          return;
+        }
+        const saved = createSavedSearch(db, body.name, body.query, body.filters);
+        const took = Math.round(performance.now() - start);
+        sendJson(res, 201, saved, took);
+        return;
+      }
+    }
+
+    // Saved searches: delete
+    const savedSearchId = matchSearchId(segments);
+    if (savedSearchId && method === "DELETE") {
+      deleteSavedSearch(db, savedSearchId);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, { deleted: true }, took);
       return;

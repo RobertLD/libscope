@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -229,6 +229,19 @@ const MIGRATIONS: Record<number, string> = {
     CREATE INDEX IF NOT EXISTS idx_links_target ON document_links(target_id);
 
     INSERT INTO schema_version (version) VALUES (13);
+  `,
+  14: `
+    CREATE TABLE IF NOT EXISTS saved_searches (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      query TEXT NOT NULL,
+      filters TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_run_at TEXT,
+      result_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    INSERT INTO schema_version (version) VALUES (14);
   `,
 };
 

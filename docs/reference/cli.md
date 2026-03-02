@@ -73,6 +73,24 @@ libscope search "deploy process" --context 1    # include neighboring chunks
 | `--min-rating <n>` | Minimum average rating |
 | `--max-chunks-per-doc <n>` | Max chunks per document in results (default: no limit) |
 | `--context <n>` | Include N neighboring chunks before/after each result (0-2, default: 0) |
+| `--save <name>` | Save this search with the given name for later re-use |
+
+### `libscope searches`
+
+Manage saved searches.
+
+```bash
+libscope searches list                          # list all saved searches
+libscope searches run "My Search"               # re-run a saved search by name or ID
+libscope searches delete "My Search"            # delete a saved search
+libscope search "auth best practices" --save "Auth Docs"  # save a search while running it
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `searches list` | List all saved searches |
+| `searches run <nameOrId>` | Run a saved search by name or ID |
+| `searches delete <nameOrId>` | Delete a saved search |
 
 ### `libscope ask`
 
