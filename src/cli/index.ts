@@ -727,6 +727,10 @@ configCmd
       }
       saveUserConfig({ embedding: { provider: value } });
       console.log(`✓ Embedding provider set to: ${value}`);
+    } else if (key === "indexing.allowPrivateUrls") {
+      const bool = value === "true";
+      saveUserConfig({ indexing: { ...loadConfig().indexing, allowPrivateUrls: bool } });
+      console.log(`✓ indexing.allowPrivateUrls set to: ${bool}`);
     } else {
       console.error(`Unknown config key: ${key}`);
       process.exit(1);
