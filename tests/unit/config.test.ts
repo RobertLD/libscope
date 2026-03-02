@@ -57,6 +57,68 @@ describe("config", () => {
       }
     }
   });
+
+  it("should pick up LIBSCOPE_OLLAMA_URL", () => {
+    const original = process.env["LIBSCOPE_OLLAMA_URL"];
+    try {
+      process.env["LIBSCOPE_OLLAMA_URL"] = "http://custom:11434";
+      const config = loadConfig();
+      expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
+    } finally {
+      if (original !== undefined) {
+        process.env["LIBSCOPE_OLLAMA_URL"] = original;
+      } else {
+        delete process.env["LIBSCOPE_OLLAMA_URL"];
+      }
+    }
+  });
+
+  it("should pick up LIBSCOPE_ALLOW_PRIVATE_URLS", () => {
+    const original = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
+    try {
+      process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = "true";
+      const config = loadConfig();
+      expect(config.indexing.allowPrivateUrls).toBe(true);
+    } finally {
+      if (original !== undefined) {
+        process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = original;
+      } else {
+        delete process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
+      }
+    }
+  });
+
+  it("should pick up LIBSCOPE_ALLOW_SELF_SIGNED_CERTS", () => {
+    const original = process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
+    try {
+      process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = "1";
+      const config = loadConfig();
+      expect(config.indexing.allowSelfSignedCerts).toBe(true);
+    } finally {
+      if (original !== undefined) {
+        process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = original;
+      } else {
+        delete process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
+      }
+    }
+  });
+
+  it("should pick up LIBSCOPE_LLM_PROVIDER and LIBSCOPE_LLM_MODEL", () => {
+    const origProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
+    const origModel = process.env["LIBSCOPE_LLM_MODEL"];
+    try {
+      process.env["LIBSCOPE_LLM_PROVIDER"] = "ollama";
+      process.env["LIBSCOPE_LLM_MODEL"] = "llama3";
+      const config = loadConfig();
+      expect(config.llm?.provider).toBe("ollama");
+      expect(config.llm?.model).toBe("llama3");
+    } finally {
+      if (origProvider !== undefined) process.env["LIBSCOPE_LLM_PROVIDER"] = origProvider;
+      else delete process.env["LIBSCOPE_LLM_PROVIDER"];
+      if (origModel !== undefined) process.env["LIBSCOPE_LLM_MODEL"] = origModel;
+      else delete process.env["LIBSCOPE_LLM_MODEL"];
+    }
+  });
 });
 
 describe("validateConfig", () => {
