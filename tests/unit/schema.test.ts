@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { runMigrations } from "../../src/db/schema.js";
+import { runMigrations, createVectorTable } from "../../src/db/schema.js";
+import { initLogger } from "../../src/logger.js";
 import type Database from "better-sqlite3";
 import DatabaseConstructor from "better-sqlite3";
 
@@ -7,6 +8,7 @@ describe("database schema", () => {
   let db: Database.Database;
 
   beforeEach(() => {
+    initLogger("silent");
     db = new DatabaseConstructor(":memory:");
     db.pragma("foreign_keys = ON");
   });
@@ -106,6 +108,34 @@ describe("database schema", () => {
           )
           .run(),
       ).toThrow();
+    });
+  });
+
+  describe("createVectorTable", () => {
+    it("should throw on invalid dimensions (zero)", () => {
+      runMigrations(db);
+      expect(() => createVectorTable(db, 0)).toThrow("Invalid vector dimensions");
+    });
+
+    it("should throw on invalid dimensions (negative)", () => {
+      runMigrations(db);
+      expect(() => createVectorTable(db, -1)).toThrow("Invalid vector dimensions");
+    });
+
+    it("should throw on invalid dimensions (too large)", () => {
+      runMigrations(db);
+      expect(() => createVectorTable(db, 10001)).toThrow("Invalid vector dimensions");
+    });
+
+    it("should throw on non-integer dimensions", () => {
+      runMigrations(db);
+      expect(() => createVectorTable(db, 3.5)).toThrow("Invalid vector dimensions");
+    });
+
+    it("should not throw on valid dimensions (vec0 will fail without sqlite-vec but catches)", () => {
+      runMigrations(db);
+      // This won't create a real vector table (no sqlite-vec) but should not throw
+      createVectorTable(db, 384);
     });
   });
 });
