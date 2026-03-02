@@ -10,6 +10,8 @@ import { askQuestion, createLlmProvider } from "../core/rag.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument, listDocuments, deleteDocument } from "../core/documents.js";
+import { createLink, getDocumentLinks, deleteLink, getPrerequisiteChain } from "../core/links.js";
+import type { LinkType } from "../core/links.js";
 import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -512,6 +514,92 @@ ratingsCmd
           console.log(`  ${r.rating}/5 by ${r.ratedBy} — ${r.feedback ?? "(no feedback)"}`);
         }
       }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+// links (document cross-references)
+program
+  .command("link <sourceId> <targetId>")
+  .description("Create a cross-reference link between two documents")
+  .option("--type <type>", "Link type: see_also, prerequisite, supersedes, related", "related")
+  .option("--label <text>", "Human-readable description of the link")
+  .action((sourceId: string, targetId: string, opts: { type: string; label?: string }) => {
+    const validTypes = ["see_also", "prerequisite", "supersedes", "related"];
+    if (!validTypes.includes(opts.type)) {
+      console.error(`Invalid link type: ${opts.type}. Must be one of: ${validTypes.join(", ")}`);
+      process.exit(1);
+    }
+    const { db } = initializeApp();
+    try {
+      const link = createLink(db, sourceId, targetId, opts.type as LinkType, opts.label);
+      console.log(`✓ Link created: ${link.linkType} (${link.id})`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+program
+  .command("links <documentId>")
+  .description("Show all cross-reference links for a document")
+  .action((documentId: string) => {
+    const { db } = initializeApp();
+    try {
+      const { outgoing, incoming } = getDocumentLinks(db, documentId);
+      if (outgoing.length === 0 && incoming.length === 0) {
+        console.log("No links found for this document.");
+        return;
+      }
+      if (outgoing.length > 0) {
+        console.log("\nOutgoing links:");
+        for (const l of outgoing) {
+          console.log(`  → [${l.linkType}] ${l.targetTitle}${l.label ? ` — ${l.label}` : ""}`);
+          console.log(`    ID: ${l.id}  Target: ${l.targetId}`);
+        }
+      }
+      if (incoming.length > 0) {
+        console.log("\nIncoming links:");
+        for (const l of incoming) {
+          console.log(`  ← [${l.linkType}] ${l.sourceTitle}${l.label ? ` — ${l.label}` : ""}`);
+          console.log(`    ID: ${l.id}  Source: ${l.sourceId}`);
+        }
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+program
+  .command("unlink <linkId>")
+  .description("Remove a cross-reference link")
+  .action((linkId: string) => {
+    const { db } = initializeApp();
+    try {
+      deleteLink(db, linkId);
+      console.log(`✓ Link ${linkId} deleted.`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+program
+  .command("prereqs <documentId>")
+  .description("Show prerequisite reading chain for a document")
+  .action((documentId: string) => {
+    const { db } = initializeApp();
+    try {
+      const chain = getPrerequisiteChain(db, documentId);
+      if (chain.length === 0) {
+        console.log("No prerequisites found for this document.");
+        return;
+      }
+      console.log("\nPrerequisite reading order:");
+      for (let i = 0; i < chain.length; i++) {
+        const doc = chain[i]!;
+        console.log(`  ${i + 1}. ${doc.title} (${doc.id})`);
+      }
+      console.log(`  ${chain.length + 1}. [this document]`);
     } finally {
       closeDatabase();
     }

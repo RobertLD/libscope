@@ -112,6 +112,26 @@ libscope serve --dashboard --port 8080
 | `libscope docs history <id>` | View version history |
 | `libscope docs rollback <id> <version>` | Rollback to a previous version |
 
+## Document Links (Cross-references)
+
+| Command | Description |
+|---------|-------------|
+| `libscope link <sourceId> <targetId>` | Create a cross-reference link |
+| `libscope links <documentId>` | Show all links for a document |
+| `libscope unlink <linkId>` | Remove a link |
+| `libscope prereqs <documentId>` | Show prerequisite reading chain |
+
+### `libscope link`
+
+```bash
+libscope link <sourceId> <targetId> --type see_also --label "Background context"
+```
+
+| Option | Description |
+|--------|-------------|
+| `--type <type>` | Link type: `see_also`, `prerequisite`, `supersedes`, `related` (default: `related`) |
+| `--label <text>` | Optional description of the relationship |
+
 ## Topics & Tags
 
 | Command | Description |
