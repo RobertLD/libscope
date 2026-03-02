@@ -419,7 +419,7 @@ export async function handleRequest(
       return;
     }
 
-    if (docId && (method === "PUT" || method === "PATCH")) {
+    if (docId && method === "PATCH") {
       const body = await parseJsonBody(req);
       if (!body || typeof body !== "object") {
         sendError(res, 400, "VALIDATION_ERROR", "Request body must be a JSON object");

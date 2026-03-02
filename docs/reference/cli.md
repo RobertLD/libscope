@@ -115,7 +115,7 @@ libscope serve --dashboard --port 8080
 | `libscope docs history <id>` | View version history |
 | `libscope docs rollback <id> <version>` | Rollback to a previous version |
 
-## Document Links (Cross-references)
+## Document Updates
 
 ### `libscope docs update`
 
