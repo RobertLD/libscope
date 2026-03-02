@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { getParserForFile, getSupportedExtensions } from "../../src/core/parsers/index.js";
 import { MarkdownParser } from "../../src/core/parsers/markdown.js";
 import { PlainTextParser } from "../../src/core/parsers/text.js";
@@ -158,5 +158,60 @@ describe("CsvParser", () => {
   it("returns empty string for empty CSV", async () => {
     const result = await parser.parse(Buffer.from(""));
     expect(result).toBe("");
+  });
+
+  it("escapes pipe characters in cell values", async () => {
+    const input = "col1,col2\nfoo|bar,baz";
+    const result = await parser.parse(Buffer.from(input));
+    expect(result).toContain("foo\\|bar");
+  });
+
+  it("replaces newlines in cell values", async () => {
+    const input = 'col1,col2\n"line1\nline2",baz';
+    const result = await parser.parse(Buffer.from(input));
+    expect(result).toContain("line1 line2");
+  });
+
+  it("normalizes row length to match header", async () => {
+    const input = "a,b,c\n1,2";
+    const result = await parser.parse(Buffer.from(input));
+    // Row should have 3 cells even though input only has 2
+    const lines = result.split("\n");
+    const dataRow = lines[2]!;
+    expect(dataRow.split("|").length).toBe(5); // | a | b | c | => 5 parts
+  });
+});
+
+describe("PdfParser", () => {
+  let parser: InstanceType<typeof import("../../src/core/parsers/pdf.js").PdfParser>;
+
+  beforeAll(async () => {
+    const { PdfParser } = await import("../../src/core/parsers/pdf.js");
+    parser = new PdfParser();
+  });
+
+  it("has .pdf extension", () => {
+    expect(parser.extensions).toEqual([".pdf"]);
+  });
+
+  it("throws ValidationError for invalid PDF content", async () => {
+    await expect(parser.parse(Buffer.from("not a pdf"))).rejects.toThrow(ValidationError);
+  });
+});
+
+describe("WordParser", () => {
+  let parser: InstanceType<typeof import("../../src/core/parsers/word.js").WordParser>;
+
+  beforeAll(async () => {
+    const { WordParser } = await import("../../src/core/parsers/word.js");
+    parser = new WordParser();
+  });
+
+  it("has .docx extension", () => {
+    expect(parser.extensions).toEqual([".docx"]);
+  });
+
+  it("throws ValidationError for invalid Word content", async () => {
+    await expect(parser.parse(Buffer.from("not a docx"))).rejects.toThrow(ValidationError);
   });
 });
