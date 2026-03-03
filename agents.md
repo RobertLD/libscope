@@ -247,6 +247,46 @@ git worktree remove ../libscope-<branch-name>
 
 **Why worktrees?** Multiple agents sharing a single working directory cause race conditions — concurrent `git checkout`, conflicting `node_modules`, and dirty working trees that break other agents' builds.
 
+## Pull Request Lifecycle
+
+Every PR must follow this complete lifecycle. **Do not consider a PR done until all steps are complete.**
+
+### 1. Pre-PR (before opening)
+
+1. Run the **full local validation suite**: `npm run typecheck && npm run test:coverage && npm run lint && npm run format:check` — all must pass.
+2. Self-review your diff using a `code-review` sub-agent (`git diff main...HEAD`). Fix issues it finds before opening the PR.
+3. Ensure the PR description accurately matches the implementation — don't describe features that aren't shipped.
+
+### 2. Open the PR
+
+1. Push the branch and create the PR via `gh pr create`.
+2. Add a clear title and description summarizing all changes.
+
+### 3. Wait for CI/CD and verify it passes
+
+1. **After pushing, always check CI status.** Use GitHub Actions API (`actions_list` with `list_workflow_runs` filtered to the branch) to monitor the run.
+2. **If CI fails, read the failure logs** (`get_job_logs` with `failed_only: true`), fix the issue, push again, and re-check. Repeat until all checks are green.
+3. Common CI failures to watch for:
+   - **Prettier formatting** — always run `npm run format:check` locally. If it fails, run `npx prettier --write <file>`.
+   - **Coverage thresholds** — use `npm run test:coverage`, not `npm test`. New code that drops coverage below thresholds will fail CI.
+   - **CodeQL alerts** — the `CodeQL` and `CodeQL/analyze` checks are separate from the main CI. Both must pass. CodeQL can be aggressive (e.g., flagging hash functions used on API keys). Read the specific alert and fix accordingly.
+   - **ESLint errors** — run `npm run lint` locally before pushing.
+
+### 4. Address review comments
+
+1. **Check for review comments** on the PR using the GitHub API (`pull_request_read` with `get_review_comments`).
+2. **Read and evaluate every comment** — if valid, implement the fix; if incorrect, reply explaining why.
+3. Push fixes and verify CI passes again (go back to step 3).
+4. **Reply to each comment thread** confirming the fix with the relevant commit SHA. Never leave review comments unaddressed — they block merge and erode reviewer trust.
+
+### 5. Final verification
+
+1. Confirm all CI checks are green.
+2. Confirm all review comment threads are resolved (addressed in code + replied to).
+3. Only then is the PR ready for merge.
+
+**Key principle:** A PR is not "done" when you push code. It's done when CI is green, all review comments are addressed, and it's ready to merge.
+
 ## Adding a New Feature — Checklist
 
 1. Add business logic in `src/core/` (no framework dependencies).
@@ -259,8 +299,6 @@ git worktree remove ../libscope-<branch-name>
 8. **PR description must match implementation.** Don't describe features that aren't implemented yet — only document what actually ships in the PR. If scope is reduced, update the description before opening the PR.
 9. **Verify HTTP error handling.** When writing code that calls external services (fetch, HTTP clients), always check response status codes — `fetch()` resolves on 4xx/5xx, so check `resp.ok` or `resp.status`. Never treat a resolved fetch as a success without status checking.
 10. **Don't expose secrets in API responses.** If a model stores sensitive fields (tokens, secrets, keys), redact them from API/MCP response payloads.
-11. **Self-review before creating a PR.** Before opening a pull request, use a `code-review` sub-agent to review your own diff (`git diff main...HEAD`). Fix any issues it finds. Do not rely on the automated GitHub review — catch problems before the PR is created, not after.
-12. **Always address PR review comments.** When working on a PR that has review comments, read and evaluate every comment before considering work complete. If a comment is valid, fix it. If a comment is incorrect or inapplicable, reply explaining why. Never ignore open review comments — they block merge and erode reviewer trust.
 
 ## Documentation
 
