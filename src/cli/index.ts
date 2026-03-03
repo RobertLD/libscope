@@ -2436,11 +2436,11 @@ webhookCmd
     "Comma-separated event types (e.g. document.created,document.updated)",
   )
   .option("--secret <secret>", "Secret for HMAC-SHA256 signature")
-  .action((url: string, opts: { events: string; secret?: string }) => {
+  .action(async (url: string, opts: { events: string; secret?: string }) => {
     const { db } = initializeApp();
     try {
       const events = opts.events.split(",").map((e) => e.trim()) as WebhookEvent[];
-      const webhook = createWebhook(db, url, events, opts.secret);
+      const webhook = await createWebhook(db, url, events, opts.secret);
       console.log(`✓ Webhook created: ${webhook.id}`);
       console.log(`  URL: ${webhook.url}`);
       console.log(`  Events: ${webhook.events.join(", ")}`);

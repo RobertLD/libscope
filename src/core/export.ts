@@ -20,6 +20,7 @@ interface ExportData {
   documents: Record<string, unknown>[];
   chunks: Record<string, unknown>[];
   ratings: Record<string, unknown>[];
+  webhooks?: Record<string, unknown>[];
 }
 
 /** Export all knowledge base data to a JSON file. */
@@ -31,6 +32,16 @@ export function exportKnowledgeBase(db: Database.Database, outputPath: string): 
     const documents = db.prepare("SELECT * FROM documents").all() as Record<string, unknown>[];
     const chunks = db.prepare("SELECT * FROM chunks").all() as Record<string, unknown>[];
     const ratings = db.prepare("SELECT * FROM ratings").all() as Record<string, unknown>[];
+
+    // Scrub webhook secrets from export output
+    let webhooks: Record<string, unknown>[] = [];
+    try {
+      webhooks = (db.prepare("SELECT * FROM webhooks").all() as Record<string, unknown>[]).map(
+        (w) => ({ ...w, secret: w.secret != null ? "[REDACTED]" : null }),
+      );
+    } catch {
+      // webhooks table may not exist
+    }
 
     const data: ExportData = {
       metadata: {
@@ -47,6 +58,7 @@ export function exportKnowledgeBase(db: Database.Database, outputPath: string): 
       documents,
       chunks,
       ratings,
+      webhooks,
     };
 
     writeFileSync(outputPath, JSON.stringify(data, null, 2), "utf-8");

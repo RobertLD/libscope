@@ -73,12 +73,23 @@ export function checkRateLimit(ip: string): boolean {
     return true;
   }
 
-  // New IP — evict oldest entries if map is full
+  // New IP — evict expired/oldest entries if map is full
   if (rateLimitMap.size >= MAX_RATE_LIMIT_ENTRIES) {
-    const iter = rateLimitMap.keys();
-    for (let i = 0; i < 1000; i++) {
-      const key = iter.next().value;
-      if (key !== undefined) rateLimitMap.delete(key);
+    // First pass: delete expired entries
+    for (const [key, val] of rateLimitMap) {
+      if (now - val.windowStart >= RATE_LIMIT_WINDOW_MS) {
+        rateLimitMap.delete(key);
+      }
+    }
+    // If still over limit, evict oldest entries
+    if (rateLimitMap.size >= MAX_RATE_LIMIT_ENTRIES) {
+      const sorted = [...rateLimitMap.entries()].sort(
+        (a, b) => a[1].windowStart - b[1].windowStart,
+      );
+      const toDelete = sorted.slice(0, 1000);
+      for (const [key] of toDelete) {
+        rateLimitMap.delete(key);
+      }
     }
   }
 

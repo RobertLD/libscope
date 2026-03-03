@@ -1,7 +1,12 @@
 import { randomUUID, createHmac } from "node:crypto";
+import { promises as dns, lookup as dnsLookup } from "node:dns";
+import { promisify } from "node:util";
 import type Database from "better-sqlite3";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { isPrivateIP } from "./url-fetcher.js";
+
+const lookupAsync = promisify(dnsLookup);
 
 export const WEBHOOK_EVENTS = [
   "document.created",
@@ -98,6 +103,39 @@ function validateUrl(url: string): void {
   }
 }
 
+/** Resolve hostname and block private/internal IPs (SSRF protection). */
+export async function validateWebhookUrlSsrf(url: string): Promise<void> {
+  const parsed = new URL(url);
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+
+  const results = await Promise.allSettled([dns.resolve4(hostname), dns.resolve6(hostname)]);
+  const addresses: string[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") addresses.push(...r.value);
+  }
+
+  if (addresses.length === 0) {
+    try {
+      const result = await lookupAsync(hostname);
+      if (result.address) addresses.push(result.address);
+    } catch {
+      // lookup also failed
+    }
+  }
+
+  if (addresses.length === 0) {
+    throw new ValidationError(`DNS resolution failed for webhook hostname: ${hostname}`);
+  }
+
+  for (const addr of addresses) {
+    if (isPrivateIP(addr)) {
+      throw new ValidationError(
+        `Webhook URL resolves to private/internal IP ${addr}. This is blocked for security.`,
+      );
+    }
+  }
+}
+
 function validateEvents(events: readonly string[]): void {
   if (events.length === 0) {
     throw new ValidationError("At least one event type is required");
@@ -109,14 +147,15 @@ function validateEvents(events: readonly string[]): void {
   }
 }
 
-export function createWebhook(
+export async function createWebhook(
   db: Database.Database,
   url: string,
   events: WebhookEvent[],
   secret?: string,
-): Webhook {
+): Promise<Webhook> {
   validateUrl(url);
   validateEvents(events);
+  await validateWebhookUrlSsrf(url);
 
   const id = randomUUID();
   const eventsJson = JSON.stringify(events);
@@ -132,8 +171,12 @@ export function createWebhook(
   return rowToWebhook(row);
 }
 
-export function listWebhooks(db: Database.Database): Webhook[] {
-  const rows = db.prepare("SELECT * FROM webhooks ORDER BY created_at DESC").all() as WebhookRow[];
+export function listWebhooks(db: Database.Database, limit?: number, offset?: number): Webhook[] {
+  const effectiveLimit = Math.max(1, Math.min(limit ?? 50, 1000));
+  const effectiveOffset = Math.max(0, offset ?? 0);
+  const rows = db
+    .prepare("SELECT * FROM webhooks ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .all(effectiveLimit, effectiveOffset) as WebhookRow[];
   return rows.map(rowToWebhook);
 }
 
@@ -152,15 +195,16 @@ export function deleteWebhook(db: Database.Database, id: string): void {
   }
 }
 
-export function updateWebhook(
+export async function updateWebhook(
   db: Database.Database,
   id: string,
   updates: { url?: string; events?: WebhookEvent[]; secret?: string; active?: boolean },
-): Webhook {
+): Promise<Webhook> {
   const existing = getWebhook(db, id);
 
   if (updates.url !== undefined) {
     validateUrl(updates.url);
+    await validateWebhookUrlSsrf(updates.url);
   }
   if (updates.events !== undefined) {
     validateEvents(updates.events);
@@ -224,12 +268,17 @@ export function fireWebhooks(
       headers["X-LibScope-Signature"] = signPayload(body, webhook.secret);
     }
 
-    fetch(webhook.url, {
-      method: "POST",
-      headers,
-      body,
-      signal: AbortSignal.timeout(5000),
-    })
+    // SSRF check before firing
+    validateWebhookUrlSsrf(webhook.url)
+      .then(() =>
+        fetch(webhook.url, {
+          method: "POST",
+          headers,
+          body,
+          redirect: "error",
+          signal: AbortSignal.timeout(5000),
+        }),
+      )
       .then((resp) => {
         try {
           if (!resp.ok) {

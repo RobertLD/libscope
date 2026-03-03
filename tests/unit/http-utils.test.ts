@@ -120,10 +120,13 @@ describe("fetchWithRetry", () => {
       body: JSON.stringify({ key: "value" }),
     });
 
-    expect(mockFetch).toHaveBeenCalledWith("https://example.com/api", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "value" }),
-    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://example.com/api",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "value" }),
+      }),
+    );
   });
 });

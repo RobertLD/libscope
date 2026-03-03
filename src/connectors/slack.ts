@@ -357,6 +357,40 @@ export async function syncSlack(
           (m) => (m.reply_count == null || m.reply_count === 0) && !m.thread_ts && !m.subtype,
         );
 
+        // Pre-collect all user IDs from messages and thread replies to batch-resolve
+        const allUserIds = new Set<string>();
+        for (const msg of [...standaloneMessages, ...threadParents]) {
+          if (msg.user) allUserIds.add(msg.user);
+          // Collect user mentions from message text
+          if (msg.text) {
+            for (const match of msg.text.matchAll(/<@(U[A-Z0-9]+)>/g)) {
+              if (match[1]) allUserIds.add(match[1]);
+            }
+          }
+        }
+
+        // Fetch thread replies and collect their user IDs too
+        const threadRepliesMap = new Map<string, SlackMessage[]>();
+        for (const threadParent of threadParents) {
+          const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
+          threadRepliesMap.set(threadParent.ts, replies);
+          for (const reply of replies) {
+            if (reply.user) allUserIds.add(reply.user);
+            if (reply.text) {
+              for (const match of reply.text.matchAll(/<@(U[A-Z0-9]+)>/g)) {
+                if (match[1]) allUserIds.add(match[1]);
+              }
+            }
+          }
+        }
+
+        // Batch resolve all user IDs upfront
+        for (const userId of allUserIds) {
+          if (!userCache.has(userId)) {
+            await resolveUser(config.token, userId);
+          }
+        }
+
         // Index standalone messages
         for (const msg of standaloneMessages) {
           if (!msg.text) continue;
@@ -378,7 +412,7 @@ export async function syncSlack(
         // Index threads
         if (config.threadMode === "aggregate") {
           for (const threadParent of threadParents) {
-            const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
+            const replies = threadRepliesMap.get(threadParent.ts) ?? [];
             const content = await buildThreadDocument(config.token, channel.name, replies);
             const parentText = threadParent.text ?? "";
             const title = `#${channel.name} thread: ${truncateTitle(parentText)}`;
@@ -395,7 +429,7 @@ export async function syncSlack(
         } else {
           // separate mode: each reply is its own document
           for (const threadParent of threadParents) {
-            const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
+            const replies = threadRepliesMap.get(threadParent.ts) ?? [];
             for (const reply of replies) {
               if (!reply.text) continue;
 

@@ -78,10 +78,16 @@ export function createSavedSearch(
   return rowToSavedSearch(row);
 }
 
-export function listSavedSearches(db: Database.Database): SavedSearch[] {
+export function listSavedSearches(
+  db: Database.Database,
+  limit?: number,
+  offset?: number,
+): SavedSearch[] {
+  const effectiveLimit = Math.max(1, Math.min(limit ?? 50, 1000));
+  const effectiveOffset = Math.max(0, offset ?? 0);
   const rows = db
-    .prepare("SELECT * FROM saved_searches ORDER BY created_at DESC")
-    .all() as SavedSearchRow[];
+    .prepare("SELECT * FROM saved_searches ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .all(effectiveLimit, effectiveOffset) as SavedSearchRow[];
   return rows.map(rowToSavedSearch);
 }
 

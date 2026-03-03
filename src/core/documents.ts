@@ -78,8 +78,9 @@ export function deleteDocument(db: Database.Database, documentId: string): void 
       )
     `,
     ).run(documentId);
-  } catch {
+  } catch (err: unknown) {
     // chunk_embeddings table may not exist (sqlite-vec not loaded)
+    getLogger().debug({ err, documentId }, "Skipped chunk_embeddings cleanup");
   }
 
   const result = db.prepare("DELETE FROM documents WHERE id = ?").run(documentId);
@@ -212,8 +213,9 @@ export async function updateDocument(
         db.prepare(
           "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
         ).run(documentId);
-      } catch {
+      } catch (err: unknown) {
         // chunk_embeddings table may not exist
+        log.debug({ err, documentId }, "Skipped chunk_embeddings cleanup during update");
       }
 
       db.prepare("DELETE FROM chunks WHERE document_id = ?").run(documentId);
@@ -245,8 +247,9 @@ export async function updateDocument(
         try {
           const vecBuffer = Buffer.from(new Float32Array(embeddings[i] ?? []).buffer);
           insertEmbedding.run(chunkId, vecBuffer);
-        } catch {
+        } catch (err: unknown) {
           // chunk_embeddings table may not exist
+          log.debug({ err, chunkId }, "Skipped embedding insertion during update");
         }
       }
     });

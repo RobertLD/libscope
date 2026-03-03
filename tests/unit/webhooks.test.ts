@@ -1,7 +1,25 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../fixtures/test-db.js";
-import {
+import type { WebhookEvent } from "../../src/core/webhooks.js";
+import { ValidationError } from "../../src/errors.js";
+import { initLogger } from "../../src/logger.js";
+
+// Mock DNS resolution so webhook SSRF checks pass in tests
+vi.mock("node:dns", async (importOriginal) => {
+  const actual: typeof import("node:dns") = await importOriginal();
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      resolve4: vi.fn().mockResolvedValue(["93.184.216.34"]),
+      resolve6: vi.fn().mockResolvedValue([]),
+    },
+  };
+});
+
+// Dynamic import after DNS mock is registered
+const {
   createWebhook,
   listWebhooks,
   getWebhook,
@@ -11,10 +29,7 @@ import {
   buildPayload,
   fireWebhooks,
   WEBHOOK_EVENTS,
-} from "../../src/core/webhooks.js";
-import type { WebhookEvent } from "../../src/core/webhooks.js";
-import { ValidationError } from "../../src/errors.js";
-import { initLogger } from "../../src/logger.js";
+} = await import("../../src/core/webhooks.js");
 
 describe("webhooks", () => {
   let db: Database.Database;
@@ -24,8 +39,8 @@ describe("webhooks", () => {
   });
 
   describe("createWebhook", () => {
-    it("should create a webhook with valid inputs", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+    it("should create a webhook with valid inputs", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       expect(webhook.id).toBeTruthy();
       expect(webhook.url).toBe("https://example.com/hook");
       expect(webhook.events).toEqual(["document.created"]);
@@ -36,8 +51,8 @@ describe("webhooks", () => {
       expect(webhook.createdAt).toBeTruthy();
     });
 
-    it("should create a webhook with a secret", () => {
-      const webhook = createWebhook(
+    it("should create a webhook with a secret", async () => {
+      const webhook = await createWebhook(
         db,
         "https://example.com/hook",
         ["document.created"],
@@ -46,39 +61,45 @@ describe("webhooks", () => {
       expect(webhook.secret).toBe("my-secret");
     });
 
-    it("should create a webhook with multiple events", () => {
+    it("should create a webhook with multiple events", async () => {
       const events: WebhookEvent[] = ["document.created", "document.updated", "document.deleted"];
-      const webhook = createWebhook(db, "https://example.com/hook", events);
+      const webhook = await createWebhook(db, "https://example.com/hook", events);
       expect(webhook.events).toEqual(events);
     });
 
-    it("should reject invalid URL", () => {
-      expect(() => createWebhook(db, "ftp://example.com", ["document.created"])).toThrow(
+    it("should reject invalid URL", async () => {
+      await expect(createWebhook(db, "ftp://example.com", ["document.created"])).rejects.toThrow(
         ValidationError,
       );
     });
 
-    it("should reject malformed URL", () => {
-      expect(() => createWebhook(db, "not-a-url", ["document.created"])).toThrow(ValidationError);
+    it("should reject malformed URL", async () => {
+      await expect(createWebhook(db, "not-a-url", ["document.created"])).rejects.toThrow(
+        ValidationError,
+      );
     });
 
-    it("should reject URL with only scheme", () => {
-      expect(() => createWebhook(db, "https://", ["document.created"])).toThrow(ValidationError);
+    it("should reject URL with only scheme", async () => {
+      await expect(createWebhook(db, "https://", ["document.created"])).rejects.toThrow(
+        ValidationError,
+      );
     });
 
-    it("should reject empty events array", () => {
-      expect(() => createWebhook(db, "https://example.com/hook", [])).toThrow(ValidationError);
+    it("should reject empty events array", async () => {
+      await expect(createWebhook(db, "https://example.com/hook", [])).rejects.toThrow(
+        ValidationError,
+      );
     });
 
-    it("should reject invalid event type", () => {
-      expect(() =>
+    it("should reject invalid event type", async () => {
+      await expect(
         createWebhook(db, "https://example.com/hook", ["invalid.event" as WebhookEvent]),
-      ).toThrow(ValidationError);
+      ).rejects.toThrow(ValidationError);
     });
 
-    it("should accept http:// URLs", () => {
-      const webhook = createWebhook(db, "http://localhost:3000/hook", ["document.created"]);
-      expect(webhook.url).toBe("http://localhost:3000/hook");
+    it("should accept http:// URLs", async () => {
+      const webhook = await createWebhook(db, "http://example.com:3000/hook", ["document.created"]);
+      expect(webhook.url).toBe("http://example.com:3000/hook");
     });
   });
 
@@ -87,17 +108,17 @@ describe("webhooks", () => {
       expect(listWebhooks(db)).toEqual([]);
     });
 
-    it("should return all webhooks", () => {
-      createWebhook(db, "https://example.com/hook1", ["document.created"]);
-      createWebhook(db, "https://example.com/hook2", ["document.updated"]);
+    it("should return all webhooks", async () => {
+      await createWebhook(db, "https://example.com/hook1", ["document.created"]);
+      await createWebhook(db, "https://example.com/hook2", ["document.updated"]);
       const hooks = listWebhooks(db);
       expect(hooks).toHaveLength(2);
     });
   });
 
   describe("getWebhook", () => {
-    it("should return a webhook by id", () => {
-      const created = createWebhook(db, "https://example.com/hook", ["document.created"]);
+    it("should return a webhook by id", async () => {
+      const created = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       const fetched = getWebhook(db, created.id);
       expect(fetched.id).toBe(created.id);
       expect(fetched.url).toBe(created.url);
@@ -109,8 +130,8 @@ describe("webhooks", () => {
   });
 
   describe("deleteWebhook", () => {
-    it("should delete an existing webhook", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+    it("should delete an existing webhook", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       deleteWebhook(db, webhook.id);
       expect(listWebhooks(db)).toHaveLength(0);
     });
@@ -121,46 +142,50 @@ describe("webhooks", () => {
   });
 
   describe("updateWebhook", () => {
-    it("should update webhook URL", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      const updated = updateWebhook(db, webhook.id, { url: "https://example.com/new-hook" });
+    it("should update webhook URL", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const updated = await updateWebhook(db, webhook.id, {
+        url: "https://example.com/new-hook",
+      });
       expect(updated.url).toBe("https://example.com/new-hook");
     });
 
-    it("should update webhook events", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      const updated = updateWebhook(db, webhook.id, {
+    it("should update webhook events", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const updated = await updateWebhook(db, webhook.id, {
         events: ["document.updated", "document.deleted"],
       });
       expect(updated.events).toEqual(["document.updated", "document.deleted"]);
     });
 
-    it("should update webhook active status", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      const updated = updateWebhook(db, webhook.id, { active: false });
+    it("should update webhook active status", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const updated = await updateWebhook(db, webhook.id, { active: false });
       expect(updated.active).toBe(false);
     });
 
-    it("should update webhook secret", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      const updated = updateWebhook(db, webhook.id, { secret: "new-secret" });
+    it("should update webhook secret", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const updated = await updateWebhook(db, webhook.id, { secret: "new-secret" });
       expect(updated.secret).toBe("new-secret");
     });
 
-    it("should reject invalid URL on update", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      expect(() => updateWebhook(db, webhook.id, { url: "ftp://bad" })).toThrow(ValidationError);
-    });
-
-    it("should reject invalid events on update", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      expect(() => updateWebhook(db, webhook.id, { events: ["invalid" as WebhookEvent] })).toThrow(
+    it("should reject invalid URL on update", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      await expect(updateWebhook(db, webhook.id, { url: "ftp://bad" })).rejects.toThrow(
         ValidationError,
       );
     });
 
-    it("should throw ValidationError for non-existent id", () => {
-      expect(() => updateWebhook(db, "non-existent", { url: "https://new.com" })).toThrow(
+    it("should reject invalid events on update", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      await expect(
+        updateWebhook(db, webhook.id, { events: ["invalid" as WebhookEvent] }),
+      ).rejects.toThrow(ValidationError);
+    });
+
+    it("should throw ValidationError for non-existent id", async () => {
+      await expect(updateWebhook(db, "non-existent", { url: "https://new.com" })).rejects.toThrow(
         ValidationError,
       );
     });
@@ -204,15 +229,15 @@ describe("webhooks", () => {
   });
 
   describe("failure tracking", () => {
-    it("should track failure count in the database", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+    it("should track failure count in the database", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       db.prepare("UPDATE webhooks SET failure_count = 5 WHERE id = ?").run(webhook.id);
       const updated = getWebhook(db, webhook.id);
       expect(updated.failureCount).toBe(5);
     });
 
-    it("should deactivate webhook when failure count reaches 10", () => {
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+    it("should deactivate webhook when failure count reaches 10", async () => {
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       db.prepare("UPDATE webhooks SET failure_count = 10, active = 0 WHERE id = ?").run(webhook.id);
       const updated = getWebhook(db, webhook.id);
       expect(updated.active).toBe(false);
@@ -233,7 +258,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
 
-      createWebhook(db, "https://example.com/hook", ["document.created"]);
+      await createWebhook(db, "https://example.com/hook", ["document.created"]);
       fireWebhooks(db, "document.created", { docId: "123" });
 
       // Allow async fetch to resolve
@@ -250,7 +275,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
 
-      createWebhook(db, "https://example.com/hook", ["document.updated"]);
+      await createWebhook(db, "https://example.com/hook", ["document.updated"]);
       fireWebhooks(db, "document.created", { docId: "123" });
 
       // Give time for any async calls
@@ -262,7 +287,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
 
-      createWebhook(db, "https://example.com/hook", ["document.created"], "my-secret");
+      await createWebhook(db, "https://example.com/hook", ["document.created"], "my-secret");
       fireWebhooks(db, "document.created", { docId: "123" });
 
       await vi.waitFor(() => {
@@ -279,7 +304,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
 
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       db.prepare("UPDATE webhooks SET failure_count = 3 WHERE id = ?").run(webhook.id);
 
       fireWebhooks(db, "document.created", { docId: "123" });
@@ -294,7 +319,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
       vi.stubGlobal("fetch", mockFetch);
 
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       fireWebhooks(db, "document.created", { docId: "123" });
 
       await vi.waitFor(() => {
@@ -307,7 +332,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"));
       vi.stubGlobal("fetch", mockFetch);
 
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       fireWebhooks(db, "document.created", { docId: "123" });
 
       await vi.waitFor(() => {
@@ -320,7 +345,7 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"));
       vi.stubGlobal("fetch", mockFetch);
 
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
       // Set failure_count to 9 so the next failure (10th) triggers deactivation
       db.prepare("UPDATE webhooks SET failure_count = 9 WHERE id = ?").run(webhook.id);
 
@@ -337,8 +362,8 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
 
-      const webhook = createWebhook(db, "https://example.com/hook", ["document.created"]);
-      updateWebhook(db, webhook.id, { active: false });
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      await updateWebhook(db, webhook.id, { active: false });
 
       fireWebhooks(db, "document.created", { docId: "123" });
 
