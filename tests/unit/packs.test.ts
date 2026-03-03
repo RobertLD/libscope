@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { gzipSync, gunzipSync } from "node:zlib";
 import type Database from "better-sqlite3";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
@@ -720,6 +721,85 @@ describe("knowledge packs", () => {
 
       expect(pack.documents).toHaveLength(1);
       expect(pack.documents[0]!.title).toBe("readme");
+    });
+
+    it("should write gzipped pack when output ends in .gz", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent here.");
+      const outputPath = join(tempDir, "test.json.gz");
+
+      await createPackFromSource({
+        name: "gzip-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      expect(existsSync(outputPath)).toBe(true);
+      const raw = readFileSync(outputPath);
+      // Verify gzip magic bytes
+      expect(raw[0]).toBe(0x1f);
+      expect(raw[1]).toBe(0x8b);
+      // Decompress and verify JSON
+      const json = gunzipSync(raw).toString("utf-8");
+      const parsed = JSON.parse(json) as KnowledgePack;
+      expect(parsed.name).toBe("gzip-test");
+      expect(parsed.documents).toHaveLength(1);
+    });
+
+    it("should write plain JSON when output ends in .json", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent here.");
+      const outputPath = join(tempDir, "test.json");
+
+      await createPackFromSource({
+        name: "json-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      const raw = readFileSync(outputPath, "utf-8");
+      const parsed = JSON.parse(raw) as KnowledgePack;
+      expect(parsed.name).toBe("json-test");
+    });
+  });
+
+  describe("gzip pack install", () => {
+    it("should install a gzipped pack file", async () => {
+      const pack = makeSamplePack({ name: "gz-pack" });
+      const packPath = join(tempDir, "gz-pack.json.gz");
+      writeFileSync(packPath, gzipSync(Buffer.from(JSON.stringify(pack), "utf-8")));
+
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.packName).toBe("gz-pack");
+      expect(result.documentsInstalled).toBe(2);
+      expect(result.alreadyInstalled).toBe(false);
+    });
+
+    it("should auto-detect gzip by magic bytes even with .json extension", async () => {
+      const pack = makeSamplePack({ name: "magic-detect" });
+      const packPath = join(tempDir, "magic-detect.json");
+      // Write gzipped content but with .json extension
+      writeFileSync(packPath, gzipSync(Buffer.from(JSON.stringify(pack), "utf-8")));
+
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.packName).toBe("magic-detect");
+      expect(result.documentsInstalled).toBe(2);
+    });
+
+    it("should round-trip: create gzipped pack from source then install it", async () => {
+      const rtDir = mkdtempSync(join(tmpdir(), "libscope-pack-rt-"));
+      writeFileSync(join(rtDir, "guide.md"), "# Guide\n\nThis is a guide.");
+      const packPath = join(tempDir, "roundtrip.json.gz");
+
+      await createPackFromSource({
+        name: "roundtrip-pack",
+        from: [rtDir],
+        outputPath: packPath,
+      });
+
+      const result = await installPack(db, provider, packPath);
+      expect(result.packName).toBe("roundtrip-pack");
+      expect(result.documentsInstalled).toBe(1);
     });
   });
 });

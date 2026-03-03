@@ -7,6 +7,7 @@ import {
   relative,
   join as pathJoin,
 } from "node:path";
+import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -87,6 +88,33 @@ export interface CreatePackFromSourceOptions {
 }
 
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/libscope/packs/main/registry.json";
+
+/** Gzip magic number: first two bytes of a gzip stream. */
+const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
+
+/** Check if a filename indicates gzip compression (.gz or .json.gz). */
+function isGzipPath(filePath: string): boolean {
+  return filePath.endsWith(".gz");
+}
+
+/** Write a pack to disk, gzip-compressing if the path ends in .gz. */
+function writePackFile(filePath: string, pack: KnowledgePack): void {
+  const json = JSON.stringify(pack, null, 2);
+  if (isGzipPath(filePath)) {
+    writeFileSync(filePath, gzipSync(Buffer.from(json, "utf-8")));
+  } else {
+    writeFileSync(filePath, json, "utf-8");
+  }
+}
+
+/** Read a pack file, auto-detecting gzip by magic bytes or extension. */
+function readPackFile(filePath: string): string {
+  const raw = readFileSync(filePath);
+  if (raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]) {
+    return gunzipSync(raw).toString("utf-8");
+  }
+  return raw.toString("utf-8");
+}
 
 /** Validate that a registry URL uses https and is not a private IP. */
 function validateRegistryUrl(url: string): void {
@@ -224,15 +252,15 @@ export async function installPack(
   const log = getLogger();
   let pack: KnowledgePack;
 
-  // Try loading as a local file first
-  if (packNameOrPath.endsWith(".json")) {
+  // Try loading as a local file first (supports .json and .json.gz)
+  if (packNameOrPath.endsWith(".json") || packNameOrPath.endsWith(".json.gz")) {
     const resolved = pathResolve(packNameOrPath);
     // Prevent path traversal: if a relative path is given, ensure it resolves within CWD
     if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
       throw new ValidationError("Pack file path must be within the current working directory");
     }
     try {
-      const raw = readFileSync(resolved, "utf-8");
+      const raw = readPackFile(resolved);
       const parsed: unknown = JSON.parse(raw);
       pack = validatePack(parsed);
     } catch (err) {
@@ -416,7 +444,7 @@ export function createPack(db: Database.Database, options: CreatePackOptions): K
   };
 
   if (options.outputPath) {
-    writeFileSync(options.outputPath, JSON.stringify(pack, null, 2), "utf-8");
+    writePackFile(options.outputPath, pack);
     log.info({ outputPath: options.outputPath, docCount: documents.length }, "Pack file created");
   }
 
@@ -630,7 +658,7 @@ export async function createPackFromSource(
   };
 
   if (options.outputPath) {
-    writeFileSync(options.outputPath, JSON.stringify(pack, null, 2), "utf-8");
+    writePackFile(options.outputPath, pack);
     log.info(
       { outputPath: options.outputPath, docCount: documents.length },
       "Pack file created from source",

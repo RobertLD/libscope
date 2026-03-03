@@ -1608,7 +1608,7 @@ const packCmd = program.command("pack").description("Manage knowledge packs");
 
 packCmd
   .command("install <nameOrPath>")
-  .description("Install a knowledge pack from registry or local .json file")
+  .description("Install a knowledge pack from registry or local .json/.json.gz file")
   .option("--registry <url>", "Custom registry URL")
   .action(async (nameOrPath: string, opts: { registry?: string }) => {
     const { db, provider } = initializeAppWithEmbedding();
@@ -1710,10 +1710,10 @@ packCmd
       exclude?: string[];
       recursive: boolean;
     }) => {
-      const outputPath = opts.output ?? `${opts.name}.json`;
-
       if (opts.from && opts.from.length > 0) {
         // Source mode: build pack directly from files/URLs (no database needed)
+        // Default to .json.gz for source packs (they can be large)
+        const outputPath = opts.output ?? `${opts.name}.json.gz`;
         const extensionList = opts.extensions
           ? opts.extensions.split(",").map((e) => e.trim())
           : undefined;
@@ -1741,6 +1741,7 @@ packCmd
         );
       } else {
         // Database mode: export existing documents
+        const outputPath = opts.output ?? `${opts.name}.json`;
         const { db } = initializeApp();
         try {
           const pack = createPack(db, {
