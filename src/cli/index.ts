@@ -93,14 +93,12 @@ import {
 import type { WebhookEvent } from "../core/webhooks.js";
 
 // Graceful shutdown
-process.on("SIGINT", () => {
+const handleShutdown = (): void => {
   closeDatabase();
   process.exit(0);
-});
-process.on("SIGTERM", () => {
-  closeDatabase();
-  process.exit(0);
-});
+};
+process.on("SIGINT", handleShutdown);
+process.on("SIGTERM", handleShutdown);
 
 const _require = createRequire(import.meta.url);
 const _pkg = _require("../../package.json") as { version: string };

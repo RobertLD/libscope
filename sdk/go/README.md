@@ -86,42 +86,42 @@ client := libscope.NewClient(
 
 ### Documents
 
-| Method | Description |
-|--------|-------------|
-| `AddDocument(ctx, url, opts...)` | Index a document from a URL |
-| `AddText(ctx, title, content, opts...)` | Index raw text content |
-| `GetDocument(ctx, id)` | Get a document by ID |
-| `ListDocuments(ctx, opts...)` | List documents with optional filters |
-| `DeleteDocument(ctx, id)` | Delete a document |
+| Method                                  | Description                          |
+| --------------------------------------- | ------------------------------------ |
+| `AddDocument(ctx, url, opts...)`        | Index a document from a URL          |
+| `AddText(ctx, title, content, opts...)` | Index raw text content               |
+| `GetDocument(ctx, id)`                  | Get a document by ID                 |
+| `ListDocuments(ctx, opts...)`           | List documents with optional filters |
+| `DeleteDocument(ctx, id)`               | Delete a document                    |
 
 ### Search
 
-| Method | Description |
-|--------|-------------|
+| Method                        | Description                      |
+| ----------------------------- | -------------------------------- |
 | `Search(ctx, query, opts...)` | Semantic search across documents |
 
 Search options: `WithLimit(n)`, `WithTopic(t)`, `WithTags(tags...)`, `WithMinScore(s)`
 
 ### Topics
 
-| Method | Description |
-|--------|-------------|
-| `ListTopics(ctx)` | List all topics |
+| Method                            | Description        |
+| --------------------------------- | ------------------ |
+| `ListTopics(ctx)`                 | List all topics    |
 | `CreateTopic(ctx, name, opts...)` | Create a new topic |
 
 ### Tags
 
-| Method | Description |
-|--------|-------------|
-| `ListTags(ctx)` | List all tags |
+| Method                                | Description            |
+| ------------------------------------- | ---------------------- |
+| `ListTags(ctx)`                       | List all tags          |
 | `AddTagsToDocument(ctx, docID, tags)` | Add tags to a document |
 
 ### Analytics
 
-| Method | Description |
-|--------|-------------|
+| Method          | Description             |
+| --------------- | ----------------------- |
 | `GetStats(ctx)` | Get instance statistics |
-| `Health(ctx)` | Health check |
+| `Health(ctx)`   | Health check            |
 
 ## Error Handling
 

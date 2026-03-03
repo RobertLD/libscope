@@ -133,7 +133,9 @@ describe("API middleware", () => {
       expect(handled).toBe(true);
       expect(getStatus()).toBe(204);
       expect(getHeaders()["Access-Control-Allow-Origin"]).toBe("*");
-      expect(getHeaders()["Access-Control-Allow-Methods"]).toBe("GET, POST, DELETE, OPTIONS");
+      expect(getHeaders()["Access-Control-Allow-Methods"]).toBe(
+        "GET, POST, PATCH, DELETE, OPTIONS",
+      );
     });
 
     it("should set CORS headers for non-preflight requests", () => {
@@ -383,13 +385,11 @@ describe("API routes", () => {
       });
 
       const req = createMockReq("DELETE", `/api/v1/documents/${doc.id}`);
-      const { res, getStatus, getBody } = createMockRes();
+      const { res, getStatus } = createMockRes();
 
       await handleRequest(req, res, db, provider);
 
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.deleted).toBe(true);
+      expect(getStatus()).toBe(204);
     });
 
     it("should return 404 for deleting non-existent document", async () => {
@@ -787,13 +787,11 @@ describe("API routes", () => {
       const id = (created.data as Record<string, unknown>).id as string;
 
       const req = createMockReq("DELETE", `/api/v1/webhooks/${id}`);
-      const { res, getStatus, getBody } = createMockRes();
+      const { res, getStatus } = createMockRes();
 
       await handleRequest(req, res, db, provider);
 
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.deleted).toBe(true);
+      expect(getStatus()).toBe(204);
     });
   });
 });
@@ -997,12 +995,10 @@ describe("Saved Searches API", () => {
     const created = parseResponse(mock1.getBody());
     const id = (created.data as Record<string, unknown>)?.id as string;
 
-    const { res, getStatus, getBody } = createMockRes();
+    const { res, getStatus } = createMockRes();
     const req = createMockReq("DELETE", `/api/v1/searches/${id}`);
     await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toHaveProperty("deleted", true);
+    expect(getStatus()).toBe(204);
   });
 
   it("POST /api/v1/searches/:id/run runs a saved search", async () => {
@@ -1131,11 +1127,9 @@ describe("Links API", () => {
     const linkId = (created.data as Record<string, unknown>)?.id as string;
 
     // Delete the link
-    const { res, getStatus, getBody } = createMockRes();
+    const { res, getStatus } = createMockRes();
     const req = createMockReq("DELETE", `/api/v1/links/${linkId}`);
     await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toHaveProperty("deleted", true);
+    expect(getStatus()).toBe(204);
   });
 });

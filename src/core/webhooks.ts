@@ -1,6 +1,6 @@
 import { randomUUID, createHmac } from "node:crypto";
 import type Database from "better-sqlite3";
-import { ValidationError, DocumentNotFoundError } from "../errors.js";
+import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
 export const WEBHOOK_EVENTS = [
@@ -140,7 +140,7 @@ export function listWebhooks(db: Database.Database): Webhook[] {
 export function getWebhook(db: Database.Database, id: string): Webhook {
   const row = db.prepare("SELECT * FROM webhooks WHERE id = ?").get(id) as WebhookRow | undefined;
   if (!row) {
-    throw new DocumentNotFoundError(id);
+    throw new ValidationError(`Webhook not found: ${id}`);
   }
   return rowToWebhook(row);
 }
@@ -148,7 +148,7 @@ export function getWebhook(db: Database.Database, id: string): Webhook {
 export function deleteWebhook(db: Database.Database, id: string): void {
   const result = db.prepare("DELETE FROM webhooks WHERE id = ?").run(id);
   if (result.changes === 0) {
-    throw new DocumentNotFoundError(id);
+    throw new ValidationError(`Webhook not found: ${id}`);
   }
 }
 

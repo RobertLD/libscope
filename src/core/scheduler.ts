@@ -119,7 +119,7 @@ export class ConnectorScheduler {
     log.info({ jobCount: this.jobs.size }, "Connector scheduler started");
   }
 
-  /** Stop all scheduled jobs and wait for in-flight syncs to finish. */
+  /** Stop all scheduled jobs and wait for in-flight syncs to finish (with timeout). */
   async stop(): Promise<void> {
     const log = getLogger();
     const inFlight: Promise<void>[] = [];
@@ -132,7 +132,15 @@ export class ConnectorScheduler {
     }
     if (inFlight.length > 0) {
       log.info({ count: inFlight.length }, "Waiting for in-flight syncs to complete");
-      await Promise.allSettled(inFlight);
+      const SHUTDOWN_TIMEOUT_MS = 30_000;
+      const timeout = new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          log.warn("Shutdown timeout reached, proceeding without waiting for in-flight syncs");
+          resolve();
+        }, SHUTDOWN_TIMEOUT_MS);
+        timer.unref();
+      });
+      await Promise.race([Promise.allSettled(inFlight), timeout]);
     }
     this.jobs.clear();
     this.started = false;

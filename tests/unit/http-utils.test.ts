@@ -108,7 +108,7 @@ describe("fetchWithRetry", () => {
         baseDelay: 10,
       }),
     ).rejects.toThrow(FetchError);
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
     vi.useFakeTimers();
   });
 

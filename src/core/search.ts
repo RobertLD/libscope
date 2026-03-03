@@ -390,7 +390,7 @@ function keywordSearch(
     log.debug({ err }, "FTS5 unavailable, falling back to LIKE search");
   }
 
-  const words = options.query.split(/\s+/).filter((w) => w.length > 2);
+  const words = options.query.split(/\s+/).filter((w) => w.length > 0);
   if (words.length === 0) return { results: [], totalCount: 0 };
 
   const likeConditions = words.map(() => "c.content LIKE ? ESCAPE '\\'").join(" OR ");

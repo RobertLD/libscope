@@ -37,10 +37,10 @@ On first run with the default embedding provider, LibScope downloads the [all-Mi
 LibScope supports **Markdown** (`.md`, `.mdx`) and **plain text** natively. Additional formats are available via optional dependencies:
 
 | Format | Extension | Optional Dependency | Node.js Requirement |
-|--------|-----------|-------------------|-------------------|
-| PDF | `.pdf` | `pdf-parse` (v2) | ≥ 20.16 or ≥ 22.3 |
-| Word | `.docx` | `mammoth` | Any |
-| CSV | `.csv` | Built-in | Any |
+| ------ | --------- | ------------------- | ------------------- |
+| PDF    | `.pdf`    | `pdf-parse` (v2)    | ≥ 20.16 or ≥ 22.3   |
+| Word   | `.docx`   | `mammoth`           | Any                 |
+| CSV    | `.csv`    | Built-in            | Any                 |
 
 The `pdf-parse` and `mammoth` packages are listed as `optionalDependencies` and install automatically when the Node.js version is compatible.
 
@@ -72,25 +72,25 @@ Once connected, your assistant can search docs, submit new documents, rate conte
 <details>
 <summary>Full list of MCP tools</summary>
 
-| Tool | What it does |
-| --- | --- |
-| `search-docs` | Semantic search with topic/library/version/rating filters |
-| `get-document` | Retrieve a document by ID |
-| `delete-document` | Remove a document |
-| `submit-document` | Index new content (raw text or a URL to fetch) |
-| `rate-document` | Rate a doc 1–5 with optional feedback and corrections |
-| `list-documents` | List docs with filters |
-| `list-topics` | Browse the topic hierarchy |
-| `ask-question` | RAG question-answering with source citations |
-| `reindex-documents` | Re-embed chunks (useful after switching providers) |
-| `health-check` | DB status, doc/chunk counts |
-| `sync-obsidian-vault` | Sync an Obsidian vault |
-| `sync-onenote` | Sync OneNote notebooks via Microsoft Graph |
-| `sync-notion` | Sync Notion pages and databases |
-| `sync-confluence` | Sync Confluence spaces |
-| `sync-slack` | Sync Slack channels and threads |
-| `install-pack` | Install a knowledge pack |
-| `list-packs` | List installed or registry packs |
+| Tool                  | What it does                                              |
+| --------------------- | --------------------------------------------------------- |
+| `search-docs`         | Semantic search with topic/library/version/rating filters |
+| `get-document`        | Retrieve a document by ID                                 |
+| `delete-document`     | Remove a document                                         |
+| `submit-document`     | Index new content (raw text or a URL to fetch)            |
+| `rate-document`       | Rate a doc 1–5 with optional feedback and corrections     |
+| `list-documents`      | List docs with filters                                    |
+| `list-topics`         | Browse the topic hierarchy                                |
+| `ask-question`        | RAG question-answering with source citations              |
+| `reindex-documents`   | Re-embed chunks (useful after switching providers)        |
+| `health-check`        | DB status, doc/chunk counts                               |
+| `sync-obsidian-vault` | Sync an Obsidian vault                                    |
+| `sync-onenote`        | Sync OneNote notebooks via Microsoft Graph                |
+| `sync-notion`         | Sync Notion pages and databases                           |
+| `sync-confluence`     | Sync Confluence spaces                                    |
+| `sync-slack`          | Sync Slack channels and threads                           |
+| `install-pack`        | Install a knowledge pack                                  |
+| `list-packs`          | List installed or registry packs                          |
 
 </details>
 
@@ -194,17 +194,17 @@ libscope serve --api --port 3378
 
 OpenAPI 3.0 spec at `GET /openapi.json`. Key endpoints:
 
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/api/v1/search?q=...` | Semantic search |
-| `GET/POST` | `/api/v1/documents` | List or create documents |
+| Method       | Endpoint                | Description              |
+| ------------ | ----------------------- | ------------------------ |
+| `GET`        | `/api/v1/search?q=...`  | Semantic search          |
+| `GET/POST`   | `/api/v1/documents`     | List or create documents |
 | `GET/DELETE` | `/api/v1/documents/:id` | Get or remove a document |
-| `POST` | `/api/v1/documents/url` | Index from a URL |
-| `POST` | `/api/v1/ask` | RAG question-answering |
-| `GET/POST` | `/api/v1/topics` | List or create topics |
-| `GET` | `/api/v1/tags` | List tags |
-| `GET` | `/api/v1/stats` | Usage statistics |
-| `GET` | `/api/v1/health` | Health check |
+| `POST`       | `/api/v1/documents/url` | Index from a URL         |
+| `POST`       | `/api/v1/ask`           | RAG question-answering   |
+| `GET/POST`   | `/api/v1/topics`        | List or create topics    |
+| `GET`        | `/api/v1/tags`          | List tags                |
+| `GET`        | `/api/v1/stats`         | Usage statistics         |
+| `GET`        | `/api/v1/health`        | Health check             |
 
 ## Configuration
 
@@ -212,11 +212,11 @@ LibScope reads config from (highest priority first): **environment variables** �
 
 ### Embedding Providers
 
-| Provider | Default? | Requirements | Model |
-| --- | --- | --- | --- |
-| `local` | Yes | None (~80 MB model download on first run) | all-MiniLM-L6-v2 |
-| `ollama` | | Ollama running locally | nomic-embed-text |
-| `openai` | | `LIBSCOPE_OPENAI_API_KEY` | text-embedding-3-small |
+| Provider | Default? | Requirements                              | Model                  |
+| -------- | -------- | ----------------------------------------- | ---------------------- |
+| `local`  | Yes      | None (~80 MB model download on first run) | all-MiniLM-L6-v2       |
+| `ollama` |          | Ollama running locally                    | nomic-embed-text       |
+| `openai` |          | `LIBSCOPE_OPENAI_API_KEY`                 | text-embedding-3-small |
 
 ```bash
 libscope config set embedding.provider ollama
@@ -237,21 +237,21 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
 <details>
 <summary>All environment variables</summary>
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `LIBSCOPE_EMBEDDING_PROVIDER` | `local`, `ollama`, or `openai` | `local` |
-| `LIBSCOPE_OPENAI_API_KEY` | OpenAI API key | — |
-| `LIBSCOPE_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
-| `LIBSCOPE_LLM_PROVIDER` | LLM for RAG (`openai` / `ollama`) | — |
-| `LIBSCOPE_LLM_MODEL` | LLM model override | — |
-| `LIBSCOPE_ALLOW_PRIVATE_URLS` | Allow fetching from private/internal IPs | `false` |
-| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates | `false` |
-| `ONENOTE_CLIENT_ID` | Microsoft app registration client ID | — |
-| `ONENOTE_TENANT_ID` | Microsoft tenant ID | `common` |
-| `NOTION_TOKEN` | Notion integration token | — |
-| `CONFLUENCE_URL` | Confluence base URL | — |
-| `CONFLUENCE_EMAIL` | Confluence user email | — |
-| `CONFLUENCE_TOKEN` | Confluence API token | — |
+| Variable                           | Description                              | Default                  |
+| ---------------------------------- | ---------------------------------------- | ------------------------ |
+| `LIBSCOPE_EMBEDDING_PROVIDER`      | `local`, `ollama`, or `openai`           | `local`                  |
+| `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key                           | —                        |
+| `LIBSCOPE_OLLAMA_URL`              | Ollama server URL                        | `http://localhost:11434` |
+| `LIBSCOPE_LLM_PROVIDER`            | LLM for RAG (`openai` / `ollama`)        | —                        |
+| `LIBSCOPE_LLM_MODEL`               | LLM model override                       | —                        |
+| `LIBSCOPE_ALLOW_PRIVATE_URLS`      | Allow fetching from private/internal IPs | `false`                  |
+| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates      | `false`                  |
+| `ONENOTE_CLIENT_ID`                | Microsoft app registration client ID     | —                        |
+| `ONENOTE_TENANT_ID`                | Microsoft tenant ID                      | `common`                 |
+| `NOTION_TOKEN`                     | Notion integration token                 | —                        |
+| `CONFLUENCE_URL`                   | Confluence base URL                      | —                        |
+| `CONFLUENCE_EMAIL`                 | Confluence user email                    | —                        |
+| `CONFLUENCE_TOKEN`                 | Confluence API token                     | —                        |
 
 </details>
 
@@ -339,67 +339,67 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 
 **Core**
 
-| Command | Description |
-| --- | --- |
-| `libscope init` | Initialize the database |
-| `libscope add <fileOrUrl>` | Index a file or URL |
-| `libscope import <directory>` | Bulk import from a directory |
-| `libscope import-batch <directory>` | Parallel batch import |
-| `libscope search <query>` | Search |
-| `libscope ask <question>` | RAG question-answering |
-| `libscope repl` | Interactive search REPL |
-| `libscope serve` | Start MCP server (`--api` for REST) |
+| Command                             | Description                         |
+| ----------------------------------- | ----------------------------------- |
+| `libscope init`                     | Initialize the database             |
+| `libscope add <fileOrUrl>`          | Index a file or URL                 |
+| `libscope import <directory>`       | Bulk import from a directory        |
+| `libscope import-batch <directory>` | Parallel batch import               |
+| `libscope search <query>`           | Search                              |
+| `libscope ask <question>`           | RAG question-answering              |
+| `libscope repl`                     | Interactive search REPL             |
+| `libscope serve`                    | Start MCP server (`--api` for REST) |
 
 **Documents**
 
-| Command | Description |
-| --- | --- |
-| `libscope docs list` | List documents |
-| `libscope docs show <id>` | Show a document |
-| `libscope docs delete <id>` | Delete a document |
-| `libscope docs history <id>` | Version history |
-| `libscope docs rollback <id> <ver>` | Roll back |
+| Command                             | Description       |
+| ----------------------------------- | ----------------- |
+| `libscope docs list`                | List documents    |
+| `libscope docs show <id>`           | Show a document   |
+| `libscope docs delete <id>`         | Delete a document |
+| `libscope docs history <id>`        | Version history   |
+| `libscope docs rollback <id> <ver>` | Roll back         |
 
 **Organization**
 
-| Command | Description |
-| --- | --- |
-| `libscope topics list` | List topics |
-| `libscope topics create <name>` | Create a topic |
-| `libscope tag add <id> <tags...>` | Add tags |
-| `libscope tag remove <id> <tag>` | Remove a tag |
-| `libscope tag list` | List tags |
+| Command                            | Description      |
+| ---------------------------------- | ---------------- |
+| `libscope topics list`             | List topics      |
+| `libscope topics create <name>`    | Create a topic   |
+| `libscope tag add <id> <tags...>`  | Add tags         |
+| `libscope tag remove <id> <tag>`   | Remove a tag     |
+| `libscope tag list`                | List tags        |
 | `libscope workspace create <name>` | Create workspace |
-| `libscope workspace list` | List workspaces |
-| `libscope workspace use <name>` | Switch workspace |
+| `libscope workspace list`          | List workspaces  |
+| `libscope workspace use <name>`    | Switch workspace |
 | `libscope workspace delete <name>` | Delete workspace |
 
 **Connectors**
 
-| Command | Description |
-| --- | --- |
-| `libscope connect obsidian <path>` | Sync Obsidian vault |
-| `libscope connect onenote` | Sync OneNote |
-| `libscope connect notion` | Sync Notion |
-| `libscope connect confluence` | Sync Confluence |
-| `libscope connect slack` | Sync Slack |
-| `libscope add-repo <url>` | Index a GitHub/GitLab repo |
-| `libscope disconnect <name>` | Remove connector data |
+| Command                            | Description                |
+| ---------------------------------- | -------------------------- |
+| `libscope connect obsidian <path>` | Sync Obsidian vault        |
+| `libscope connect onenote`         | Sync OneNote               |
+| `libscope connect notion`          | Sync Notion                |
+| `libscope connect confluence`      | Sync Confluence            |
+| `libscope connect slack`           | Sync Slack                 |
+| `libscope add-repo <url>`          | Index a GitHub/GitLab repo |
+| `libscope disconnect <name>`       | Remove connector data      |
 
 **Utilities**
 
-| Command | Description |
-| --- | --- |
-| `libscope watch <dir>` | Auto-reindex on file changes |
-| `libscope reindex` | Re-embed all chunks |
-| `libscope dedupe` | Find duplicates |
-| `libscope export <path>` | Export to JSON |
-| `libscope import-backup <path>` | Import from backup |
-| `libscope stats` | Usage overview |
-| `libscope pack install <name>` | Install a knowledge pack |
-| `libscope pack create` | Create a knowledge pack |
-| `libscope config set <key> <val>` | Set config |
-| `libscope config show` | Show config |
+| Command                           | Description                  |
+| --------------------------------- | ---------------------------- |
+| `libscope watch <dir>`            | Auto-reindex on file changes |
+| `libscope reindex`                | Re-embed all chunks          |
+| `libscope dedupe`                 | Find duplicates              |
+| `libscope export <path>`          | Export to JSON               |
+| `libscope import-backup <path>`   | Import from backup           |
+| `libscope stats`                  | Usage overview               |
+| `libscope pack install <name>`    | Install a knowledge pack     |
+| `libscope pack create`            | Create a knowledge pack      |
+| `libscope config set <key> <val>` | Set config                   |
+| `libscope config show`            | Show config                  |
 
 **Global flags:** `--verbose`, `--log-level <level>`, `--workspace <name>`
 

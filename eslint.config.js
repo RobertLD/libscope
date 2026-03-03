@@ -17,10 +17,7 @@ export default [
     },
     rules: {
       ...eslint.configs["recommended-type-checked"]?.rules,
-      "@typescript-eslint/no-unused-vars": [
-        "error",
-        { argsIgnorePattern: "^_" },
-      ],
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "@typescript-eslint/explicit-function-return-type": "warn",
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/prefer-nullish-coalescing": "error",

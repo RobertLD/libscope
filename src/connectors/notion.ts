@@ -111,6 +111,7 @@ async function searchNotion(token: string, lastSync?: string): Promise<NotionSea
   const allResults: NotionSearchResult[] = [];
   let cursor: string | null = null;
   let hasMore = true;
+  const MAX_PAGES = 10_000;
 
   while (hasMore) {
     const body: Record<string, unknown> = { page_size: 100 };
@@ -127,6 +128,14 @@ async function searchNotion(token: string, lastSync?: string): Promise<NotionSea
     allResults.push(...response.results);
     hasMore = response.has_more;
     cursor = response.next_cursor;
+
+    if (allResults.length >= MAX_PAGES) {
+      log.warn(
+        { count: allResults.length, max: MAX_PAGES },
+        "Reached max page limit, stopping pagination",
+      );
+      break;
+    }
 
     if (hasMore && !cursor) {
       log.warn("API returned hasMore=true but no cursor — stopping pagination");

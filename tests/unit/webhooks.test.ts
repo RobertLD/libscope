@@ -13,7 +13,7 @@ import {
   WEBHOOK_EVENTS,
 } from "../../src/core/webhooks.js";
 import type { WebhookEvent } from "../../src/core/webhooks.js";
-import { ValidationError, DocumentNotFoundError } from "../../src/errors.js";
+import { ValidationError } from "../../src/errors.js";
 import { initLogger } from "../../src/logger.js";
 
 describe("webhooks", () => {
@@ -103,8 +103,8 @@ describe("webhooks", () => {
       expect(fetched.url).toBe(created.url);
     });
 
-    it("should throw DocumentNotFoundError for non-existent id", () => {
-      expect(() => getWebhook(db, "non-existent")).toThrow(DocumentNotFoundError);
+    it("should throw ValidationError for non-existent id", () => {
+      expect(() => getWebhook(db, "non-existent")).toThrow(ValidationError);
     });
   });
 
@@ -115,8 +115,8 @@ describe("webhooks", () => {
       expect(listWebhooks(db)).toHaveLength(0);
     });
 
-    it("should throw DocumentNotFoundError for non-existent id", () => {
-      expect(() => deleteWebhook(db, "non-existent")).toThrow(DocumentNotFoundError);
+    it("should throw ValidationError for non-existent id", () => {
+      expect(() => deleteWebhook(db, "non-existent")).toThrow(ValidationError);
     });
   });
 
@@ -159,9 +159,9 @@ describe("webhooks", () => {
       );
     });
 
-    it("should throw DocumentNotFoundError for non-existent id", () => {
+    it("should throw ValidationError for non-existent id", () => {
       expect(() => updateWebhook(db, "non-existent", { url: "https://new.com" })).toThrow(
-        DocumentNotFoundError,
+        ValidationError,
       );
     });
   });

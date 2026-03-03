@@ -235,14 +235,18 @@ export async function handleRequest(
       const tag = url.searchParams.get("tag") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
-      const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
+      const limit = Number.isNaN(limitParsed)
+        ? undefined
+        : Math.max(1, Math.min(limitParsed, 1000));
       const offsetRaw = url.searchParams.get("offset");
       const offsetParsed = offsetRaw ? parseInt(offsetRaw, 10) : NaN;
-      const offset = Number.isNaN(offsetParsed) ? undefined : offsetParsed;
+      const offset = Number.isNaN(offsetParsed) ? undefined : Math.max(0, offsetParsed);
       const tags = tag ? [tag] : undefined;
       const maxChunksRaw = url.searchParams.get("maxChunksPerDocument");
       const maxChunksParsed = maxChunksRaw ? parseInt(maxChunksRaw, 10) : NaN;
-      const maxChunksPerDocument = Number.isNaN(maxChunksParsed) ? undefined : maxChunksParsed;
+      const maxChunksPerDocument = Number.isNaN(maxChunksParsed)
+        ? undefined
+        : Math.max(1, Math.min(maxChunksParsed, 100));
 
       const result = await searchDocuments(db, provider, {
         query: q,
@@ -263,7 +267,7 @@ export async function handleRequest(
       const topicId = url.searchParams.get("topic") ?? undefined;
       const limitRaw = url.searchParams.get("limit");
       const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
-      const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
+      const limit = Number.isNaN(limitParsed) ? 100 : Math.max(1, Math.min(limitParsed, 1000));
       const docs = listDocuments(db, { topicId, limit });
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, docs, took);
@@ -521,8 +525,8 @@ export async function handleRequest(
 
     if (docId && method === "DELETE") {
       deleteDocument(db, docId);
-      const took = Math.round(performance.now() - start);
-      sendJson(res, 200, { deleted: true }, took);
+      res.writeHead(204);
+      res.end();
       return;
     }
 
@@ -590,8 +594,8 @@ export async function handleRequest(
     const linkId = matchLinkId(segments);
     if (linkId && method === "DELETE") {
       deleteLink(db, linkId);
-      const took = Math.round(performance.now() - start);
-      sendJson(res, 200, { deleted: true }, took);
+      res.writeHead(204);
+      res.end();
       return;
     }
 
@@ -686,14 +690,22 @@ export async function handleRequest(
         sendJson(res, 200, result, took);
         return;
       }
+
+      sendError(
+        res,
+        400,
+        "VALIDATION_ERROR",
+        `Invalid bulk operation: ${operation}. Valid operations are: delete, retag, move`,
+      );
+      return;
     }
 
     // Saved searches: delete
     const savedSearchId = matchSearchId(segments);
     if (savedSearchId && method === "DELETE") {
       deleteSavedSearch(db, savedSearchId);
-      const took = Math.round(performance.now() - start);
-      sendJson(res, 200, { deleted: true }, took);
+      res.writeHead(204);
+      res.end();
       return;
     }
 
@@ -751,13 +763,13 @@ export async function handleRequest(
     const webhookId = matchWebhookId(segments);
     if (webhookId && method === "DELETE") {
       deleteWebhook(db, webhookId);
-      const took = Math.round(performance.now() - start);
-      sendJson(res, 200, { deleted: true }, took);
+      res.writeHead(204);
+      res.end();
       return;
     }
 
-    // Unknown route
-    sendError(res, 404, "NOT_FOUND", `Route not found: ${method} ${pathname}`);
+    // Unknown route — don't leak method/pathname to prevent endpoint enumeration
+    sendError(res, 404, "NOT_FOUND", "Route not found");
   } catch (err: unknown) {
     log.error({ err, method, pathname }, "API request error");
 

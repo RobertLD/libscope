@@ -137,7 +137,7 @@ export function getDashboardHtml(): string {
         '<span>Docs: ' + s.documentCount + '</span>' +
         '<span>Topics: ' + s.topicCount + '</span>' +
         '<span>Chunks: ' + s.chunkCount + '</span>';
-    } catch { $stats.innerHTML = ''; }
+    } catch (e) { $stats.innerHTML = ''; console.error('loadStats failed', e); }
   }
 
   async function loadTopics() {
@@ -149,7 +149,7 @@ export function getDashboardHtml(): string {
           + '<span>' + esc(t.name) + '</span><span class="count">' + (t.documentCount || 0) + '</span></li>';
       }
       $topicList.innerHTML = html;
-    } catch {}
+    } catch (e) { console.error('loadTopics failed', e); }
   }
 
   function selectTopic(el, topicId) {
@@ -262,7 +262,7 @@ export function getDashboardHtml(): string {
       goBack();
       loadStats();
       loadTopics();
-    } catch {}
+    } catch (e) { console.error('deleteDoc failed', e); }
   }
 
   function goBack() {
@@ -412,7 +412,7 @@ export function getGraphPageHtml(): string {
         opt.textContent = t.name;
         $topicFilter.appendChild(opt);
       }
-    } catch {}
+    } catch (e) { console.error('loadTopics failed', e); }
   }
 
   function connectionCount(nodeId, edges) {

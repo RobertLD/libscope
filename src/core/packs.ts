@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve as pathResolve, isAbsolute as pathIsAbsolute } from "node:path";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ValidationError } from "../errors.js";
+import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { indexDocument } from "./indexing.js";
 
@@ -154,9 +154,9 @@ export async function listAvailablePacks(registryUrl?: string): Promise<PackInfo
   validateRegistryUrl(url);
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) {
-      throw new Error(`Registry returned ${response.status}: ${response.statusText}`);
+      throw new FetchError(`Registry returned ${response.status}: ${response.statusText}`);
     }
     const data: unknown = await response.json();
     if (!Array.isArray(data)) {
@@ -178,7 +178,8 @@ export async function listAvailablePacks(registryUrl?: string): Promise<PackInfo
   } catch (err) {
     log.error({ err, url }, "Failed to fetch pack registry");
     if (err instanceof ValidationError) throw err;
-    throw new ValidationError(
+    if (err instanceof FetchError) throw err;
+    throw new FetchError(
       `Failed to fetch pack registry: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -218,15 +219,16 @@ export async function installPack(
     const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
     const packUrl = `${baseUrl}/${packNameOrPath}.json`;
     try {
-      const response = await fetch(packUrl);
+      const response = await fetch(packUrl, { signal: AbortSignal.timeout(30_000) });
       if (!response.ok) {
-        throw new Error(`Pack fetch returned ${response.status}: ${response.statusText}`);
+        throw new FetchError(`Pack fetch returned ${response.status}: ${response.statusText}`);
       }
       const data: unknown = await response.json();
       pack = validatePack(data);
     } catch (err) {
       if (err instanceof ValidationError) throw err;
-      throw new ValidationError(
+      if (err instanceof FetchError) throw err;
+      throw new FetchError(
         `Failed to fetch pack "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
       );
     }
