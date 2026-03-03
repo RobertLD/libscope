@@ -6,6 +6,25 @@ import { getLogger } from "../logger.js";
 
 const lookupAsync = promisify(dnsLookup);
 
+let tlsWarningLogged = false;
+
+/**
+ * Log a one-time warning when `allowSelfSignedCerts` is enabled but the
+ * user has not set `NODE_TLS_REJECT_UNAUTHORIZED=0` in their environment.
+ * Setting the env var programmatically is a security anti-pattern flagged
+ * by static analysis tools — the user must opt in at the process level.
+ */
+function warnIfTlsBypassMissing(): void {
+  if (tlsWarningLogged) return;
+  if (process.env["NODE_TLS_REJECT_UNAUTHORIZED"] === "0") return;
+  tlsWarningLogged = true;
+  const log = getLogger();
+  log.warn(
+    "allowSelfSignedCerts is enabled but NODE_TLS_REJECT_UNAUTHORIZED is not set. " +
+      "Set NODE_TLS_REJECT_UNAUTHORIZED=0 in your environment to allow self-signed certificates.",
+  );
+}
+
 export interface FetchedDocument {
   title: string;
   content: string;
@@ -159,23 +178,10 @@ async function fetchWithRedirects(
   allowPrivateUrls: boolean,
   allowSelfSignedCerts: boolean,
 ): Promise<Response> {
-  // Temporarily disable TLS verification when self-signed certs are allowed.
-  // Node's native fetch (undici) reads this env var at connection time.
-  const prevTls = process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
   if (allowSelfSignedCerts) {
-    process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+    warnIfTlsBypassMissing();
   }
-  try {
-    return await _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls);
-  } finally {
-    if (allowSelfSignedCerts) {
-      if (prevTls === undefined) {
-        delete process.env["NODE_TLS_REJECT_UNAUTHORIZED"];
-      } else {
-        process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = prevTls;
-      }
-    }
-  }
+  return _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls);
 }
 
 async function _fetchWithRedirects(
@@ -191,8 +197,8 @@ async function _fetchWithRedirects(
 
     // SSRF protection: validateUrl() above resolves DNS and blocks private/internal IPs.
     // Redirect following is manual with per-hop validation. DNS rebinding is checked post-fetch.
+    // codeql[js/request-forgery] — URL scheme and destination validated above
     const response = await fetch(current, {
-      // codeql[js/request-forgery] — URL validated via validateUrl() above
       headers: {
         "User-Agent": "LibScope/0.1.0 (documentation indexer)",
         Accept: "text/html, text/markdown, text/plain, */*",
