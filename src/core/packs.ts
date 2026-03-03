@@ -311,15 +311,20 @@ export async function installPack(
   );
 
   let installed = 0;
+  const total = pack.documents.length;
   for (const doc of pack.documents) {
     try {
+      log.info(
+        { progress: `${installed + 1}/${total}`, title: doc.title },
+        "Indexing pack document",
+      );
       const result = await indexDocument(db, provider, {
         title: doc.title,
         content: doc.content,
         sourceType: "library",
         url: doc.source || undefined,
         submittedBy: "manual",
-        dedup: "warn",
+        dedup: "skip",
       });
 
       // Tag the document with the pack name
