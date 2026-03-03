@@ -14,4 +14,5 @@ Refer to [agents.md](../agents.md) at the repository root for full architecture,
 - Tests use `MockEmbeddingProvider` and in-memory SQLite (no sqlite-vec in tests).
 - Run `npm run typecheck && npm run test:coverage && npm run lint` before considering work complete. Use `test:coverage` (not `test`) — CI enforces coverage thresholds (statements ≥ 75%, branches ≥ 74%, functions ≥ 75%, lines ≥ 75%) and will reject PRs that drop below them.
 - Before creating a PR, use a `code-review` sub-agent to self-review your diff. Fix any issues it finds before opening the PR.
+- **Branch workflow:** All feature branches and PRs target `development`. Only `development` can be merged into `main`. When creating branches, branch from `development`. When creating PRs, set the base to `development`.
 - **PR lifecycle is mandatory.** After pushing a PR, always: (1) wait for CI/CD to complete, (2) check if it passed, (3) fix failures and re-push if needed, (4) read and address all review comments, (5) verify CI is green again. A PR is not done until all checks pass and all review comments are resolved. See the "Pull Request Lifecycle" section in `agents.md` for the full workflow.

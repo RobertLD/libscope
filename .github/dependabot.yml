@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     groups:
@@ -9,14 +10,17 @@ updates:
         update-types: ["minor", "patch"]
   - package-ecosystem: "pip"
     directory: "/sdk/python"
+    target-branch: "development"
     schedule:
       interval: "weekly"
   - package-ecosystem: "gomod"
     directory: "/sdk/go"
+    target-branch: "development"
     schedule:
       interval: "weekly"
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "development"
     schedule:
       interval: "weekly"
     groups:
