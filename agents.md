@@ -260,6 +260,7 @@ git worktree remove ../libscope-<branch-name>
 9. **Verify HTTP error handling.** When writing code that calls external services (fetch, HTTP clients), always check response status codes — `fetch()` resolves on 4xx/5xx, so check `resp.ok` or `resp.status`. Never treat a resolved fetch as a success without status checking.
 10. **Don't expose secrets in API responses.** If a model stores sensitive fields (tokens, secrets, keys), redact them from API/MCP response payloads.
 11. **Self-review before creating a PR.** Before opening a pull request, use a `code-review` sub-agent to review your own diff (`git diff main...HEAD`). Fix any issues it finds. Do not rely on the automated GitHub review — catch problems before the PR is created, not after.
+12. **Always address PR review comments.** When working on a PR that has review comments, read and evaluate every comment before considering work complete. If a comment is valid, fix it. If a comment is incorrect or inapplicable, reply explaining why. Never ignore open review comments — they block merge and erode reviewer trust.
 
 ## Documentation
 

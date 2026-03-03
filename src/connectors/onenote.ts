@@ -87,7 +87,8 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
 
     if (response.status === 429) {
       const retryAfter = response.headers.get("Retry-After");
-      const delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.pow(2, attempt) * 1000;
+      const parsed = retryAfter ? parseInt(retryAfter, 10) : NaN;
+      const delayMs = Number.isNaN(parsed) ? Math.pow(2, attempt) * 1000 : parsed * 1000;
       log.warn({ attempt, delayMs }, "Rate limited (429), backing off");
       lastError = new LibScopeError(
         `Rate limited by Graph API (attempt ${attempt + 1})`,

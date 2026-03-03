@@ -8,6 +8,7 @@ import { getDashboardHtml, getGraphPageHtml } from "./dashboard.js";
 import { handleGraphRequest } from "./graph-api.js";
 import { DocumentNotFoundError } from "../errors.js";
 import { validateCountRow } from "../utils/db-validation.js";
+import { getLogger } from "../logger.js";
 import { checkRateLimit } from "../api/middleware.js";
 
 export interface WebServerOptions {
@@ -34,8 +35,13 @@ export function startWebServer(
         res.end(JSON.stringify({ error: "Too many requests" }));
         return;
       }
-      handleRequest(db, provider, req, res).catch((_err) => {
-        sendJson(res, 500, { error: "Internal server error" });
+      handleRequest(db, provider, req, res).catch((err) => {
+        getLogger().error({ err, url: req.url }, "Unhandled error in web request handler");
+        if (!res.headersSent) {
+          sendJson(res, 500, { error: "Internal server error" });
+        } else {
+          req.socket.destroy();
+        }
       });
     });
 

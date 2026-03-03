@@ -89,6 +89,11 @@ describe("bulk operations", () => {
       const ids = resolveSelector(db, { library: "mass" }, 10);
       expect(ids.length).toBeLessThanOrEqual(10);
     });
+
+    it("returns empty array for negative limit", () => {
+      const ids = resolveSelector(db, { library: "react" }, -5);
+      expect(ids).toHaveLength(0);
+    });
   });
 
   describe("bulkDelete", () => {
@@ -110,6 +115,31 @@ describe("bulk operations", () => {
       expect(result.affected).toBe(2);
 
       // Verify nothing was deleted
+      const remaining = listDocuments(db, { limit: 100 });
+      expect(remaining).toHaveLength(5);
+    });
+
+    it("rolls back all deletions if one fails", () => {
+      // Use a trigger to simulate failure on the second document deletion
+      db.exec(`
+        CREATE TABLE _del_flag (count INTEGER DEFAULT 0);
+        INSERT INTO _del_flag VALUES (0);
+        CREATE TRIGGER _fail_on_second_delete
+        BEFORE DELETE ON documents
+        BEGIN
+          UPDATE _del_flag SET count = (SELECT count + 1 FROM _del_flag);
+          SELECT CASE WHEN (SELECT count FROM _del_flag) > 1
+            THEN RAISE(ABORT, 'Simulated delete failure')
+          END;
+        END;
+      `);
+
+      expect(() => bulkDelete(db, { library: "react" })).toThrow("Simulated delete failure");
+
+      // Clean up trigger before assertions
+      db.exec("DROP TRIGGER IF EXISTS _fail_on_second_delete; DROP TABLE IF EXISTS _del_flag;");
+
+      // Verify nothing was deleted (transaction rolled back)
       const remaining = listDocuments(db, { limit: 100 });
       expect(remaining).toHaveLength(5);
     });
@@ -152,6 +182,35 @@ describe("bulk operations", () => {
     it("throws if no addTags or removeTags specified", () => {
       expect(() => bulkRetag(db, { library: "react" })).toThrow(ValidationError);
     });
+
+    it("rolls back tag changes if one fails mid-operation", () => {
+      // Use a trigger to simulate failure on the second document_tags insert
+      db.exec(`
+        CREATE TABLE _tag_flag (count INTEGER DEFAULT 0);
+        INSERT INTO _tag_flag VALUES (0);
+        CREATE TRIGGER _fail_on_second_tag
+        AFTER INSERT ON document_tags
+        BEGIN
+          UPDATE _tag_flag SET count = (SELECT count + 1 FROM _tag_flag);
+          SELECT CASE WHEN (SELECT count FROM _tag_flag) > 1
+            THEN RAISE(ABORT, 'Simulated tag failure')
+          END;
+        END;
+      `);
+
+      expect(() => bulkRetag(db, { library: "react" }, ["rollback-tag"])).toThrow(
+        "Simulated tag failure",
+      );
+
+      // Clean up trigger before assertions
+      db.exec("DROP TRIGGER IF EXISTS _fail_on_second_tag; DROP TABLE IF EXISTS _tag_flag;");
+
+      // Verify no tags were added (transaction rolled back)
+      const tagsA = getDocumentTags(db, "doc-a").map((t) => t.name);
+      const tagsB = getDocumentTags(db, "doc-b").map((t) => t.name);
+      expect(tagsA).not.toContain("rollback-tag");
+      expect(tagsB).not.toContain("rollback-tag");
+    });
   });
 
   describe("bulkMove", () => {
@@ -173,6 +232,17 @@ describe("bulk operations", () => {
 
       const docA = getDocument(db, "doc-a");
       expect(docA.topicId).toBe("topic-1");
+    });
+
+    it("rolls back all moves on constraint violation", () => {
+      // Moving to a non-existent topic should trigger FK constraint failure
+      expect(() => bulkMove(db, { library: "react" }, "nonexistent-topic")).toThrow();
+
+      // Verify no documents were moved (transaction rolled back)
+      const docA = getDocument(db, "doc-a");
+      const docB = getDocument(db, "doc-b");
+      expect(docA.topicId).toBe("topic-1");
+      expect(docB.topicId).toBe("topic-1");
     });
   });
 });

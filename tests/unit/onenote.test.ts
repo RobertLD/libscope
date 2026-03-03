@@ -476,6 +476,27 @@ describe("OneNote Connector", () => {
       expect(result.notebooks).toBe(0);
       expect(callCount).toBe(2);
     });
+
+    it("falls back to exponential backoff when Retry-After is non-numeric", async () => {
+      let callCount = 0;
+      mockFetch((url: string) => {
+        if (url.includes("/notebooks") && !url.includes("/sections")) {
+          callCount++;
+          if (callCount === 1) {
+            return new Response("Too Many Requests", {
+              status: 429,
+              headers: { "Retry-After": "Wed, 21 Oct 2025 07:28:00 GMT" },
+            });
+          }
+          return jsonResponse({ value: [] });
+        }
+        return new Response("Not found", { status: 404 });
+      });
+
+      const result = await syncOneNote(db, provider, makeConfig());
+      expect(result.notebooks).toBe(0);
+      expect(callCount).toBe(2);
+    });
   });
 
   // -------------------------------------------------------------------------
