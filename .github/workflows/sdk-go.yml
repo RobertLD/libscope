@@ -1,9 +1,9 @@
 name: Go SDK
 on:
   push:
-    paths: ["sdk-go/**"]
+    paths: ["sdk/go/**"]
   pull_request:
-    paths: ["sdk-go/**"]
+    paths: ["sdk/go/**"]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,5 +15,5 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
-      - run: cd sdk-go && go test ./... -v
-      - run: cd sdk-go && go vet ./...
+      - run: cd sdk/go && go test ./... -v
+      - run: cd sdk/go && go vet ./...

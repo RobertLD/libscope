@@ -8,10 +8,17 @@ updates:
       minor-and-patch:
         update-types: ["minor", "patch"]
   - package-ecosystem: "pip"
-    directory: "/sdk-python"
+    directory: "/sdk/python"
     schedule:
       interval: "weekly"
   - package-ecosystem: "gomod"
-    directory: "/sdk-go"
+    directory: "/sdk/go"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]

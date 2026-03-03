@@ -1,9 +1,9 @@
 name: Python SDK
 on:
   push:
-    paths: ["sdk-python/**"]
+    paths: ["sdk/python/**"]
   pull_request:
-    paths: ["sdk-python/**"]
+    paths: ["sdk/python/**"]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -15,4 +15,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: cd sdk-python && pip install -e ".[dev]" && pytest -v
+      - run: cd sdk/python && pip install -e ".[dev]" && pytest -v
