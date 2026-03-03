@@ -562,15 +562,15 @@ describe("knowledge packs", () => {
     });
 
     it("should throw for empty pack name", async () => {
-      await expect(
-        createPackFromSource({ name: "  ", from: [sourceDir] }),
-      ).rejects.toThrow(/Pack name is required/);
+      await expect(createPackFromSource({ name: "  ", from: [sourceDir] })).rejects.toThrow(
+        /Pack name is required/,
+      );
     });
 
     it("should throw for empty from array", async () => {
-      await expect(
-        createPackFromSource({ name: "test", from: [] }),
-      ).rejects.toThrow(/At least one --from source is required/);
+      await expect(createPackFromSource({ name: "test", from: [] })).rejects.toThrow(
+        /At least one --from source is required/,
+      );
     });
 
     it("should throw for non-existent source path", async () => {
@@ -581,9 +581,9 @@ describe("knowledge packs", () => {
 
     it("should throw when no documents could be created", async () => {
       // Empty directory — no parseable files
-      await expect(
-        createPackFromSource({ name: "empty", from: [sourceDir] }),
-      ).rejects.toThrow(/No documents could be created/);
+      await expect(createPackFromSource({ name: "empty", from: [sourceDir] })).rejects.toThrow(
+        /No documents could be created/,
+      );
     });
 
     it("should skip files without a parser", async () => {

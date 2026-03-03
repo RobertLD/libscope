@@ -1695,10 +1695,7 @@ packCmd
     "--extensions <exts>",
     "Comma-separated file extensions to include (e.g. .md,.html). Default: all supported",
   )
-  .option(
-    "--exclude <patterns...>",
-    "Glob patterns to exclude (e.g. *.min.js, assets/**)",
-  )
+  .option("--exclude <patterns...>", "Glob patterns to exclude (e.g. *.min.js, assets/**)")
   .option("--no-recursive", "Do not recurse into subdirectories")
   .action(
     async (opts: {
