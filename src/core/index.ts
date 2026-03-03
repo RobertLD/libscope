@@ -219,9 +219,10 @@ export {
   signPayload,
   buildPayload,
   fireWebhooks,
+  redactWebhook,
   WEBHOOK_EVENTS,
 } from "./webhooks.js";
-export type { Webhook, WebhookEvent, WebhookPayload } from "./webhooks.js";
+export type { Webhook, RedactedWebhook, WebhookEvent, WebhookPayload } from "./webhooks.js";
 
 export { ConnectorScheduler, loadScheduleEntries } from "./scheduler.js";
 export type { ScheduleConfig, SchedulerStatus } from "./scheduler.js";

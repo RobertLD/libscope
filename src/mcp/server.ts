@@ -19,7 +19,7 @@ import {
   runSavedSearch,
   deleteSavedSearch,
 } from "../core/saved-searches.js";
-import { createWebhook, listWebhooks, deleteWebhook } from "../core/webhooks.js";
+import { createWebhook, listWebhooks, deleteWebhook, redactWebhook } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
 import { suggestTags } from "../core/tags.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
@@ -1116,7 +1116,7 @@ async function main(): Promise<void> {
     withErrorHandling((params) => {
       const webhook = createWebhook(db, params.url, params.events as WebhookEvent[], params.secret);
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(webhook, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify(redactWebhook(webhook), null, 2) }],
       };
     }),
   );
@@ -1129,7 +1129,9 @@ async function main(): Promise<void> {
     withErrorHandling(() => {
       const webhooks = listWebhooks(db);
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(webhooks, null, 2) }],
+        content: [
+          { type: "text" as const, text: JSON.stringify(webhooks.map(redactWebhook), null, 2) },
+        ],
       };
     }),
   );

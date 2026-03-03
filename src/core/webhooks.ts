@@ -30,6 +30,17 @@ export interface WebhookPayload {
   data: Record<string, unknown>;
 }
 
+export interface RedactedWebhook extends Omit<Webhook, "secret"> {
+  hasSecret: boolean;
+}
+
+/** Strip the secret from a webhook for API/MCP responses. */
+export function redactWebhook(webhook: Webhook): RedactedWebhook {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { secret, ...rest } = webhook;
+  return { ...rest, hasSecret: webhook.secret !== null };
+}
+
 interface WebhookRow {
   id: string;
   url: string;

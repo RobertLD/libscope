@@ -47,23 +47,10 @@ import {
   getWebhook,
   buildPayload,
   signPayload,
+  redactWebhook,
 } from "../core/webhooks.js";
-import type { WebhookEvent, Webhook } from "../core/webhooks.js";
+import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
-
-/** Strip the secret from webhook API responses. */
-function redactWebhook(webhook: Webhook): Omit<Webhook, "secret"> & { hasSecret: boolean } {
-  return {
-    id: webhook.id,
-    url: webhook.url,
-    events: webhook.events,
-    active: webhook.active,
-    createdAt: webhook.createdAt,
-    lastTriggeredAt: webhook.lastTriggeredAt,
-    failureCount: webhook.failureCount,
-    hasSecret: webhook.secret !== null,
-  };
-}
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
