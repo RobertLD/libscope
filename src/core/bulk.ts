@@ -44,6 +44,10 @@ export function resolveSelector(
 
   const effectiveLimit = Math.max(0, Math.min(limit ?? MAX_BATCH_SIZE, MAX_BATCH_SIZE));
 
+  if (effectiveLimit === 0) {
+    return [];
+  }
+
   // Use listDocuments for basic filters
   const docs = listDocuments(db, {
     library: selector.library,

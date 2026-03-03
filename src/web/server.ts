@@ -37,7 +37,11 @@ export function startWebServer(
       }
       handleRequest(db, provider, req, res).catch((err) => {
         getLogger().error({ err, url: req.url }, "Unhandled error in web request handler");
-        sendJson(res, 500, { error: "Internal server error" });
+        if (!res.headersSent) {
+          sendJson(res, 500, { error: "Internal server error" });
+        } else {
+          req.socket.destroy();
+        }
       });
     });
 
