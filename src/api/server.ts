@@ -70,7 +70,9 @@ export async function startApiServer(
       resolve({
         close: async () => {
           await scheduler?.stop();
-          server.close();
+          await new Promise<void>((resolveClose, rejectClose) => {
+            server.close((err) => (err ? rejectClose(err) : resolveClose()));
+          });
         },
         port,
         scheduler,

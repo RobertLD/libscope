@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 
 /** Set CORS headers and handle OPTIONS preflight. Returns true if request was handled (preflight). */
 export function corsMiddleware(
@@ -112,7 +113,9 @@ export function checkApiKey(req: IncomingMessage, res: ServerResponse): boolean 
   }
 
   const token = authHeader.slice(7);
-  if (token !== apiKey) {
+  const tokenBuf = Buffer.from(token);
+  const keyBuf = Buffer.from(apiKey);
+  if (tokenBuf.length !== keyBuf.length || !timingSafeEqual(tokenBuf, keyBuf)) {
     sendError(res, 401, "UNAUTHORIZED", "Invalid API key");
     return false;
   }

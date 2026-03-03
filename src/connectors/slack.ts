@@ -277,6 +277,7 @@ async function fetchThreadReplies(
 
 function formatTimestamp(ts: string): string {
   const seconds = Number(ts.split(".")[0]);
+  if (Number.isNaN(seconds)) return new Date(0).toISOString();
   return new Date(seconds * 1000).toISOString();
 }
 
