@@ -34,7 +34,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         });
         const embedding = response.data[0]?.embedding;
         if (!embedding) {
-          throw new Error("OpenAI returned empty embedding");
+          throw new EmbeddingError("OpenAI returned empty embedding");
         }
         if (embedding.length !== this.dimensions) {
           throw new EmbeddingError(

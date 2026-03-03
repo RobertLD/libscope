@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { ValidationError } from "../errors.js";
 
 export interface Workspace {
   name: string;
@@ -37,7 +38,7 @@ function ensureWorkspacesDir(): void {
 /** Create a new workspace directory. */
 export function createWorkspace(name: string): Workspace {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-    throw new Error(
+    throw new ValidationError(
       `Invalid workspace name "${name}". Use only alphanumeric characters, hyphens, and underscores.`,
     );
   }
@@ -46,7 +47,7 @@ export function createWorkspace(name: string): Workspace {
   const wsPath = join(getWorkspacesDir(), name);
 
   if (existsSync(wsPath)) {
-    throw new Error(`Workspace "${name}" already exists.`);
+    throw new ValidationError(`Workspace "${name}" already exists.`);
   }
 
   mkdirSync(wsPath, { recursive: true });
@@ -64,12 +65,12 @@ export function createWorkspace(name: string): Workspace {
 /** Delete a workspace directory. The 'default' workspace cannot be deleted. */
 export function deleteWorkspace(name: string): void {
   if (name === DEFAULT_WORKSPACE) {
-    throw new Error("Cannot delete the default workspace.");
+    throw new ValidationError("Cannot delete the default workspace.");
   }
 
   const wsPath = join(getWorkspacesDir(), name);
   if (!existsSync(wsPath)) {
-    throw new Error(`Workspace "${name}" does not exist.`);
+    throw new ValidationError(`Workspace "${name}" does not exist.`);
   }
 
   rmSync(wsPath, { recursive: true, force: true });
@@ -165,7 +166,7 @@ export function getActiveWorkspace(): string {
 export function setActiveWorkspace(name: string): void {
   const wsPath = join(getWorkspacesDir(), name);
   if (name !== DEFAULT_WORKSPACE && !existsSync(wsPath)) {
-    throw new Error(`Workspace "${name}" does not exist.`);
+    throw new ValidationError(`Workspace "${name}" does not exist.`);
   }
 
   const dir = join(homedir(), ".libscope");

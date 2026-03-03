@@ -68,37 +68,37 @@ client = LibscopeClient(
 
 ### Document Operations
 
-| Method | Description |
-|--------|-------------|
-| `search(query, *, limit, topic, tags, min_score)` | Semantic search |
-| `add_document(url, *, topic, tags)` | Index a document from URL |
-| `add_text(title, content, *, topic, tags)` | Index raw text |
-| `get_document(doc_id)` | Get a document by ID |
-| `list_documents(*, topic, limit, offset)` | List documents |
-| `delete_document(doc_id)` | Delete a document |
+| Method                                            | Description               |
+| ------------------------------------------------- | ------------------------- |
+| `search(query, *, limit, topic, tags, min_score)` | Semantic search           |
+| `add_document(url, *, topic, tags)`               | Index a document from URL |
+| `add_text(title, content, *, topic, tags)`        | Index raw text            |
+| `get_document(doc_id)`                            | Get a document by ID      |
+| `list_documents(*, topic, limit, offset)`         | List documents            |
+| `delete_document(doc_id)`                         | Delete a document         |
 
 ### Topic Operations
 
-| Method | Description |
-|--------|-------------|
-| `list_topics()` | List all topics |
-| `create_topic(name, *, parent_id)` | Create a topic |
+| Method                             | Description     |
+| ---------------------------------- | --------------- |
+| `list_topics()`                    | List all topics |
+| `create_topic(name, *, parent_id)` | Create a topic  |
 
 ### Tag Operations
 
-| Method | Description |
-|--------|-------------|
-| `add_tags(doc_id, tags)` | Add tags to a document |
+| Method                      | Description                 |
+| --------------------------- | --------------------------- |
+| `add_tags(doc_id, tags)`    | Add tags to a document      |
 | `remove_tags(doc_id, tags)` | Remove tags from a document |
-| `list_tags()` | List all tags |
+| `list_tags()`               | List all tags               |
 
 ### Analytics & Q&A
 
-| Method | Description |
-|--------|-------------|
-| `get_analytics()` | Get knowledge base statistics |
+| Method                    | Description                    |
+| ------------------------- | ------------------------------ |
+| `get_analytics()`         | Get knowledge base statistics  |
 | `ask(question, *, topic)` | RAG-powered question answering |
-| `health()` | Check server health |
+| `health()`                | Check server health            |
 
 ## Requirements
 

@@ -13,19 +13,19 @@ LibScope is an **AI-powered knowledge base with MCP (Model Context Protocol) int
 
 ## Quick Reference — Commands
 
-| Task | Command |
-|------|---------|
-| Build | `npm run build` |
-| Typecheck (no emit) | `npm run typecheck` |
-| Run all tests | `npm test` |
-| Run tests in watch mode | `npm run test:watch` |
+| Task                    | Command                 |
+| ----------------------- | ----------------------- |
+| Build                   | `npm run build`         |
+| Typecheck (no emit)     | `npm run typecheck`     |
+| Run all tests           | `npm test`              |
+| Run tests in watch mode | `npm run test:watch`    |
 | Run tests with coverage | `npm run test:coverage` |
-| Lint | `npm run lint` |
-| Lint and auto-fix | `npm run lint:fix` |
-| Format check | `npm run format:check` |
-| Format and write | `npm run format` |
-| Start MCP server | `npm run serve` |
-| TypeScript watch | `npm run dev` |
+| Lint                    | `npm run lint`          |
+| Lint and auto-fix       | `npm run lint:fix`      |
+| Format check            | `npm run format:check`  |
+| Format and write        | `npm run format`        |
+| Start MCP server        | `npm run serve`         |
+| TypeScript watch        | `npm run dev`           |
 
 **Always run `npm run typecheck` and `npm test` before committing.**
 
@@ -119,6 +119,7 @@ Uses **pino** for structured JSON logging via `src/logger.ts`.
 - Vector table (`chunk_embeddings`) is created separately via `createVectorTable()` because it depends on the embedding provider's dimensions.
 
 **Adding a migration:**
+
 1. Increment `SCHEMA_VERSION` at the top of `src/db/schema.ts`.
 2. Add a new key to the `MIGRATIONS` record with the SQL.
 3. The migration must insert its version into `schema_version`.
@@ -201,11 +202,11 @@ SQLite `datetime('now')` has **second-level precision**. If you insert multiple 
 
 Three GitHub Actions workflows in `.github/workflows/`:
 
-| Workflow | Trigger | What it does |
-|----------|---------|--------------|
-| `ci.yml` | Push & PR | Lint, typecheck, test (Node 18/20/22 matrix), build |
-| `release.yml` | Tags `v*.*.*` | Full CI then `npm publish --provenance` |
-| `codeql.yml` | Weekly + PR | CodeQL security scanning |
+| Workflow      | Trigger       | What it does                                        |
+| ------------- | ------------- | --------------------------------------------------- |
+| `ci.yml`      | Push & PR     | Lint, typecheck, test (Node 18/20/22 matrix), build |
+| `release.yml` | Tags `v*.*.*` | Full CI then `npm publish --provenance`             |
+| `codeql.yml`  | Weekly + PR   | CodeQL security scanning                            |
 
 ## MCP Server
 
@@ -238,6 +239,7 @@ git worktree remove ../libscope-<branch-name>
 ```
 
 **Rules for parallel agents:**
+
 - **Never** `git checkout` branches inside the shared main repo — use a worktree instead.
 - Each worktree is an independent working directory with its own `node_modules/`.
 - Run `npm install` in the worktree before building/testing (worktrees don't share `node_modules`).
@@ -304,14 +306,14 @@ Every PR must follow this complete lifecycle. **Do not consider a PR done until 
 
 Every user-facing change **must** update all relevant documentation. Documentation lives in multiple places — check each one:
 
-| Location | What it covers |
-|----------|---------------|
-| `README.md` | Top-level overview, quickstart, config tables, CLI summary |
-| `docs/guide/getting-started.md` | First-run walkthrough |
-| `docs/guide/configuration.md` | Config guide with env var table and examples |
-| `docs/reference/cli.md` | Full CLI command reference |
-| `docs/reference/configuration.md` | Complete config key reference, env vars, example config |
-| `agents.md` | Agent/Copilot guide — architecture, conventions, config precedence |
+| Location                          | What it covers                                                     |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `README.md`                       | Top-level overview, quickstart, config tables, CLI summary         |
+| `docs/guide/getting-started.md`   | First-run walkthrough                                              |
+| `docs/guide/configuration.md`     | Config guide with env var table and examples                       |
+| `docs/reference/cli.md`           | Full CLI command reference                                         |
+| `docs/reference/configuration.md` | Complete config key reference, env vars, example config            |
+| `agents.md`                       | Agent/Copilot guide — architecture, conventions, config precedence |
 
 **What to update for common change types:**
 

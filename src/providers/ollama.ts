@@ -47,7 +47,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         }
 
         if (!response.ok) {
-          throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
+          throw new EmbeddingError(
+            `Ollama API returned ${response.status}: ${await response.text()}`,
+          );
         }
 
         const data = (await response.json()) as Record<string, unknown>;
@@ -58,7 +60,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         }
         const embedding = data.embeddings[0] as number[] | undefined;
         if (!embedding) {
-          throw new Error("Ollama returned empty embeddings");
+          throw new EmbeddingError("Ollama returned empty embeddings");
         }
         if (embedding.length !== this.dimensions) {
           throw new EmbeddingError(
@@ -110,7 +112,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         }
 
         if (!response.ok) {
-          throw new Error(`Ollama API returned ${response.status}: ${await response.text()}`);
+          throw new EmbeddingError(
+            `Ollama API returned ${response.status}: ${await response.text()}`,
+          );
         }
 
         const data = (await response.json()) as Record<string, unknown>;

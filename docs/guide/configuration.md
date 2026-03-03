@@ -45,11 +45,11 @@ You can also create a `.libscope.json` in your project root for per-project sett
 
 Embeddings turn text into vectors for semantic search. LibScope supports three providers:
 
-| Provider | Default | Requires | Notes |
-|----------|---------|----------|-------|
-| `local` | ✅ | Nothing | all-MiniLM-L6-v2, ~80MB download on first use |
-| `ollama` | | Ollama running locally | Uses nomic-embed-text by default |
-| `openai` | | API key | Uses text-embedding-3-small |
+| Provider | Default | Requires               | Notes                                         |
+| -------- | ------- | ---------------------- | --------------------------------------------- |
+| `local`  | ✅      | Nothing                | all-MiniLM-L6-v2, ~80MB download on first use |
+| `ollama` |         | Ollama running locally | Uses nomic-embed-text by default              |
+| `openai` |         | API key                | Uses text-embedding-3-small                   |
 
 The local provider works out of the box — no API keys, no external services. It runs the model in-process using `@xenova/transformers`.
 
@@ -80,21 +80,21 @@ Supported providers: `openai`, `ollama`.
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LIBSCOPE_EMBEDDING_PROVIDER` | Embedding provider (`local` / `ollama` / `openai`) | `local` |
-| `LIBSCOPE_OPENAI_API_KEY` | OpenAI API key | — |
-| `LIBSCOPE_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` |
-| `LIBSCOPE_LLM_PROVIDER` | LLM provider for RAG (`openai` / `ollama`) | — |
-| `LIBSCOPE_LLM_MODEL` | LLM model override | — |
-| `LIBSCOPE_ALLOW_PRIVATE_URLS` | Allow fetching from private/internal IPs | `false` |
-| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates | `false` |
-| `ONENOTE_CLIENT_ID` | Microsoft app registration client ID | — |
-| `ONENOTE_TENANT_ID` | Microsoft tenant ID | `common` |
-| `NOTION_TOKEN` | Notion integration token | — |
-| `CONFLUENCE_URL` | Confluence base URL | — |
-| `CONFLUENCE_EMAIL` | Confluence user email | — |
-| `CONFLUENCE_TOKEN` | Confluence API token | — |
+| Variable                           | Description                                        | Default                  |
+| ---------------------------------- | -------------------------------------------------- | ------------------------ |
+| `LIBSCOPE_EMBEDDING_PROVIDER`      | Embedding provider (`local` / `ollama` / `openai`) | `local`                  |
+| `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key                                     | —                        |
+| `LIBSCOPE_OLLAMA_URL`              | Ollama server URL                                  | `http://localhost:11434` |
+| `LIBSCOPE_LLM_PROVIDER`            | LLM provider for RAG (`openai` / `ollama`)         | —                        |
+| `LIBSCOPE_LLM_MODEL`               | LLM model override                                 | —                        |
+| `LIBSCOPE_ALLOW_PRIVATE_URLS`      | Allow fetching from private/internal IPs           | `false`                  |
+| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates                | `false`                  |
+| `ONENOTE_CLIENT_ID`                | Microsoft app registration client ID               | —                        |
+| `ONENOTE_TENANT_ID`                | Microsoft tenant ID                                | `common`                 |
+| `NOTION_TOKEN`                     | Notion integration token                           | —                        |
+| `CONFLUENCE_URL`                   | Confluence base URL                                | —                        |
+| `CONFLUENCE_EMAIL`                 | Confluence user email                              | —                        |
+| `CONFLUENCE_TOKEN`                 | Confluence API token                               | —                        |
 
 Environment variables always take precedence over config files.
 

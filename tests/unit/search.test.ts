@@ -560,14 +560,14 @@ describe("LIKE fallback with filters", () => {
     expect(results[0]!.title).toBe("Tagged Doc");
   });
 
-  it("should return empty results when query words are too short", async () => {
+  it("should return results for short query words via LIKE fallback", async () => {
     insertDoc(db, "doc1", "Doc");
     insertChunk(db, "c1", "doc1", "a b c");
 
     dropFts();
 
     const { results } = await searchDocuments(db, provider, { query: "a b" });
-    expect(results).toEqual([]);
+    expect(results.length).toBeGreaterThan(0);
   });
 
   it("should apply maxChunksPerDocument in LIKE fallback", async () => {

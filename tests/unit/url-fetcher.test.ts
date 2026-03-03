@@ -393,7 +393,7 @@ describe("FetchOptions configuration", () => {
     );
 
     // 1 original + 2 redirects = 3 calls
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it("should follow redirects up to the limit and succeed", async () => {

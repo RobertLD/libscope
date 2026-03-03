@@ -14,18 +14,18 @@ npm run dev  # TypeScript watch mode
 
 ## Scripts
 
-| Command | Description |
-|---------|-------------|
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm run dev` | Watch mode compilation |
-| `npm run lint` | Run ESLint |
-| `npm run lint:fix` | ESLint with auto-fix |
-| `npm run format` | Format with Prettier |
-| `npm run format:check` | Check formatting |
-| `npm run typecheck` | Type-check without emitting |
-| `npm test` | Run tests |
-| `npm run test:watch` | Tests in watch mode |
-| `npm run test:coverage` | Tests with coverage report |
+| Command                 | Description                   |
+| ----------------------- | ----------------------------- |
+| `npm run build`         | Compile TypeScript to `dist/` |
+| `npm run dev`           | Watch mode compilation        |
+| `npm run lint`          | Run ESLint                    |
+| `npm run lint:fix`      | ESLint with auto-fix          |
+| `npm run format`        | Format with Prettier          |
+| `npm run format:check`  | Check formatting              |
+| `npm run typecheck`     | Type-check without emitting   |
+| `npm test`              | Run tests                     |
+| `npm run test:watch`    | Tests in watch mode           |
+| `npm run test:coverage` | Tests with coverage report    |
 
 ## Project Structure
 
@@ -78,6 +78,7 @@ tests/
 ## Reporting Issues
 
 Open an issue on GitHub with:
+
 - What you expected to happen
 - What actually happened
 - Steps to reproduce

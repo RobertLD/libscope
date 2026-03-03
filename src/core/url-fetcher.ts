@@ -191,7 +191,7 @@ async function _fetchWithRedirects(
   allowPrivateUrls: boolean,
 ): Promise<Response> {
   let current = url;
-  for (let i = 0; i <= maxRedirects; i++) {
+  for (let i = 0; i < maxRedirects; i++) {
     // Validate and resolve DNS before fetching (SSRF protection)
     await validateUrl(current, allowPrivateUrls);
 

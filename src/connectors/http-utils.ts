@@ -44,13 +44,13 @@ export async function fetchWithRetry(
   }
 
   try {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
       const response = await fetch(url, options);
 
       if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
-        if (attempt >= maxRetries) {
+        if (attempt >= maxRetries - 1) {
           const body = await response.text().catch(() => "");
-          throw new FetchError(`HTTP ${response.status} after ${maxRetries + 1} attempts: ${body}`);
+          throw new FetchError(`HTTP ${response.status} after ${maxRetries} attempts: ${body}`);
         }
 
         let delayMs = baseDelay * 2 ** attempt;

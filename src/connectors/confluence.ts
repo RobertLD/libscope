@@ -115,10 +115,19 @@ async function confluenceFetch<T>(url: string, auth: string): Promise<T> {
 async function fetchAllPages<T>(initialUrl: string, baseUrl: string, auth: string): Promise<T[]> {
   const all: T[] = [];
   let url: string | undefined = initialUrl;
+  const MAX_PAGES = 10_000;
 
   while (url) {
     const resp: PaginatedResponse<T> = await confluenceFetch<PaginatedResponse<T>>(url, auth);
     all.push(...resp.results);
+    if (all.length >= MAX_PAGES) {
+      const log = getLogger();
+      log.warn(
+        { count: all.length, max: MAX_PAGES },
+        "Reached max page limit, stopping pagination",
+      );
+      break;
+    }
     const next: string | undefined = resp._links?.next;
     url = next ? `${baseUrl}${next}` : undefined;
   }

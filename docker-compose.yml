@@ -2,8 +2,8 @@ services:
   libscope:
     build: .
     ports:
-      - "3420:3420"  # API
-      - "3421:3421"  # Web UI
+      - "3420:3420" # API
+      - "3421:3421" # Web UI
     volumes:
       - libscope-data:/data
     environment:

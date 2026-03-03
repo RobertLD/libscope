@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { MockInstance } from "vitest";
 import { startRepl } from "../../src/cli/repl.js";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../../src/providers/embedding.js";
@@ -37,12 +38,17 @@ function createMockProvider() {
 }
 
 describe("startRepl", () => {
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let consoleSpy: MockInstance;
+  let consoleErrorSpy: MockInstance;
 
   beforeEach(() => {
     consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 
   it("exits on 'quit' command", async () => {

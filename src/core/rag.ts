@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import type { LibScopeConfig } from "../config.js";
 import { searchDocuments, type SearchResult } from "./search.js";
+import { ConfigError, FetchError } from "../errors.js";
 
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant. Answer based on the provided context. " +
@@ -84,7 +85,7 @@ export function createLlmProvider(config: LibScopeConfig): LlmProvider {
     return createOllamaProvider(config.embedding, llmConfig);
   }
 
-  throw new Error(
+  throw new ConfigError(
     "No LLM provider configured. Set llm.provider to 'openai' or 'ollama' in your config, " +
       "or set LIBSCOPE_LLM_PROVIDER environment variable.",
   );
@@ -96,7 +97,7 @@ function createOpenAiProvider(
 ): LlmProvider {
   const apiKey = llmConfig?.openaiApiKey ?? embedding.openaiApiKey;
   if (!apiKey) {
-    throw new Error(
+    throw new ConfigError(
       "OpenAI API key is required. Set llm.openaiApiKey or embedding.openaiApiKey in config.",
     );
   }
@@ -131,7 +132,7 @@ function createOpenAiProvider(
         });
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
-          throw new Error(`OpenAI LLM request timed out after ${timeoutMs}ms`);
+          throw new FetchError(`OpenAI LLM request timed out after ${timeoutMs}ms`);
         }
         throw err;
       } finally {
@@ -148,7 +149,7 @@ function createOpenAiProvider(
           503: "OpenAI service unavailable",
         };
         const message = genericMessages[status] ?? `HTTP ${status}`;
-        throw new Error(`OpenAI API error: ${message}`);
+        throw new FetchError(`OpenAI API error: ${message}`);
       }
 
       const data = (await res.json()) as {
@@ -158,7 +159,7 @@ function createOpenAiProvider(
 
       const firstChoice = data.choices?.[0];
       if (!firstChoice) {
-        throw new Error("OpenAI API error: LLM returned no choices in response");
+        throw new FetchError("OpenAI API error: LLM returned no choices in response");
       }
 
       return {
@@ -200,7 +201,7 @@ function createOllamaProvider(
         });
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
-          throw new Error(`Ollama LLM request timed out after ${timeoutMs}ms`);
+          throw new FetchError(`Ollama LLM request timed out after ${timeoutMs}ms`);
         }
         throw err;
       } finally {
@@ -216,7 +217,7 @@ function createOllamaProvider(
           503: "Ollama service unavailable",
         };
         const message = genericMessages[status] ?? `HTTP ${status}`;
-        throw new Error(`Ollama API error: ${message}`);
+        throw new FetchError(`Ollama API error: ${message}`);
       }
 
       const data = (await res.json()) as {

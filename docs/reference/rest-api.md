@@ -10,29 +10,29 @@ The OpenAPI 3.0 spec is available at `GET /openapi.json`.
 
 ## Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/v1/health` | Health check with document count |
-| `GET` | `/api/v1/search?q=...` | Semantic search |
-| `GET` | `/api/v1/documents` | List documents (with filters) |
-| `POST` | `/api/v1/documents` | Index a new document |
-| `GET` | `/api/v1/documents/:id` | Get a single document |
-| `DELETE` | `/api/v1/documents/:id` | Delete a document |
-| `POST` | `/api/v1/documents/url` | Index a document from a URL |
-| `POST` | `/api/v1/documents/:id/tags` | Add tags to a document |
-| `POST` | `/api/v1/ask` | RAG question answering |
-| `GET` | `/api/v1/topics` | List all topics |
-| `POST` | `/api/v1/topics` | Create a topic |
-| `GET` | `/api/v1/tags` | List all tags |
-| `GET` | `/api/v1/stats` | Usage statistics |
-| `GET` | `/api/v1/searches` | List saved searches |
-| `POST` | `/api/v1/searches` | Create a saved search |
-| `POST` | `/api/v1/searches/:id/run` | Run a saved search |
-| `DELETE` | `/api/v1/searches/:id` | Delete a saved search |
-| `GET` | `/openapi.json` | OpenAPI 3.0 specification |
-| `POST` | `/api/v1/bulk/delete` | Bulk delete documents |
-| `POST` | `/api/v1/bulk/retag` | Bulk add/remove tags |
-| `POST` | `/api/v1/bulk/move` | Bulk move documents to a topic |
+| Method   | Endpoint                     | Description                      |
+| -------- | ---------------------------- | -------------------------------- |
+| `GET`    | `/api/v1/health`             | Health check with document count |
+| `GET`    | `/api/v1/search?q=...`       | Semantic search                  |
+| `GET`    | `/api/v1/documents`          | List documents (with filters)    |
+| `POST`   | `/api/v1/documents`          | Index a new document             |
+| `GET`    | `/api/v1/documents/:id`      | Get a single document            |
+| `DELETE` | `/api/v1/documents/:id`      | Delete a document                |
+| `POST`   | `/api/v1/documents/url`      | Index a document from a URL      |
+| `POST`   | `/api/v1/documents/:id/tags` | Add tags to a document           |
+| `POST`   | `/api/v1/ask`                | RAG question answering           |
+| `GET`    | `/api/v1/topics`             | List all topics                  |
+| `POST`   | `/api/v1/topics`             | Create a topic                   |
+| `GET`    | `/api/v1/tags`               | List all tags                    |
+| `GET`    | `/api/v1/stats`              | Usage statistics                 |
+| `GET`    | `/api/v1/searches`           | List saved searches              |
+| `POST`   | `/api/v1/searches`           | Create a saved search            |
+| `POST`   | `/api/v1/searches/:id/run`   | Run a saved search               |
+| `DELETE` | `/api/v1/searches/:id`       | Delete a saved search            |
+| `GET`    | `/openapi.json`              | OpenAPI 3.0 specification        |
+| `POST`   | `/api/v1/bulk/delete`        | Bulk delete documents            |
+| `POST`   | `/api/v1/bulk/retag`         | Bulk add/remove tags             |
+| `POST`   | `/api/v1/bulk/move`          | Bulk move documents to a topic   |
 
 ## Examples
 

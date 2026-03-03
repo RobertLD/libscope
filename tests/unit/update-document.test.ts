@@ -88,11 +88,15 @@ describe("updateDocument", () => {
 
   it("should update updated_at timestamp", async () => {
     const before: Document = getDocument(db, docId);
+    // SQLite datetime('now') has 1-second resolution; wait just enough for it to tick
     await new Promise((r) => setTimeout(r, 1100));
     const input: UpdateDocumentInput = { title: "Updated" };
     await updateDocument(db, provider, docId, input);
     const after: Document = getDocument(db, docId);
 
+    expect(new Date(after.updatedAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(before.updatedAt).getTime(),
+    );
     expect(after.updatedAt).not.toBe(before.updatedAt);
   });
 
