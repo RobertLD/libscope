@@ -230,6 +230,15 @@ export async function handleRequest(
         sendError(res, 400, "VALIDATION_ERROR", "Query parameter 'q' is required");
         return;
       }
+      if (q.length > 10_000) {
+        sendError(
+          res,
+          400,
+          "VALIDATION_ERROR",
+          "Query parameter 'q' exceeds maximum length (10000)",
+        );
+        return;
+      }
       const topic = url.searchParams.get("topic") ?? undefined;
       const source = url.searchParams.get("source") ?? undefined;
       const tag = url.searchParams.get("tag") ?? undefined;
@@ -376,6 +385,11 @@ export async function handleRequest(
           Connection: "keep-alive",
         });
 
+        let clientDisconnected = false;
+        req.on("close", () => {
+          clientDisconnected = true;
+        });
+
         try {
           const stream = askQuestionStream(db, provider, llm, {
             question: b["question"],
@@ -383,7 +397,15 @@ export async function handleRequest(
           });
 
           for await (const event of stream) {
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
+            if (clientDisconnected) break;
+            const ok = res.write(`data: ${JSON.stringify(event)}\n\n`);
+            if (!ok) {
+              await new Promise<void>((resolve) => {
+                res.once("drain", resolve);
+                req.once("close", resolve);
+                if (clientDisconnected) resolve();
+              });
+            }
           }
         } catch (streamErr: unknown) {
           const message = streamErr instanceof Error ? streamErr.message : "Internal server error";
@@ -468,7 +490,8 @@ export async function handleRequest(
     // Search analytics
     if (pathname === "/api/v1/analytics/searches" && method === "GET") {
       const daysRaw = url.searchParams.get("days");
-      const days = daysRaw ? parseInt(daysRaw, 10) : 30;
+      const daysParsed = daysRaw ? parseInt(daysRaw, 10) : NaN;
+      const days = Number.isNaN(daysParsed) ? 30 : Math.max(1, Math.min(daysParsed, 365));
       const analytics = getSearchAnalytics(db, days);
       const gaps = getKnowledgeGaps(db, days);
       const took = Math.round(performance.now() - start);
@@ -483,7 +506,9 @@ export async function handleRequest(
       const history = url.searchParams.get("history");
       const limitRaw = url.searchParams.get("limit");
       const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
-      const limit = Number.isNaN(limitParsed) ? undefined : limitParsed;
+      const limit = Number.isNaN(limitParsed)
+        ? undefined
+        : Math.max(1, Math.min(limitParsed, 1000));
 
       let data;
       if (history === "true") {
@@ -545,6 +570,18 @@ export async function handleRequest(
       if (b["version"] !== undefined)
         metadata.version = typeof b["version"] === "string" ? b["version"] : null;
       if (b["url"] !== undefined) metadata.url = typeof b["url"] === "string" ? b["url"] : null;
+      if (metadata.url) {
+        try {
+          const parsedUrl = new URL(metadata.url);
+          if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+            sendError(res, 400, "VALIDATION_ERROR", "URL must use http or https scheme");
+            return;
+          }
+        } catch {
+          sendError(res, 400, "VALIDATION_ERROR", "Invalid URL format");
+          return;
+        }
+      }
       if (b["topicId"] !== undefined)
         metadata.topicId = typeof b["topicId"] === "string" ? b["topicId"] : null;
 
@@ -584,6 +621,16 @@ export async function handleRequest(
         sendError(res, 400, "VALIDATION_ERROR", "targetId and linkType are required");
         return;
       }
+      const validLinkTypes = ["see_also", "prerequisite", "supersedes", "related"];
+      if (!validLinkTypes.includes(body.linkType)) {
+        sendError(
+          res,
+          400,
+          "VALIDATION_ERROR",
+          `Invalid linkType: ${body.linkType}. Must be one of: ${validLinkTypes.join(", ")}`,
+        );
+        return;
+      }
       const link = createLink(db, linksDocId, body.targetId, body.linkType as LinkType, body.label);
       const took = Math.round(performance.now() - start);
       sendJson(res, 201, link, took);
@@ -616,7 +663,15 @@ export async function handleRequest(
       segments[2] === "searches"
     ) {
       if (method === "GET") {
-        const searches = listSavedSearches(db);
+        const searchLimitRaw = url.searchParams.get("limit");
+        const searchLimitParsed = searchLimitRaw ? parseInt(searchLimitRaw, 10) : NaN;
+        const searchLimit = Number.isNaN(searchLimitParsed)
+          ? 50
+          : Math.max(1, Math.min(searchLimitParsed, 1000));
+        const searchOffsetRaw = url.searchParams.get("offset");
+        const searchOffsetParsed = searchOffsetRaw ? parseInt(searchOffsetRaw, 10) : NaN;
+        const searchOffset = Number.isNaN(searchOffsetParsed) ? 0 : Math.max(0, searchOffsetParsed);
+        const searches = listSavedSearches(db, searchLimit, searchOffset);
         const took = Math.round(performance.now() - start);
         sendJson(res, 200, searches, took);
         return;
@@ -717,7 +772,15 @@ export async function handleRequest(
       segments[2] === "webhooks"
     ) {
       if (method === "GET") {
-        const webhooks = listWebhooks(db);
+        const limitRaw = url.searchParams.get("limit");
+        const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
+        const webhookLimit = Number.isNaN(limitParsed)
+          ? 50
+          : Math.max(1, Math.min(limitParsed, 1000));
+        const offsetRaw = url.searchParams.get("offset");
+        const offsetParsed = offsetRaw ? parseInt(offsetRaw, 10) : NaN;
+        const webhookOffset = Number.isNaN(offsetParsed) ? 0 : Math.max(0, offsetParsed);
+        const webhooks = listWebhooks(db, webhookLimit, webhookOffset);
         const took = Math.round(performance.now() - start);
         sendJson(res, 200, webhooks.map(redactWebhook), took);
         return;
@@ -732,7 +795,12 @@ export async function handleRequest(
           sendError(res, 400, "VALIDATION_ERROR", "url and events are required");
           return;
         }
-        const webhook = createWebhook(db, body.url, body.events as WebhookEvent[], body.secret);
+        const webhook = await createWebhook(
+          db,
+          body.url,
+          body.events as WebhookEvent[],
+          body.secret,
+        );
         const took = Math.round(performance.now() - start);
         sendJson(res, 201, redactWebhook(webhook), took);
         return;
@@ -752,6 +820,7 @@ export async function handleRequest(
         method: "POST",
         headers,
         body,
+        redirect: "error",
         signal: AbortSignal.timeout(5000),
       });
       const took = Math.round(performance.now() - start);

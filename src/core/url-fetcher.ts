@@ -216,6 +216,13 @@ async function _fetchWithRedirects(
     for (const r of recheck) {
       if (r.status === "fulfilled") currentAddresses.push(...r.value);
     }
+    if (currentAddresses.length === 0) {
+      const log = getLogger();
+      log.warn({ hostname }, "DNS rebinding check: re-resolution returned no addresses");
+      throw new FetchError(
+        `DNS rebinding check failed: ${hostname} no longer resolves to any address`,
+      );
+    }
     for (const addr of currentAddresses) {
       if (!allowPrivateUrls && isPrivateIP(addr)) {
         throw new FetchError(
@@ -267,7 +274,7 @@ export async function fetchAndConvert(
     );
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw new FetchError(`HTTP ${response.status}: ${response.statusText}`);
     }
 
     const contentType = response.headers.get("content-type") ?? "";

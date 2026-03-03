@@ -67,8 +67,8 @@ export async function reindex(
         embedding float[${provider.dimensions}]
       );
     `);
-  } catch {
-    log.warn("Could not ensure vector table — continuing anyway");
+  } catch (err: unknown) {
+    log.warn({ err }, "Could not ensure vector table — continuing anyway");
   }
 
   const deleteStmt = db.prepare("DELETE FROM chunk_embeddings WHERE chunk_id = ?");

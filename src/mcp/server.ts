@@ -24,7 +24,7 @@ import type { WebhookEvent } from "../core/webhooks.js";
 import { suggestTags } from "../core/tags.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger, getLogger } from "../logger.js";
-import { LibScopeError, ValidationError } from "../errors.js";
+import { ConfigError, LibScopeError, ValidationError } from "../errors.js";
 
 function errorResponse(err: unknown): {
   content: Array<{ type: "text"; text: string }>;
@@ -441,8 +441,9 @@ async function main(): Promise<void> {
         try {
           db.prepare("SELECT 1").get();
           health.database = "ok";
-        } catch {
+        } catch (err: unknown) {
           health.database = "error";
+          getLogger().warn({ err }, "Health check: database connectivity failed");
         }
 
         // Document count
@@ -451,8 +452,9 @@ async function main(): Promise<void> {
             count: number;
           };
           health.documents = row.count;
-        } catch {
+        } catch (err: unknown) {
           health.documents = "error";
+          getLogger().warn({ err }, "Health check: document count query failed");
         }
 
         // Chunk count
@@ -461,16 +463,18 @@ async function main(): Promise<void> {
             count: number;
           };
           health.chunks = row.count;
-        } catch {
+        } catch (err: unknown) {
           health.chunks = "error";
+          getLogger().warn({ err }, "Health check: chunk count query failed");
         }
 
         // FTS5 index status
         try {
           db.prepare("SELECT COUNT(*) FROM chunks_fts").get();
           health.fts5 = "ok";
-        } catch {
+        } catch (err: unknown) {
           health.fts5 = "error";
+          getLogger().warn({ err }, "Health check: FTS5 index query failed");
         }
 
         return {
@@ -540,7 +544,7 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       if (!llmProvider) {
-        throw new Error(
+        throw new ConfigError(
           "No LLM provider configured. Set llm.provider to 'openai' or 'ollama' in your config.",
         );
       }
@@ -1113,8 +1117,13 @@ async function main(): Promise<void> {
         .optional()
         .describe("Optional secret for HMAC-SHA256 signature verification"),
     },
-    withErrorHandling((params) => {
-      const webhook = createWebhook(db, params.url, params.events as WebhookEvent[], params.secret);
+    withErrorHandling(async (params) => {
+      const webhook = await createWebhook(
+        db,
+        params.url,
+        params.events as WebhookEvent[],
+        params.secret,
+      );
       return {
         content: [{ type: "text" as const, text: JSON.stringify(redactWebhook(webhook), null, 2) }],
       };

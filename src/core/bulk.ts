@@ -58,18 +58,21 @@ export function resolveSelector(
 
   let ids = docs.map((d) => d.id);
 
+  // Build a Map for O(1) lookup instead of O(n) .find() per id
+  const docMap = new Map(docs.map((d) => [d.id, d]));
+
   // Apply date filters
   if (selector.dateFrom) {
     const from = selector.dateFrom;
     ids = ids.filter((id) => {
-      const doc = docs.find((d) => d.id === id);
+      const doc = docMap.get(id);
       return doc != null && doc.createdAt >= from;
     });
   }
   if (selector.dateTo) {
     const to = selector.dateTo;
     ids = ids.filter((id) => {
-      const doc = docs.find((d) => d.id === id);
+      const doc = docMap.get(id);
       return doc != null && doc.createdAt <= to;
     });
   }
@@ -77,8 +80,30 @@ export function resolveSelector(
   // Apply tag filter (AND logic — document must have ALL specified tags)
   if (selector.tags && selector.tags.length > 0) {
     const requiredTags = selector.tags.map((t) => t.trim().toLowerCase());
+    // Batch query: fetch tags for all candidate documents in one query
+    const placeholders = ids.map(() => "?").join(", ");
+    const tagRows =
+      ids.length > 0
+        ? (db
+            .prepare(
+              `SELECT dt.document_id, t.name
+             FROM tags t
+             JOIN document_tags dt ON dt.tag_id = t.id
+             WHERE dt.document_id IN (${placeholders})`,
+            )
+            .all(...ids) as Array<{ document_id: string; name: string }>)
+        : [];
+    const tagsByDoc = new Map<string, string[]>();
+    for (const row of tagRows) {
+      const existing = tagsByDoc.get(row.document_id);
+      if (existing) {
+        existing.push(row.name);
+      } else {
+        tagsByDoc.set(row.document_id, [row.name]);
+      }
+    }
     ids = ids.filter((id) => {
-      const docTags = getDocumentTags(db, id).map((t) => t.name);
+      const docTags = tagsByDoc.get(id) ?? [];
       return requiredTags.every((rt) => docTags.includes(rt));
     });
   }

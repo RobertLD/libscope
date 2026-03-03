@@ -239,8 +239,9 @@ export async function indexDocument(
         db.prepare(
           "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
         ).run(existing.id);
-      } catch {
+      } catch (err: unknown) {
         // chunk_embeddings table may not exist
+        log.debug({ err, docId: existing.id }, "Skipped chunk_embeddings cleanup during re-index");
       }
       db.prepare("DELETE FROM documents WHERE id = ?").run(existing.id);
     }
@@ -299,8 +300,9 @@ export async function indexDocument(
         VALUES (?, ?, ?)
       `);
     }
-  } catch {
+  } catch (err: unknown) {
     // metadata table may not exist yet
+    log.debug({ err }, "Skipped chunk_embedding_metadata check");
   }
 
   const transaction = db.transaction(() => {

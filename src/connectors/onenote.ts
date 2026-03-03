@@ -83,7 +83,7 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
   let lastError: unknown;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     requestTimestamps.push(Date.now());
-    const response = await fetch(url, options);
+    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
 
     if (response.status === 429) {
       const retryAfter = response.headers.get("Retry-After");
@@ -250,6 +250,7 @@ export async function authenticateDeviceCode(
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: clientId, scope }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!dcRes.ok) {
@@ -295,6 +296,7 @@ export async function authenticateDeviceCode(
         client_id: clientId,
         device_code: dcData.device_code,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (tokenRes.ok) {
@@ -350,6 +352,7 @@ export async function refreshAccessToken(
       refresh_token: refreshToken,
       scope: "Notes.Read Notes.Read.All offline_access",
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {

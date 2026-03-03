@@ -45,7 +45,10 @@ export async function fetchWithRetry(
 
   try {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const response = await fetch(url, options);
+      const response = await fetch(url, {
+        ...options,
+        signal: AbortSignal.timeout(30_000),
+      });
 
       if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
         if (attempt >= maxRetries - 1) {
