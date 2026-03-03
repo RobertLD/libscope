@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0](https://github.com/RobertLD/libscope/compare/v1.2.3...v1.3.0) (2026-03-03)
+
+
+### Features
+
+* add allowSelfSignedCerts config for corporate TLS ([#239](https://github.com/RobertLD/libscope/issues/239)) ([858ad1c](https://github.com/RobertLD/libscope/commit/858ad1ca9e55b8f31d4878433e745e470bd1be11))
+* add source-type filter to search ([#246](https://github.com/RobertLD/libscope/issues/246)) ([#268](https://github.com/RobertLD/libscope/issues/268)) ([cb05ded](https://github.com/RobertLD/libscope/commit/cb05dedbdb028cd9749add0a9f5852e01cb9c2e5))
+* auto-suggest tags based on content analysis ([#243](https://github.com/RobertLD/libscope/issues/243)) ([#273](https://github.com/RobertLD/libscope/issues/273)) ([da158ff](https://github.com/RobertLD/libscope/commit/da158ff5f55947a39712bd7f5ae4b0d6b421bfcd))
+* bulk operations for documents ([#170](https://github.com/RobertLD/libscope/issues/170)) ([#272](https://github.com/RobertLD/libscope/issues/272)) ([7e28d2d](https://github.com/RobertLD/libscope/commit/7e28d2d03aee02059473ddac09c97fe90785abee))
+* **confluence:** add --type flag for cloud vs server auth ([#241](https://github.com/RobertLD/libscope/issues/241)) ([f29029e](https://github.com/RobertLD/libscope/commit/f29029e63b201bfa446d92c7dca7901f6032b37e))
+* context chunk expansion for search results ([#266](https://github.com/RobertLD/libscope/issues/266)) ([d087485](https://github.com/RobertLD/libscope/commit/d08748592d4bccf4bb726fe05f6d3ae79a97df80)), closes [#247](https://github.com/RobertLD/libscope/issues/247)
+* deduplicate search results by document ([#245](https://github.com/RobertLD/libscope/issues/245)) ([#269](https://github.com/RobertLD/libscope/issues/269)) ([3dd70de](https://github.com/RobertLD/libscope/commit/3dd70ded96b12fc8808bc116f28509adefe41c53))
+* document cross-references and relationship links ([#267](https://github.com/RobertLD/libscope/issues/267)) ([3151a73](https://github.com/RobertLD/libscope/commit/3151a73d1bea36106968ab5c3c99325366d8f9df)), closes [#169](https://github.com/RobertLD/libscope/issues/169)
+* saved searches with filters ([#166](https://github.com/RobertLD/libscope/issues/166)) ([#271](https://github.com/RobertLD/libscope/issues/271)) ([508d82a](https://github.com/RobertLD/libscope/commit/508d82a0d20381469c251692e96ca3e26e744f1e))
+* scheduled connector sync with cron expressions ([#178](https://github.com/RobertLD/libscope/issues/178)) ([#276](https://github.com/RobertLD/libscope/issues/276)) ([557cd3f](https://github.com/RobertLD/libscope/commit/557cd3f2c783a42e1711b161facbdb9ca18db9db))
+* support additional document formats (PDF, Word, CSV, YAML, JSON) ([#249](https://github.com/RobertLD/libscope/issues/249)) ([#275](https://github.com/RobertLD/libscope/issues/275)) ([6c4b589](https://github.com/RobertLD/libscope/commit/6c4b58913e0733ce5a8075a0f3d1ed80233132ae))
+* webhook system for document events ([#187](https://github.com/RobertLD/libscope/issues/187)) ([#274](https://github.com/RobertLD/libscope/issues/274)) ([4713d2b](https://github.com/RobertLD/libscope/commit/4713d2b20dde5dfac5d6b05dcc693b44d5fe06a7))
+* wire document update to MCP, CLI, and REST API ([#182](https://github.com/RobertLD/libscope/issues/182)) ([#270](https://github.com/RobertLD/libscope/issues/270)) ([96ced04](https://github.com/RobertLD/libscope/commit/96ced04b5c4c78b47b4e74d35cc2a20628ef9fdd))
+* wire up web dashboard via `libscope serve --dashboard` ([#265](https://github.com/RobertLD/libscope/issues/265)) ([cf16afd](https://github.com/RobertLD/libscope/commit/cf16afd0de285454f53fd101d6cfcda66d475c7c)), closes [#259](https://github.com/RobertLD/libscope/issues/259)
+
+
+### Bug Fixes
+
+* add input validation for search params, CLI options, and API responses ([#252](https://github.com/RobertLD/libscope/issues/252)) ([#260](https://github.com/RobertLD/libscope/issues/260)) ([d84de47](https://github.com/RobertLD/libscope/commit/d84de47ebbf1a11ed742d31d6fa428a1257a326a))
+* add missing database cleanup and stream reader cancellation ([#254](https://github.com/RobertLD/libscope/issues/254)) ([#262](https://github.com/RobertLD/libscope/issues/262)) ([7a3f650](https://github.com/RobertLD/libscope/commit/7a3f650b0193ec297b5b2bafcc45c16b5007fd36))
+* add request timeouts to embedding providers and RAG ([#258](https://github.com/RobertLD/libscope/issues/258)) ([e52e97f](https://github.com/RobertLD/libscope/commit/e52e97f89f6b98d6bc053a1e34f5dcd161716e0a))
+* address 5 CodeQL security alerts (SSRF, TLS, ReDoS) ([#279](https://github.com/RobertLD/libscope/issues/279)) ([e2339cd](https://github.com/RobertLD/libscope/commit/e2339cd790979ad8bb03e7ffb7eb8290c493bbd3))
+* address HIGH and MEDIUM audit findings ([#280](https://github.com/RobertLD/libscope/issues/280)) ([1e93987](https://github.com/RobertLD/libscope/commit/1e939879e1e15281e8e71f6abeb5e6013f1afd6f))
+* apply allowSelfSignedCerts to connector fetch calls ([#240](https://github.com/RobertLD/libscope/issues/240)) ([3b7b281](https://github.com/RobertLD/libscope/commit/3b7b2813e8cb2b3798cab1232dc085e7b2766d96))
+* code quality improvements from comprehensive audit ([#278](https://github.com/RobertLD/libscope/issues/278)) ([e988c63](https://github.com/RobertLD/libscope/commit/e988c63f04c497449ddfc50b55b0453c76fb9bc4))
+* comprehensive audit fixes — security, performance, resilience, API hardening ([#316](https://github.com/RobertLD/libscope/issues/316)) ([5585db5](https://github.com/RobertLD/libscope/commit/5585db5ff96304cca318b6765a743a0ee85ebb04))
+* **confluence:** use correct REST API paths for Server/Data Center ([#242](https://github.com/RobertLD/libscope/issues/242)) ([d1afeab](https://github.com/RobertLD/libscope/commit/d1afeabbc3c0da33de0fa756fa8748f0672b2bcb))
+* connector bugs — pagination, recursion, rate limiting, auth ([#257](https://github.com/RobertLD/libscope/issues/257)) ([49fef8b](https://github.com/RobertLD/libscope/commit/49fef8b88363fbe57b4437fc38bd26675b8f1f3e))
+* error handling gaps — counters, silent failures, version pruning ([#255](https://github.com/RobertLD/libscope/issues/255)) ([#264](https://github.com/RobertLD/libscope/issues/264)) ([b20cebe](https://github.com/RobertLD/libscope/commit/b20cebedf05532e3c1f83fa4984e9349400ee54f))
+* **mcp:** expose relevance scores in search results ([#248](https://github.com/RobertLD/libscope/issues/248)) ([760ce21](https://github.com/RobertLD/libscope/commit/760ce213f21adc59be67453ea773800ad2fbf866))
+* **mcp:** use workspace-aware database path ([#244](https://github.com/RobertLD/libscope/issues/244)) ([0ddba5a](https://github.com/RobertLD/libscope/commit/0ddba5ad5a4490f630912eed933b5e3a1acfb61e))
+* move saveVersion inside transaction in updateDocument ([#256](https://github.com/RobertLD/libscope/issues/256)) ([#263](https://github.com/RobertLD/libscope/issues/263)) ([2afeae1](https://github.com/RobertLD/libscope/commit/2afeae190d1e1231f822ddd2c1f07a0b7a950b69))
+* remove unsafe non-null assertions and fix type casts ([#253](https://github.com/RobertLD/libscope/issues/253)) ([#261](https://github.com/RobertLD/libscope/issues/261)) ([e549a89](https://github.com/RobertLD/libscope/commit/e549a89eb562b01cb43d4d36e4db38cda09fd4ff))
+* use OS DNS resolver fallback for internal hostnames ([#237](https://github.com/RobertLD/libscope/issues/237)) ([3beb234](https://github.com/RobertLD/libscope/commit/3beb234a8365906552869a69c1a906acdd0cf993))
+
 ## [1.2.3](https://github.com/RobertLD/libscope/compare/v1.2.2...v1.2.3) (2026-03-02)
 
 ### Features
