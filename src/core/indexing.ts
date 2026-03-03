@@ -253,9 +253,24 @@ export async function indexDocument(
     .prepare("SELECT id FROM documents WHERE title = ? AND LENGTH(content) = ?")
     .get(input.title, contentLength) as { id: string } | undefined;
   if (existingByContent) {
-    throw new ValidationError(
-      `Document with same title and content length already exists (id: ${existingByContent.id}). Delete it first or modify the content.`,
-    );
+    if (input.dedup === "skip") {
+      log.info(
+        { existingDocId: existingByContent.id, title: input.title },
+        "Duplicate by title+length detected, skipping",
+      );
+      return { id: existingByContent.id, chunkCount: 0 };
+    }
+    if (input.dedup === "warn") {
+      log.warn(
+        { existingDocId: existingByContent.id, title: input.title },
+        "Duplicate by title+length detected, indexing anyway",
+      );
+      // Continue indexing with a new ID
+    } else {
+      throw new ValidationError(
+        `Document with same title and content length already exists (id: ${existingByContent.id}). Delete it first or modify the content.`,
+      );
+    }
   }
 
   const docId = randomUUID();

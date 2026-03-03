@@ -6,6 +6,7 @@ import { YamlParser } from "./yaml.js";
 import { CsvParser } from "./csv.js";
 import { PdfParser } from "./pdf.js";
 import { WordParser } from "./word.js";
+import { HtmlParser } from "./html.js";
 
 /** Interface for document format parsers. */
 export interface DocumentParser {
@@ -23,6 +24,7 @@ const parsers: DocumentParser[] = [
   new CsvParser(),
   new PdfParser(),
   new WordParser(),
+  new HtmlParser(),
 ];
 
 const extensionMap = new Map<string, DocumentParser>();

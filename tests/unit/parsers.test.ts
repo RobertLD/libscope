@@ -5,6 +5,7 @@ import { PlainTextParser } from "../../src/core/parsers/text.js";
 import { JsonParser } from "../../src/core/parsers/json-parser.js";
 import { YamlParser } from "../../src/core/parsers/yaml.js";
 import { CsvParser } from "../../src/core/parsers/csv.js";
+import { HtmlParser } from "../../src/core/parsers/html.js";
 import { ValidationError } from "../../src/errors.js";
 
 describe("getParserForFile", () => {
@@ -44,6 +45,14 @@ describe("getParserForFile", () => {
     expect(getParserForFile("document.docx")).not.toBeNull();
   });
 
+  it("returns parser for .html files", () => {
+    expect(getParserForFile("page.html")).not.toBeNull();
+  });
+
+  it("returns parser for .htm files", () => {
+    expect(getParserForFile("page.htm")).not.toBeNull();
+  });
+
   it("returns null for unsupported extensions", () => {
     expect(getParserForFile("image.png")).toBeNull();
     expect(getParserForFile("archive.zip")).toBeNull();
@@ -66,6 +75,8 @@ describe("getSupportedExtensions", () => {
     expect(exts).toContain(".pdf");
     expect(exts).toContain(".docx");
     expect(exts).toContain(".txt");
+    expect(exts).toContain(".html");
+    expect(exts).toContain(".htm");
     // Should be sorted
     const sorted = [...exts].sort();
     expect(exts).toEqual(sorted);
@@ -213,5 +224,80 @@ describe("WordParser", () => {
 
   it("throws ValidationError for invalid Word content", async () => {
     await expect(parser.parse(Buffer.from("not a docx"))).rejects.toThrow(ValidationError);
+  });
+});
+
+describe("HtmlParser", () => {
+  const parser = new HtmlParser();
+
+  it("has .html and .htm extensions", () => {
+    expect(parser.extensions).toEqual([".html", ".htm"]);
+  });
+
+  it("converts basic HTML to markdown", async () => {
+    const html = "<h1>Hello</h1><p>This is a <strong>test</strong>.</p>";
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("Hello");
+    expect(result).toContain("**test**");
+  });
+
+  it("strips script tags", async () => {
+    const html = '<p>Content</p><script>alert("xss")</script><p>More</p>';
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("Content");
+    expect(result).toContain("More");
+    expect(result).not.toContain("alert");
+    expect(result).not.toContain("script");
+  });
+
+  it("strips style tags", async () => {
+    const html = "<style>body { color: red; }</style><p>Visible</p>";
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("Visible");
+    expect(result).not.toContain("color");
+  });
+
+  it("strips nav tags", async () => {
+    const html =
+      "<nav><a href='/'>Home</a><a href='/about'>About</a></nav><main><p>Article</p></main>";
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("Article");
+    expect(result).not.toContain("Home");
+  });
+
+  it("handles full HTML documents with doctype and head", async () => {
+    const html = `<!DOCTYPE html>
+<html><head><title>Test Page</title><style>h1 { color: blue; }</style></head>
+<body><h1>Main Title</h1><p>Body text here.</p></body></html>`;
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("Main Title");
+    expect(result).toContain("Body text here");
+    expect(result).not.toContain("color: blue");
+  });
+
+  it("converts links to markdown format", async () => {
+    const html = '<a href="https://example.com">Click here</a>';
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("[Click here]");
+    expect(result).toContain("https://example.com");
+  });
+
+  it("converts lists to markdown", async () => {
+    const html = "<ul><li>One</li><li>Two</li><li>Three</li></ul>";
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).toContain("One");
+    expect(result).toContain("Two");
+    expect(result).toContain("Three");
+  });
+
+  it("handles empty HTML gracefully", async () => {
+    const result = await parser.parse(Buffer.from(""));
+    expect(result).toBe("");
+  });
+
+  it("collapses excessive blank lines", async () => {
+    const html = "<p>First</p><script>removed</script><script>removed</script><p>Second</p>";
+    const result = await parser.parse(Buffer.from(html));
+    expect(result).not.toMatch(/\n{3,}/);
   });
 });

@@ -1,10 +1,21 @@
 import type Database from "better-sqlite3";
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve as pathResolve, isAbsolute as pathIsAbsolute } from "node:path";
+import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import {
+  resolve as pathResolve,
+  isAbsolute as pathIsAbsolute,
+  basename,
+  relative,
+  join as pathJoin,
+} from "node:path";
+import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { indexDocument } from "./indexing.js";
+import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
+import { suggestTagsFromText, addTagsToDocument } from "./tags.js";
+import { fetchAndConvert } from "./url-fetcher.js";
+import { pathToFileURL } from "node:url";
 
 export interface PackDocument {
   title: string;
@@ -57,7 +68,54 @@ export interface CreatePackOptions {
   outputPath?: string | undefined;
 }
 
+export interface CreatePackFromSourceOptions {
+  /** Pack name (required). */
+  name: string;
+  /** One or more source paths (directories or files) or URLs. */
+  from: string[];
+  version?: string | undefined;
+  description?: string | undefined;
+  author?: string | undefined;
+  license?: string | undefined;
+  outputPath?: string | undefined;
+  /** Only include files with these extensions (e.g. [".md", ".html"]). Defaults to all supported. */
+  extensions?: string[] | undefined;
+  /** Glob-style patterns to exclude (matched against the relative path from the source root). */
+  exclude?: string[] | undefined;
+  /** Walk directories recursively (default: true). */
+  recursive?: boolean | undefined;
+  /** Called for each file processed, for progress reporting. */
+  onProgress?: ((info: { file: string; index: number; total: number }) => void) | undefined;
+}
+
 const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/libscope/packs/main/registry.json";
+
+/** Gzip magic number: first two bytes of a gzip stream. */
+const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
+
+/** Check if a filename indicates gzip compression (.gz or .json.gz). */
+function isGzipPath(filePath: string): boolean {
+  return filePath.endsWith(".gz");
+}
+
+/** Write a pack to disk, gzip-compressing if the path ends in .gz. */
+function writePackFile(filePath: string, pack: KnowledgePack): void {
+  const json = JSON.stringify(pack, null, 2);
+  if (isGzipPath(filePath)) {
+    writeFileSync(filePath, gzipSync(Buffer.from(json, "utf-8")));
+  } else {
+    writeFileSync(filePath, json, "utf-8");
+  }
+}
+
+/** Read a pack file, auto-detecting gzip by magic bytes or extension. */
+function readPackFile(filePath: string): string {
+  const raw = readFileSync(filePath);
+  if (raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]) {
+    return gunzipSync(raw).toString("utf-8");
+  }
+  return raw.toString("utf-8");
+}
 
 /** Validate that a registry URL uses https and is not a private IP. */
 function validateRegistryUrl(url: string): void {
@@ -195,15 +253,15 @@ export async function installPack(
   const log = getLogger();
   let pack: KnowledgePack;
 
-  // Try loading as a local file first
-  if (packNameOrPath.endsWith(".json")) {
+  // Try loading as a local file first (supports .json and .json.gz)
+  if (packNameOrPath.endsWith(".json") || packNameOrPath.endsWith(".json.gz")) {
     const resolved = pathResolve(packNameOrPath);
     // Prevent path traversal: if a relative path is given, ensure it resolves within CWD
     if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
       throw new ValidationError("Pack file path must be within the current working directory");
     }
     try {
-      const raw = readFileSync(resolved, "utf-8");
+      const raw = readPackFile(resolved);
       const parsed: unknown = JSON.parse(raw);
       pack = validatePack(parsed);
     } catch (err) {
@@ -254,19 +312,30 @@ export async function installPack(
   );
 
   let installed = 0;
+  const total = pack.documents.length;
   for (const doc of pack.documents) {
     try {
+      log.info(
+        { progress: `${installed + 1}/${total}`, title: doc.title },
+        "Indexing pack document",
+      );
       const result = await indexDocument(db, provider, {
         title: doc.title,
         content: doc.content,
         sourceType: "library",
         url: doc.source || undefined,
         submittedBy: "manual",
-        dedup: "warn",
+        dedup: "skip",
       });
 
       // Tag the document with the pack name
       db.prepare("UPDATE documents SET pack_name = ? WHERE id = ?").run(pack.name, result.id);
+
+      // Apply tags from the pack document (auto-generated or manually specified)
+      if (doc.tags && doc.tags.length > 0) {
+        addTagsToDocument(db, result.id, doc.tags);
+      }
+
       installed++;
     } catch (err) {
       log.warn(
@@ -387,9 +456,235 @@ export function createPack(db: Database.Database, options: CreatePackOptions): K
   };
 
   if (options.outputPath) {
-    writeFileSync(options.outputPath, JSON.stringify(pack, null, 2), "utf-8");
+    writePackFile(options.outputPath, pack);
     log.info({ outputPath: options.outputPath, docCount: documents.length }, "Pack file created");
   }
 
+  return pack;
+}
+
+// ---------------------------------------------------------------------------
+// Create pack from filesystem / URL sources (no database required)
+// ---------------------------------------------------------------------------
+
+/** Simple glob-style pattern matching (supports * and ** wildcards). */
+function matchesExcludePattern(relativePath: string, pattern: string): boolean {
+  // Escape regex special chars except * and **
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\0")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\0/g, ".*");
+  return new RegExp(`^${escaped}$`).test(relativePath);
+}
+
+/** Recursively collect files from a directory. */
+function collectFiles(
+  dir: string,
+  rootDir: string,
+  recursive: boolean,
+  extensions: Set<string>,
+  excludePatterns: string[],
+): string[] {
+  const results: string[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (err) {
+    throw new ValidationError(
+      `Cannot read directory "${dir}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  for (const entry of entries) {
+    const fullPath = pathJoin(dir, entry);
+    const rel = relative(rootDir, fullPath);
+
+    // Check exclude patterns
+    if (excludePatterns.some((p) => matchesExcludePattern(rel, p))) {
+      continue;
+    }
+
+    let stat;
+    try {
+      stat = statSync(fullPath);
+    } catch {
+      continue; // Skip unreadable entries
+    }
+
+    if (stat.isDirectory()) {
+      if (recursive) {
+        results.push(...collectFiles(fullPath, rootDir, recursive, extensions, excludePatterns));
+      }
+    } else if (stat.isFile()) {
+      const ext = fullPath.substring(fullPath.lastIndexOf(".")).toLowerCase();
+      if (extensions.has(ext)) {
+        results.push(fullPath);
+      }
+    }
+  }
+
+  return results;
+}
+
+function isUrl(value: string): boolean {
+  return value.startsWith("http://") || value.startsWith("https://");
+}
+
+/** Create a pack directly from filesystem paths and/or URLs (no database needed). */
+export async function createPackFromSource(
+  options: CreatePackFromSourceOptions,
+): Promise<KnowledgePack> {
+  const log = getLogger();
+
+  if (!options.name.trim()) {
+    throw new ValidationError("Pack name is required");
+  }
+  if (options.from.length === 0) {
+    throw new ValidationError("At least one --from source is required");
+  }
+
+  const allSupported = getSupportedExtensions();
+  const extensions = new Set(
+    options.extensions?.map((e) => (e.startsWith(".") ? e.toLowerCase() : `.${e.toLowerCase()}`)) ??
+      allSupported,
+  );
+  const excludePatterns = options.exclude ?? [];
+  const recursive = options.recursive ?? true;
+
+  const documents: PackDocument[] = [];
+  const errors: Array<{ source: string; error: string }> = [];
+
+  // Separate URLs from file paths
+  const urls: string[] = [];
+  const fileSources: string[] = [];
+  for (const src of options.from) {
+    if (isUrl(src)) {
+      urls.push(src);
+    } else {
+      fileSources.push(src);
+    }
+  }
+
+  // Collect all files from filesystem sources
+  const allFiles: string[] = [];
+  for (const src of fileSources) {
+    const resolved = pathResolve(src);
+    let stat;
+    try {
+      stat = statSync(resolved);
+    } catch (err) {
+      throw new ValidationError(
+        `Source path "${src}" does not exist or is not accessible: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (stat.isDirectory()) {
+      allFiles.push(...collectFiles(resolved, resolved, recursive, extensions, excludePatterns));
+    } else if (stat.isFile()) {
+      allFiles.push(resolved);
+    } else {
+      throw new ValidationError(`Source path "${src}" is not a file or directory`);
+    }
+  }
+
+  // Parse filesystem files
+  const totalCount = allFiles.length + urls.length;
+  for (let i = 0; i < allFiles.length; i++) {
+    const filePath = allFiles[i]!;
+    options.onProgress?.({ file: filePath, index: i, total: totalCount });
+
+    const parser = getParserForFile(filePath);
+    if (!parser) {
+      log.debug({ file: filePath }, "No parser for file, skipping");
+      continue;
+    }
+
+    try {
+      const buffer = readFileSync(filePath);
+      const content = await parser.parse(buffer);
+      const trimmed = content.trimEnd();
+      if (trimmed.length === 0) {
+        log.debug({ file: filePath }, "Empty content after parsing, skipping");
+        continue;
+      }
+
+      const title = basename(filePath).replace(/\.[^.]+$/, "");
+      const tags = suggestTagsFromText(title, trimmed);
+      documents.push({
+        title,
+        content: trimmed,
+        source: pathToFileURL(filePath).href,
+        tags,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn({ file: filePath, err: msg }, "Failed to parse file, skipping");
+      errors.push({ source: filePath, error: msg });
+    }
+  }
+
+  // Fetch URLs
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i]!;
+    options.onProgress?.({ file: url, index: allFiles.length + i, total: totalCount });
+
+    try {
+      const fetched = await fetchAndConvert(url);
+      if (!fetched.content.trim()) {
+        log.debug({ url }, "Empty content from URL, skipping");
+        continue;
+      }
+
+      const tags = suggestTagsFromText(fetched.title, fetched.content.trimEnd());
+      documents.push({
+        title: fetched.title,
+        content: fetched.content.trimEnd(),
+        source: url,
+        tags,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn({ url, err: msg }, "Failed to fetch URL, skipping");
+      errors.push({ source: url, error: msg });
+    }
+  }
+
+  if (documents.length === 0) {
+    const detail =
+      errors.length > 0
+        ? ` (${errors.length} source(s) failed: ${errors.map((e) => e.source).join(", ")})`
+        : "";
+    throw new ValidationError(`No documents could be created from the provided sources${detail}`);
+  }
+
+  if (errors.length > 0) {
+    log.warn({ errorCount: errors.length, errors }, "Some sources failed during pack creation");
+  }
+
+  const pack: KnowledgePack = {
+    name: options.name,
+    version: options.version ?? "1.0.0",
+    description: options.description ?? `Knowledge pack: ${options.name}`,
+    documents,
+    metadata: {
+      author: options.author ?? "libscope",
+      license: options.license ?? "MIT",
+      createdAt: new Date().toISOString(),
+    },
+  };
+
+  if (options.outputPath) {
+    writePackFile(options.outputPath, pack);
+    log.info(
+      { outputPath: options.outputPath, docCount: documents.length },
+      "Pack file created from source",
+    );
+  }
+
+  log.info(
+    { name: pack.name, docCount: documents.length, errorCount: errors.length },
+    "Pack created from source",
+  );
   return pack;
 }
