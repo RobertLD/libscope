@@ -13,6 +13,7 @@ import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { indexDocument } from "./indexing.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
+import { suggestTagsFromText, addTagsToDocument } from "./tags.js";
 import { fetchAndConvert } from "./url-fetcher.js";
 import { pathToFileURL } from "node:url";
 
@@ -329,6 +330,12 @@ export async function installPack(
 
       // Tag the document with the pack name
       db.prepare("UPDATE documents SET pack_name = ? WHERE id = ?").run(pack.name, result.id);
+
+      // Apply tags from the pack document (auto-generated or manually specified)
+      if (doc.tags && doc.tags.length > 0) {
+        addTagsToDocument(db, result.id, doc.tags);
+      }
+
       installed++;
     } catch (err) {
       log.warn(
@@ -602,10 +609,13 @@ export async function createPackFromSource(
         continue;
       }
 
+      const title = basename(filePath).replace(/\.[^.]+$/, "");
+      const tags = suggestTagsFromText(title, trimmed);
       documents.push({
-        title: basename(filePath).replace(/\.[^.]+$/, ""),
+        title,
         content: trimmed,
         source: pathToFileURL(filePath).href,
+        tags,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -626,10 +636,12 @@ export async function createPackFromSource(
         continue;
       }
 
+      const tags = suggestTagsFromText(fetched.title, fetched.content.trimEnd());
       documents.push({
         title: fetched.title,
         content: fetched.content.trimEnd(),
         source: url,
+        tags,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
