@@ -239,6 +239,232 @@ describe("createLlmProvider", () => {
     expect(provider.model).toBe("mistral");
   });
 
+  it("uses default model for Ollama when not specified", () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "ollama" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+
+    const provider = createLlmProvider(config);
+    expect(provider.model).toBe("llama3.2");
+  });
+
+  it("uses default model for OpenAI when not specified", () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+
+    const provider = createLlmProvider(config);
+    expect(provider.model).toBe("gpt-4o-mini");
+  });
+
+  it("falls back to embedding API key for OpenAI provider", () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "openai", openaiApiKey: "sk-embed" },
+      llm: { provider: "openai" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+
+    const provider = createLlmProvider(config);
+    expect(provider.model).toBe("gpt-4o-mini");
+  });
+
+  it("sanitizes Ollama error messages", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "ollama", model: "llama3.2" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("Model not found");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles Ollama 500 error", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "ollama" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("Ollama internal server error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles Ollama unknown status code", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "ollama" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 418,
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("HTTP 418");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("returns tokensUsed from Ollama when available", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "ollama" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ response: "answer", eval_count: 10, prompt_eval_count: 5 }),
+    });
+
+    try {
+      const result = await provider.complete("test", "system prompt");
+      expect(result.text).toBe("answer");
+      expect(result.tokensUsed).toBe(15);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("returns undefined tokensUsed from Ollama when counts are missing", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "ollama" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ response: "answer" }),
+    });
+
+    try {
+      const result = await provider.complete("test");
+      expect(result.tokensUsed).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles OpenAI empty choices response", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ choices: [] }),
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("no choices in response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles OpenAI unknown status codes", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("HTTP 502");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles OpenAI 429 rate limit", async () => {
+    const config: LibScopeConfig = {
+      embedding: { provider: "local" },
+      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024 },
+      logging: { level: "silent" },
+    };
+    const provider = createLlmProvider(config);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+    });
+
+    try {
+      await expect(provider.complete("test")).rejects.toThrow("Rate limit exceeded");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("throws when OpenAI provider has no API key", () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },

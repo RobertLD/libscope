@@ -2392,4 +2392,86 @@ bulkCmd
     },
   );
 
+// schedule
+const scheduleCmd = program.command("schedule").description("Manage connector sync schedules");
+
+scheduleCmd
+  .command("list")
+  .description("List all configured connector sync schedules")
+  .action(async () => {
+    const { loadScheduleEntries: loadEntries } = await import("../core/scheduler.js");
+    const entries = loadEntries();
+    if (entries.length === 0) {
+      console.log("No scheduled syncs configured.");
+      console.log(
+        'Add a schedule to a connector config: libscope schedule set <connector> "<cron>"',
+      );
+      return;
+    }
+    console.log("Connector sync schedules:\n");
+    for (const entry of entries) {
+      console.log(`  ${entry.connectorName} (${entry.connectorType})`);
+      console.log(`    Cron: ${entry.cronExpression}`);
+      console.log();
+    }
+  });
+
+scheduleCmd
+  .command("set <connector> <cron>")
+  .description('Set a sync schedule for a connector (e.g. schedule set notion "0 */6 * * *")')
+  .action(async (connector: string, cronExpr: string) => {
+    const nodeCron = await import("node-cron");
+    if (!nodeCron.validate(cronExpr)) {
+      console.error(`Invalid cron expression: "${cronExpr}"`);
+      console.error("Examples: '0 */6 * * *' (every 6h), '0 0 * * *' (daily at midnight)");
+      process.exit(1);
+    }
+
+    const {
+      loadNamedConnectorConfig: loadCfg,
+      saveNamedConnectorConfig: saveCfg,
+      hasNamedConnectorConfig: hasCfg,
+    } = await import("../connectors/index.js");
+
+    if (!hasCfg(connector)) {
+      console.error(
+        `No connector config found for "${connector}". Run 'libscope connect ${connector}' first.`,
+      );
+      process.exit(1);
+    }
+
+    const config = loadCfg<Record<string, unknown>>(connector);
+    config.schedule = { cronExpression: cronExpr };
+    saveCfg(connector, config);
+    console.log(`✓ Schedule set for ${connector}: ${cronExpr}`);
+    console.log(
+      "The schedule will be active when the API server is running (libscope serve --api)",
+    );
+  });
+
+scheduleCmd
+  .command("remove <connector>")
+  .description("Remove the sync schedule for a connector")
+  .action(async (connector: string) => {
+    const {
+      loadNamedConnectorConfig: loadCfg,
+      saveNamedConnectorConfig: saveCfg,
+      hasNamedConnectorConfig: hasCfg,
+    } = await import("../connectors/index.js");
+
+    if (!hasCfg(connector)) {
+      console.error(`No connector config found for "${connector}".`);
+      process.exit(1);
+    }
+
+    const config = loadCfg<Record<string, unknown>>(connector);
+    if (!config.schedule) {
+      console.error(`No schedule configured for "${connector}". Nothing to remove.`);
+      process.exit(1);
+    }
+    delete config.schedule;
+    saveCfg(connector, config);
+    console.log(`✓ Schedule removed for ${connector}`);
+  });
+
 program.parse();

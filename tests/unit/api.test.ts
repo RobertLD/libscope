@@ -19,6 +19,14 @@ import { OPENAPI_SPEC } from "../../src/api/openapi.js";
 import { indexDocument } from "../../src/core/indexing.js";
 import { createTopic } from "../../src/core/topics.js";
 
+vi.mock("../../src/core/scheduler.js", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../../src/core/scheduler.js")>();
+  return {
+    ...orig,
+    loadScheduleEntries: vi.fn(() => []),
+  };
+});
+
 interface ApiResponse {
   data?: Record<string, unknown>;
   meta?: { took: number };
@@ -665,6 +673,42 @@ describe("API routes", () => {
       const data = parsed.data as unknown as Array<Record<string, unknown>>;
       expect(data).toHaveLength(1);
       expect(data[0].connector_type).toBe("notion");
+    });
+  });
+
+  describe("Connector schedules", () => {
+    it("GET /api/v1/connectors/schedules should return schedule entries", async () => {
+      const { loadScheduleEntries } = await import("../../src/core/scheduler.js");
+      const mockLoad = vi.mocked(loadScheduleEntries);
+      mockLoad.mockReturnValueOnce([
+        { connectorType: "notion", connectorName: "notion", cronExpression: "0 */6 * * *" },
+      ]);
+
+      const req = createMockReq("GET", "/api/v1/connectors/schedules");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      const schedules = (parsed.data as unknown as { schedules: unknown[] }).schedules;
+      expect(schedules).toHaveLength(1);
+    });
+
+    it("GET /api/v1/connectors/schedules should return empty array when none configured", async () => {
+      const { loadScheduleEntries } = await import("../../src/core/scheduler.js");
+      const mockLoad = vi.mocked(loadScheduleEntries);
+      mockLoad.mockReturnValueOnce([]);
+
+      const req = createMockReq("GET", "/api/v1/connectors/schedules");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      const schedules = (parsed.data as unknown as { schedules: unknown[] }).schedules;
+      expect(schedules).toHaveLength(0);
     });
   });
 

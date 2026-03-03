@@ -209,3 +209,6 @@ export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confl
 
 export { resolveSelector, bulkDelete, bulkRetag, bulkMove } from "./bulk.js";
 export type { BulkSelector, BulkResult } from "./bulk.js";
+
+export { ConnectorScheduler, loadScheduleEntries } from "./scheduler.js";
+export type { ScheduleConfig, SchedulerStatus } from "./scheduler.js";
