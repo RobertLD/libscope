@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** Set CORS headers and handle OPTIONS preflight. Returns true if request was handled (preflight). */
 export function corsMiddleware(
@@ -113,9 +113,10 @@ export function checkApiKey(req: IncomingMessage, res: ServerResponse): boolean 
   }
 
   const token = authHeader.slice(7);
-  const tokenHash = createHash("sha256").update(token).digest();
-  const keyHash = createHash("sha256").update(apiKey).digest();
-  if (!timingSafeEqual(tokenHash, keyHash)) {
+  const hmacKey = "libscope-api-key-compare";
+  const tokenDigest = createHmac("sha256", hmacKey).update(token).digest();
+  const keyDigest = createHmac("sha256", hmacKey).update(apiKey).digest();
+  if (!timingSafeEqual(tokenDigest, keyDigest)) {
     sendError(res, 401, "UNAUTHORIZED", "Invalid API key");
     return false;
   }
