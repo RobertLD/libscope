@@ -869,3 +869,201 @@ describe("middleware — rate limiting", () => {
     // Entry exists; size is at least 1
   });
 });
+
+describe("Saved Searches API", () => {
+  let db: Database.Database;
+  const provider = new MockEmbeddingProvider();
+
+  beforeEach(async () => {
+    db = createTestDbWithVec();
+    await indexDocument(db, provider, {
+      title: "Test Doc",
+      content: "# Test\n\nSome test content for searching.",
+      sourceType: "manual",
+    });
+  });
+
+  afterEach(() => db.close());
+
+  it("POST /api/v1/searches creates a saved search", async () => {
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/searches", { name: "my search", query: "test" });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(201);
+    const body = parseResponse(getBody());
+    expect(body.data).toBeDefined();
+  });
+
+  it("POST /api/v1/searches returns 400 without name", async () => {
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/searches", { query: "test" });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(400);
+    const body = parseResponse(getBody());
+    expect(body.error?.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("GET /api/v1/searches lists saved searches", async () => {
+    // First create one
+    const req1 = createMockReq("POST", "/api/v1/searches", { name: "my search", query: "test" });
+    const mock1 = createMockRes();
+    await handleRequest(req1, mock1.res, db, provider);
+
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("GET", "/api/v1/searches");
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toBeDefined();
+  });
+
+  it("DELETE /api/v1/searches/:id deletes a saved search", async () => {
+    // Create one first
+    const req1 = createMockReq("POST", "/api/v1/searches", { name: "del search", query: "test" });
+    const mock1 = createMockRes();
+    await handleRequest(req1, mock1.res, db, provider);
+    const created = parseResponse(mock1.getBody());
+    const id = (created.data as Record<string, unknown>)?.id as string;
+
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("DELETE", `/api/v1/searches/${id}`);
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toHaveProperty("deleted", true);
+  });
+
+  it("POST /api/v1/searches/:id/run runs a saved search", async () => {
+    // Create one first
+    const req1 = createMockReq("POST", "/api/v1/searches", { name: "run search", query: "test" });
+    const mock1 = createMockRes();
+    await handleRequest(req1, mock1.res, db, provider);
+    const created = parseResponse(mock1.getBody());
+    const id = (created.data as Record<string, unknown>)?.id as string;
+
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", `/api/v1/searches/${id}/run`);
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toBeDefined();
+  });
+});
+
+describe("Bulk Operations API", () => {
+  let db: Database.Database;
+  const provider = new MockEmbeddingProvider();
+
+  beforeEach(async () => {
+    db = createTestDbWithVec();
+    await indexDocument(db, provider, {
+      title: "Bulk Doc",
+      content: "# Bulk\n\nContent for bulk ops.",
+      sourceType: "manual",
+    });
+  });
+
+  afterEach(() => db.close());
+
+  it("POST /api/v1/bulk/delete returns 400 without selector", async () => {
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/bulk/delete", {});
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(400);
+    const body = parseResponse(getBody());
+    expect(body.error?.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("POST /api/v1/bulk/delete dry run", async () => {
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/bulk/delete", {
+      selector: { sourceType: "manual" },
+      dryRun: true,
+    });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toBeDefined();
+  });
+
+  it("POST /api/v1/bulk/retag adds tags", async () => {
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/bulk/retag", {
+      selector: { sourceType: "manual" },
+      addTags: ["new-tag"],
+      dryRun: true,
+    });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toBeDefined();
+  });
+
+  it("POST /api/v1/bulk/move requires targetTopicId", async () => {
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/bulk/move", {
+      selector: { sourceType: "manual" },
+    });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(400);
+    const body = parseResponse(getBody());
+    expect(body.error?.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("POST /api/v1/bulk/move with targetTopicId", async () => {
+    const topic = createTopic(db, { name: "Bulk Target" });
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", "/api/v1/bulk/move", {
+      selector: { sourceType: "manual" },
+      targetTopicId: topic.id,
+      dryRun: true,
+    });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toBeDefined();
+  });
+});
+
+describe("Links API", () => {
+  let db: Database.Database;
+  const provider = new MockEmbeddingProvider();
+
+  beforeEach(() => {
+    db = createTestDbWithVec();
+  });
+
+  afterEach(() => db.close());
+
+  it("DELETE /api/v1/links/:id deletes a link", async () => {
+    // Create two docs and link them
+    const doc1 = await indexDocument(db, provider, {
+      title: "Doc A",
+      content: "# A\n\nContent A.",
+      sourceType: "manual",
+    });
+    const doc2 = await indexDocument(db, provider, {
+      title: "Doc B",
+      content: "# B\n\nContent B.",
+      sourceType: "manual",
+    });
+
+    // Create a link via the API: POST /api/v1/documents/:id/links
+    const { res: createRes, getBody: createBody } = createMockRes();
+    const createReq = createMockReq("POST", `/api/v1/documents/${doc1.id}/links`, {
+      targetId: doc2.id,
+      linkType: "related",
+    });
+    await handleRequest(createReq, createRes, db, provider);
+    const created = parseResponse(createBody());
+    const linkId = (created.data as Record<string, unknown>)?.id as string;
+
+    // Delete the link
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("DELETE", `/api/v1/links/${linkId}`);
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(200);
+    const body = parseResponse(getBody());
+    expect(body.data).toHaveProperty("deleted", true);
+  });
+});

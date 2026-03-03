@@ -1,5 +1,8 @@
-export { indexDocument, chunkContent } from "./indexing.js";
-export type { IndexDocumentInput, IndexedDocument } from "./indexing.js";
+export { indexDocument, indexFile, chunkContent } from "./indexing.js";
+export type { IndexDocumentInput, IndexFileOptions, IndexedDocument } from "./indexing.js";
+
+export { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
+export type { DocumentParser } from "./parsers/index.js";
 
 export { checkDuplicate, findDuplicates } from "./dedup.js";
 export type { DedupResult, DedupOptions, DuplicateGroup } from "./dedup.js";
