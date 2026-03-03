@@ -49,6 +49,7 @@ import {
   signPayload,
 } from "../core/webhooks.js";
 import type { WebhookEvent, Webhook } from "../core/webhooks.js";
+import { loadScheduleEntries } from "../core/scheduler.js";
 
 /** Strip the secret from webhook API responses. */
 function redactWebhook(webhook: Webhook): Omit<Webhook, "secret"> & { hasSecret: boolean } {
@@ -501,6 +502,14 @@ export async function handleRequest(
       }
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, data, took);
+      return;
+    }
+
+    // Schedule status
+    if (pathname === "/api/v1/connectors/schedules" && method === "GET") {
+      const entries = loadScheduleEntries();
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { schedules: entries }, took);
       return;
     }
 

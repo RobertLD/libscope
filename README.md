@@ -32,6 +32,18 @@ libscope serve
 
 On first run with the default embedding provider, LibScope downloads the [all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) model (~80 MB). Subsequent runs use the cached model.
 
+### Document Format Support
+
+LibScope supports **Markdown** (`.md`, `.mdx`) and **plain text** natively. Additional formats are available via optional dependencies:
+
+| Format | Extension | Optional Dependency | Node.js Requirement |
+|--------|-----------|-------------------|-------------------|
+| PDF | `.pdf` | `pdf-parse` (v2) | ≥ 20.16 or ≥ 22.3 |
+| Word | `.docx` | `mammoth` | Any |
+| CSV | `.csv` | Built-in | Any |
+
+The `pdf-parse` and `mammoth` packages are listed as `optionalDependencies` and install automatically when the Node.js version is compatible.
+
 ## Using with AI Assistants
 
 LibScope exposes an MCP server over stdio. Point your MCP-compatible client at it:

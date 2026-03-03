@@ -37,7 +37,7 @@ describe("startApiServer", () => {
 
     expect(result.port).toBe(0);
     expect(typeof result.close).toBe("function");
-    result.close();
+    await result.close();
   });
 
   it("starts with scheduler enabled but no entries", async () => {
@@ -50,7 +50,7 @@ describe("startApiServer", () => {
 
     expect(typeof result.close).toBe("function");
     expect(result.scheduler).toBeUndefined();
-    result.close();
+    await result.close();
   });
 
   it("starts with default options (scheduler enabled by default)", async () => {
@@ -61,6 +61,6 @@ describe("startApiServer", () => {
     });
 
     expect(typeof result.close).toBe("function");
-    result.close();
+    await result.close();
   });
 });
