@@ -1,22 +1,23 @@
 import { NodeHtmlMarkdown } from "node-html-markdown";
+import { ValidationError } from "../../errors.js";
 import type { DocumentParser } from "./index.js";
+
+const nhm = new NodeHtmlMarkdown({ ignore: ["script", "style", "nav"] });
 
 /** Parser for HTML files — converts to Markdown via node-html-markdown. */
 export class HtmlParser implements DocumentParser {
   readonly extensions = [".html", ".htm"];
 
   parse(content: Buffer): Promise<string> {
-    const html = content.toString("utf-8");
+    try {
+      const html = content.toString("utf-8");
+      const markdown = nhm.translate(html);
 
-    // Strip <script> and <style> blocks before conversion to avoid noise
-    const cleaned = html
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
-      .replace(/<nav[\s\S]*?<\/nav>/gi, "");
-
-    const markdown = NodeHtmlMarkdown.translate(cleaned);
-
-    // Collapse excessive blank lines from stripped blocks
-    return Promise.resolve(markdown.replace(/\n{3,}/g, "\n\n").trim());
+      // Collapse excessive blank lines left by ignored elements
+      return Promise.resolve(markdown.replace(/\n{3,}/g, "\n\n").trimEnd());
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown HTML parsing error";
+      throw new ValidationError(`Failed to parse HTML: ${message}`);
+    }
   }
 }
