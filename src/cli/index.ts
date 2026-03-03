@@ -82,6 +82,15 @@ import {
   runSavedSearch,
   deleteSavedSearch,
 } from "../core/saved-searches.js";
+import {
+  createWebhook,
+  listWebhooks,
+  deleteWebhook,
+  getWebhook,
+  buildPayload,
+  signPayload,
+} from "../core/webhooks.js";
+import type { WebhookEvent } from "../core/webhooks.js";
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -2391,6 +2400,94 @@ bulkCmd
       }
     },
   );
+
+// Webhooks
+const webhookCmd = program.command("webhooks").description("Manage webhooks");
+
+webhookCmd
+  .command("list")
+  .description("List all registered webhooks")
+  .action(() => {
+    const { db } = initializeApp();
+    try {
+      const hooks = listWebhooks(db);
+      if (hooks.length === 0) {
+        console.log("No webhooks registered.");
+      } else {
+        console.log(`Found ${hooks.length} webhook(s):\n`);
+        for (const h of hooks) {
+          console.log(`  ${h.url}`);
+          console.log(`    ID: ${h.id}`);
+          console.log(`    Events: ${h.events.join(", ")}`);
+          console.log(`    Active: ${h.active ? "yes" : "no"}`);
+          if (h.lastTriggeredAt) console.log(`    Last triggered: ${h.lastTriggeredAt}`);
+          if (h.failureCount > 0) console.log(`    Failures: ${h.failureCount}`);
+          console.log();
+        }
+      }
+    } finally {
+      closeDatabase();
+    }
+  });
+
+webhookCmd
+  .command("create <url>")
+  .description("Register a new webhook")
+  .requiredOption(
+    "--events <events>",
+    "Comma-separated event types (e.g. document.created,document.updated)",
+  )
+  .option("--secret <secret>", "Secret for HMAC-SHA256 signature")
+  .action((url: string, opts: { events: string; secret?: string }) => {
+    const { db } = initializeApp();
+    try {
+      const events = opts.events.split(",").map((e) => e.trim()) as WebhookEvent[];
+      const webhook = createWebhook(db, url, events, opts.secret);
+      console.log(`✓ Webhook created: ${webhook.id}`);
+      console.log(`  URL: ${webhook.url}`);
+      console.log(`  Events: ${webhook.events.join(", ")}`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+webhookCmd
+  .command("delete <id>")
+  .description("Delete a webhook")
+  .action((id: string) => {
+    const { db } = initializeApp();
+    try {
+      deleteWebhook(db, id);
+      console.log(`✓ Webhook "${id}" deleted.`);
+    } finally {
+      closeDatabase();
+    }
+  });
+
+webhookCmd
+  .command("test <id>")
+  .description("Send a test ping to a webhook")
+  .action(async (id: string) => {
+    const { db } = initializeApp();
+    try {
+      const webhook = getWebhook(db, id);
+      const body = buildPayload("document.created", { test: true, message: "Webhook test ping" });
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (webhook.secret) {
+        headers["X-LibScope-Signature"] = signPayload(body, webhook.secret);
+      }
+      console.log(`Sending test ping to ${webhook.url}...`);
+      const resp = await fetch(webhook.url, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.timeout(5000),
+      });
+      console.log(`✓ Response: ${resp.status} ${resp.statusText}`);
+    } finally {
+      closeDatabase();
+    }
+  });
 
 // schedule
 const scheduleCmd = program.command("schedule").description("Manage connector sync schedules");

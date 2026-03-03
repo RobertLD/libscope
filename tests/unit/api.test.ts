@@ -724,6 +724,78 @@ describe("API routes", () => {
       expect(parsed.error.code).toBe("NOT_FOUND");
     });
   });
+
+  describe("Webhooks API", () => {
+    it("should create a webhook via POST /api/v1/webhooks", async () => {
+      const req = createMockReq("POST", "/api/v1/webhooks", {
+        url: "https://example.com/hook",
+        events: ["document.created"],
+        secret: "my-secret",
+      });
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(201);
+      const parsed = parseResponse(getBody());
+      expect(parsed.data.url).toBe("https://example.com/hook");
+      expect(parsed.data.hasSecret).toBe(true);
+      expect(parsed.data.secret).toBeUndefined();
+    });
+
+    it("should list webhooks via GET /api/v1/webhooks", async () => {
+      // Create one first
+      const createReq = createMockReq("POST", "/api/v1/webhooks", {
+        url: "https://example.com/hook",
+        events: ["document.created"],
+      });
+      const { res: createRes } = createMockRes();
+      await handleRequest(createReq, createRes, db, provider);
+
+      const req = createMockReq("GET", "/api/v1/webhooks");
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      expect(Array.isArray(parsed.data)).toBe(true);
+      expect(parsed.data.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should return 400 when creating webhook without url", async () => {
+      const req = createMockReq("POST", "/api/v1/webhooks", {
+        events: ["document.created"],
+      });
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(400);
+      const parsed = parseResponse(getBody());
+      expect(parsed.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("should delete a webhook via DELETE /api/v1/webhooks/:id", async () => {
+      const createReq = createMockReq("POST", "/api/v1/webhooks", {
+        url: "https://example.com/hook",
+        events: ["document.created"],
+      });
+      const { res: createRes, getBody: getCreateBody } = createMockRes();
+      await handleRequest(createReq, createRes, db, provider);
+      const created = parseResponse(getCreateBody());
+      const id = (created.data as Record<string, unknown>).id as string;
+
+      const req = createMockReq("DELETE", `/api/v1/webhooks/${id}`);
+      const { res, getStatus, getBody } = createMockRes();
+
+      await handleRequest(req, res, db, provider);
+
+      expect(getStatus()).toBe(200);
+      const parsed = parseResponse(getBody());
+      expect(parsed.data.deleted).toBe(true);
+    });
+  });
 });
 
 describe("OpenAPI spec", () => {

@@ -210,5 +210,19 @@ export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confl
 export { resolveSelector, bulkDelete, bulkRetag, bulkMove } from "./bulk.js";
 export type { BulkSelector, BulkResult } from "./bulk.js";
 
+export {
+  createWebhook,
+  listWebhooks,
+  getWebhook,
+  deleteWebhook,
+  updateWebhook,
+  signPayload,
+  buildPayload,
+  fireWebhooks,
+  redactWebhook,
+  WEBHOOK_EVENTS,
+} from "./webhooks.js";
+export type { Webhook, RedactedWebhook, WebhookEvent, WebhookPayload } from "./webhooks.js";
+
 export { ConnectorScheduler, loadScheduleEntries } from "./scheduler.js";
 export type { ScheduleConfig, SchedulerStatus } from "./scheduler.js";

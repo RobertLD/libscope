@@ -19,6 +19,8 @@ import {
   runSavedSearch,
   deleteSavedSearch,
 } from "../core/saved-searches.js";
+import { createWebhook, listWebhooks, deleteWebhook, redactWebhook } from "../core/webhooks.js";
+import type { WebhookEvent } from "../core/webhooks.js";
 import { suggestTags } from "../core/tags.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger, getLogger } from "../logger.js";
@@ -1091,6 +1093,60 @@ async function main(): Promise<void> {
       deleteSavedSearch(db, params.nameOrId);
       return {
         content: [{ type: "text" as const, text: `✓ Saved search "${params.nameOrId}" deleted.` }],
+      };
+    }),
+  );
+
+  // Tool: create-webhook
+  server.tool(
+    "create-webhook",
+    "Register a webhook to receive notifications for document events",
+    {
+      url: z.string().describe("The URL to send webhook POST requests to (http:// or https://)"),
+      events: z
+        .array(z.string())
+        .describe(
+          "Event types to subscribe to: document.created, document.updated, document.deleted, document.rated, search.executed",
+        ),
+      secret: z
+        .string()
+        .optional()
+        .describe("Optional secret for HMAC-SHA256 signature verification"),
+    },
+    withErrorHandling((params) => {
+      const webhook = createWebhook(db, params.url, params.events as WebhookEvent[], params.secret);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(redactWebhook(webhook), null, 2) }],
+      };
+    }),
+  );
+
+  // Tool: list-webhooks
+  server.tool(
+    "list-webhooks",
+    "List all registered webhooks",
+    {},
+    withErrorHandling(() => {
+      const webhooks = listWebhooks(db);
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(webhooks.map(redactWebhook), null, 2) },
+        ],
+      };
+    }),
+  );
+
+  // Tool: delete-webhook
+  server.tool(
+    "delete-webhook",
+    "Remove a registered webhook by ID",
+    {
+      id: z.string().describe("The webhook ID to delete"),
+    },
+    withErrorHandling((params) => {
+      deleteWebhook(db, params.id);
+      return {
+        content: [{ type: "text" as const, text: `✓ Webhook "${params.id}" deleted.` }],
       };
     }),
   );
