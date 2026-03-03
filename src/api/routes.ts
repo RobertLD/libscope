@@ -40,6 +40,7 @@ import { getLogger } from "../logger.js";
 import { parseJsonBody, sendJson, sendError } from "./middleware.js";
 import { OPENAPI_SPEC } from "./openapi.js";
 import { getConnectorStatus, getSyncHistory } from "../connectors/sync-tracker.js";
+import { loadScheduleEntries } from "../core/scheduler.js";
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
@@ -450,6 +451,14 @@ export async function handleRequest(
       }
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, data, took);
+      return;
+    }
+
+    // Schedule status
+    if (pathname === "/api/v1/connectors/schedules" && method === "GET") {
+      const entries = loadScheduleEntries();
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, { schedules: entries }, took);
       return;
     }
 
