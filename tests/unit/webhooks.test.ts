@@ -1,17 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../fixtures/test-db.js";
-import {
-  createWebhook,
-  listWebhooks,
-  getWebhook,
-  deleteWebhook,
-  updateWebhook,
-  signPayload,
-  buildPayload,
-  fireWebhooks,
-  WEBHOOK_EVENTS,
-} from "../../src/core/webhooks.js";
 import type { WebhookEvent } from "../../src/core/webhooks.js";
 import { ValidationError } from "../../src/errors.js";
 import { initLogger } from "../../src/logger.js";
@@ -28,6 +17,19 @@ vi.mock("node:dns", async (importOriginal) => {
     },
   };
 });
+
+// Dynamic import after DNS mock is registered
+const {
+  createWebhook,
+  listWebhooks,
+  getWebhook,
+  deleteWebhook,
+  updateWebhook,
+  signPayload,
+  buildPayload,
+  fireWebhooks,
+  WEBHOOK_EVENTS,
+} = await import("../../src/core/webhooks.js");
 
 describe("webhooks", () => {
   let db: Database.Database;

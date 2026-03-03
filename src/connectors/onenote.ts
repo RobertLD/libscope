@@ -83,7 +83,10 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
   let lastError: unknown;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     requestTimestamps.push(Date.now());
-    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(30_000) });
+    const timeoutSignal = AbortSignal.timeout(30_000);
+    const combinedSignal =
+      options?.signal != null ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+    const response = await fetch(url, { ...options, signal: combinedSignal });
 
     if (response.status === 429) {
       const retryAfter = response.headers.get("Retry-After");

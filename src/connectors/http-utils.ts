@@ -45,9 +45,13 @@ export async function fetchWithRetry(
 
   try {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const timeoutSignal = AbortSignal.timeout(30_000);
+      const combinedSignal =
+        options?.signal != null ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+
       const response = await fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(30_000),
+        signal: combinedSignal,
       });
 
       if (response.status === 429 || (response.status >= 500 && response.status < 600)) {

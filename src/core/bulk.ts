@@ -80,19 +80,22 @@ export function resolveSelector(
   // Apply tag filter (AND logic — document must have ALL specified tags)
   if (selector.tags && selector.tags.length > 0) {
     const requiredTags = selector.tags.map((t) => t.trim().toLowerCase());
-    // Batch query: fetch tags for all candidate documents in one query
-    const placeholders = ids.map(() => "?").join(", ");
-    const tagRows =
-      ids.length > 0
-        ? (db
-            .prepare(
-              `SELECT dt.document_id, t.name
+    // Batch query: fetch tags for all candidate documents, chunked to respect SQLite parameter limits
+    const SQLITE_MAX_PARAMS = 999;
+    const tagRows: Array<{ document_id: string; name: string }> = [];
+    for (let i = 0; i < ids.length; i += SQLITE_MAX_PARAMS) {
+      const chunk = ids.slice(i, i + SQLITE_MAX_PARAMS);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT dt.document_id, t.name
              FROM tags t
              JOIN document_tags dt ON dt.tag_id = t.id
              WHERE dt.document_id IN (${placeholders})`,
-            )
-            .all(...ids) as Array<{ document_id: string; name: string }>)
-        : [];
+        )
+        .all(...chunk) as Array<{ document_id: string; name: string }>;
+      tagRows.push(...rows);
+    }
     const tagsByDoc = new Map<string, string[]>();
     for (const row of tagRows) {
       const existing = tagsByDoc.get(row.document_id);

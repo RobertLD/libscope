@@ -48,6 +48,7 @@ import {
   buildPayload,
   signPayload,
   redactWebhook,
+  validateWebhookUrlSsrf,
 } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
@@ -386,8 +387,11 @@ export async function handleRequest(
         });
 
         let clientDisconnected = false;
-        req.on("close", () => {
-          clientDisconnected = true;
+        const disconnectPromise = new Promise<void>((resolve) => {
+          req.on("close", () => {
+            clientDisconnected = true;
+            resolve();
+          });
         });
 
         try {
@@ -400,11 +404,10 @@ export async function handleRequest(
             if (clientDisconnected) break;
             const ok = res.write(`data: ${JSON.stringify(event)}\n\n`);
             if (!ok) {
-              await new Promise<void>((resolve) => {
-                res.once("drain", resolve);
-                req.once("close", resolve);
-                if (clientDisconnected) resolve();
-              });
+              await Promise.race([
+                new Promise<void>((resolve) => res.once("drain", resolve)),
+                disconnectPromise,
+              ]);
             }
           }
         } catch (streamErr: unknown) {
@@ -811,6 +814,7 @@ export async function handleRequest(
     const webhookTestId = matchWebhookTest(segments);
     if (webhookTestId && method === "POST") {
       const webhook = getWebhook(db, webhookTestId);
+      await validateWebhookUrlSsrf(webhook.url);
       const body = buildPayload("document.created", { test: true, message: "Webhook test ping" });
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (webhook.secret) {
