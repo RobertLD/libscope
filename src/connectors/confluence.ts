@@ -126,103 +126,171 @@ async function fetchAllPages<T>(initialUrl: string, baseUrl: string, auth: strin
   return all;
 }
 
+/**
+ * Iteratively find and replace `<ac:structured-macro ...>...</ac:structured-macro>` tags
+ * using indexOf (no polynomial regex). The callback receives the inner content and the
+ * opening tag's attribute string and returns the replacement, or `undefined` to skip.
+ */
+function replaceStructuredMacros(
+  html: string,
+  cb: (inner: string, attrs: string) => string | undefined,
+): string {
+  const OPEN = "<ac:structured-macro";
+  const CLOSE = "</ac:structured-macro>";
+  let result = "";
+  let pos = 0;
+
+  while (pos < html.length) {
+    const start = html.toLowerCase().indexOf(OPEN.toLowerCase(), pos);
+    if (start === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const tagEnd = html.indexOf(">", start + OPEN.length);
+    if (tagEnd === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const attrs = html.slice(start, tagEnd + 1);
+    const closeStart = html.toLowerCase().indexOf(CLOSE.toLowerCase(), tagEnd + 1);
+    if (closeStart === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const inner = html.slice(tagEnd + 1, closeStart);
+    const replacement = cb(inner, attrs);
+    if (replacement === undefined) {
+      // Not handled — keep the original text and advance past this tag
+      result += html.slice(pos, closeStart + CLOSE.length);
+    } else {
+      result += html.slice(pos, start) + replacement;
+    }
+    pos = closeStart + CLOSE.length;
+  }
+  return result;
+}
+
+/** Replace paired `<tagName ...>...</tagName>` using indexOf (no backtracking regex). */
+function replaceTagPairs(
+  html: string,
+  tagName: string,
+  cb: (inner: string) => string,
+): string {
+  const openPrefix = `<${tagName}`;
+  const closeTag = `</${tagName}>`;
+  let result = "";
+  let pos = 0;
+
+  while (pos < html.length) {
+    const start = html.toLowerCase().indexOf(openPrefix.toLowerCase(), pos);
+    if (start === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const tagEnd = html.indexOf(">", start + openPrefix.length);
+    if (tagEnd === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const closeStart = html.toLowerCase().indexOf(closeTag.toLowerCase(), tagEnd + 1);
+    if (closeStart === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const inner = html.slice(tagEnd + 1, closeStart);
+    result += html.slice(pos, start) + cb(inner);
+    pos = closeStart + closeTag.length;
+  }
+  return result;
+}
+
+/** Extract text content between `<tagName>` and `</tagName>` using indexOf. */
+function extractTagContent(html: string, tagName: string): string {
+  const open = `<${tagName}>`;
+  const close = `</${tagName}>`;
+  const start = html.toLowerCase().indexOf(open.toLowerCase());
+  if (start === -1) return "";
+  const contentStart = start + open.length;
+  const end = html.toLowerCase().indexOf(close.toLowerCase(), contentStart);
+  if (end === -1) return "";
+  return html.slice(contentStart, end);
+}
+
 export function convertConfluenceStorage(html: string): string {
   let processed = html;
 
-  // Code blocks: <ac:structured-macro ac:name="code">
-  processed = processed.replace(
-    /<ac:structured-macro [^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, inner: string) => {
-      // Extract attrs from the opening tag
-      const tagEnd = _match.indexOf(">");
-      const attrs = _match.slice(0, tagEnd);
-      if (!/ac:name="code"/i.test(attrs)) return _match;
-      const langMatch = /<ac:parameter\s+ac:name="language">(.*?)<\/ac:parameter>/i.exec(inner);
-      const lang = langMatch?.[1] ?? "";
-      const bodyMatch =
-        /<ac:plain-text-body>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*<\/ac:plain-text-body>/i.exec(inner);
-      const code = bodyMatch?.[1] ?? "";
-      const langAttr = lang ? ` class="language-${lang}"` : "";
-      return `<pre><code${langAttr}>${code}</code></pre>`;
-    },
-  );
+  // Replace <ac:structured-macro> tags iteratively to avoid polynomial regex backtracking.
+  // Each pass handles one macro type; unrecognised macros are left for later stripping.
+  processed = replaceStructuredMacros(processed, (inner, attrs) => {
+    if (!/ac:name="code"/i.test(attrs)) return undefined; // skip — not a code macro
+    const langMatch = /<ac:parameter\s+ac:name="language">([^<]*)<\/ac:parameter>/i.exec(inner);
+    const lang = langMatch?.[1] ?? "";
+    const cdataStart = inner.indexOf("<![CDATA[");
+    const cdataEnd = cdataStart >= 0 ? inner.indexOf("]]>", cdataStart) : -1;
+    const code = cdataStart >= 0 && cdataEnd >= 0 ? inner.slice(cdataStart + 9, cdataEnd) : "";
+    const langAttr = lang ? ` class="language-${lang}"` : "";
+    return `<pre><code${langAttr}>${code}</code></pre>`;
+  });
 
   // Info/note/warning/tip panels
-  processed = processed.replace(
-    /<ac:structured-macro [^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, inner: string) => {
-      const tagEnd = _match.indexOf(">");
-      const attrs = _match.slice(0, tagEnd);
-      const nameMatch = /ac:name="(info|note|warning|tip)"/i.exec(attrs);
-      if (!nameMatch) return _match;
-      const type = nameMatch[1] ?? "info";
-      const bodyMatch = /<ac:rich-text-body>([\s\S]*?)<\/ac:rich-text-body>/i.exec(inner);
-      const body = bodyMatch?.[1] ?? "";
-      const prefix = type.charAt(0).toUpperCase() + type.slice(1);
-      return `<blockquote><strong>${prefix}:</strong> ${body.trim()}</blockquote>`;
-    },
-  );
+  processed = replaceStructuredMacros(processed, (inner, attrs) => {
+    const nameMatch = /ac:name="(info|note|warning|tip)"/i.exec(attrs);
+    if (!nameMatch) return undefined;
+    const type = nameMatch[1] ?? "info";
+    const body = extractTagContent(inner, "ac:rich-text-body");
+    const prefix = type.charAt(0).toUpperCase() + type.slice(1);
+    return `<blockquote><strong>${prefix}:</strong> ${body.trim()}</blockquote>`;
+  });
 
   // Panel → blockquote
-  processed = processed.replace(
-    /<ac:structured-macro\s[^>]*ac:name="panel"[^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, inner: string) => {
-      const bodyMatch = /<ac:rich-text-body>([\s\S]*?)<\/ac:rich-text-body>/i.exec(inner);
-      const body = bodyMatch?.[1] ?? "";
-      return `<blockquote>${body.trim()}</blockquote>`;
-    },
-  );
+  processed = replaceStructuredMacros(processed, (inner, attrs) => {
+    if (!/ac:name="panel"/i.test(attrs)) return undefined;
+    const body = extractTagContent(inner, "ac:rich-text-body");
+    return `<blockquote>${body.trim()}</blockquote>`;
+  });
 
   // Expand → just content
-  processed = processed.replace(
-    /<ac:structured-macro\s[^>]*ac:name="expand"[^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, inner: string) => {
-      const titleMatch = /<ac:parameter\s+ac:name="title">(.*?)<\/ac:parameter>/i.exec(inner);
-      const bodyMatch = /<ac:rich-text-body>([\s\S]*?)<\/ac:rich-text-body>/i.exec(inner);
-      const title = titleMatch?.[1] ?? "Details";
-      const body = bodyMatch?.[1] ?? "";
-      return `<p><strong>${title}</strong></p>${body.trim()}`;
-    },
-  );
+  processed = replaceStructuredMacros(processed, (inner, attrs) => {
+    if (!/ac:name="expand"/i.test(attrs)) return undefined;
+    const titleMatch = /<ac:parameter\s+ac:name="title">([^<]*)<\/ac:parameter>/i.exec(inner);
+    const title = titleMatch?.[1] ?? "Details";
+    const body = extractTagContent(inner, "ac:rich-text-body");
+    return `<p><strong>${title}</strong></p>${body.trim()}`;
+  });
 
   // TOC → strip
-  processed = processed.replace(
-    /<ac:structured-macro\s[^>]*ac:name="toc"[^>]*>[\s\S]*?<\/ac:structured-macro>/gi,
-    "",
-  );
+  processed = replaceStructuredMacros(processed, (_inner, attrs) => {
+    if (!/ac:name="toc"/i.test(attrs)) return undefined;
+    return "";
+  });
   // Self-closing TOC
   processed = processed.replace(/<ac:structured-macro\s[^>]*ac:name="toc"[^>]*\/>/gi, "");
 
   // JIRA macro → [JIRA: KEY-123] as a span to avoid escaping
-  processed = processed.replace(
-    /<ac:structured-macro\s[^>]*ac:name="jira"[^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
-    (_match, inner: string) => {
-      const keyMatch = /<ac:parameter\s+ac:name="key">(.*?)<\/ac:parameter>/i.exec(inner);
-      const key = keyMatch?.[1] ?? "UNKNOWN";
-      return `<span>[JIRA: ${key}]</span>`;
-    },
-  );
+  processed = replaceStructuredMacros(processed, (inner, attrs) => {
+    if (!/ac:name="jira"/i.test(attrs)) return undefined;
+    const keyMatch = /<ac:parameter\s+ac:name="key">([^<]*)<\/ac:parameter>/i.exec(inner);
+    const key = keyMatch?.[1] ?? "UNKNOWN";
+    return `<span>[JIRA: ${key}]</span>`;
+  });
 
-  // ac:image → [image] as span
-  processed = processed.replace(/<ac:image[^>]*>[\s\S]*?<\/ac:image>/gi, "<span>[image]</span>");
+  // ac:image → [image] as span (use indexOf-based replacement)
+  processed = replaceTagPairs(processed, "ac:image", () => "<span>[image]</span>");
 
   // ac:link → extract URL/title as an anchor
-  processed = processed.replace(
-    /<ac:link[^>]*>([\s\S]*?)<\/ac:link>/gi,
-    (_match, inner: string) => {
-      const titleMatch =
-        /<ac:link-body>(.*?)<\/ac:link-body>/i.exec(inner) ??
-        /<ac:plain-text-link-body>\s*<!\[CDATA\[(.*?)\]\]>\s*<\/ac:plain-text-link-body>/i.exec(
-          inner,
-        );
-      const title = titleMatch?.[1] ?? "link";
-      const hrefMatch = /<ri:page\s+ri:content-title="([^"]*)"[^>]*/i.exec(inner);
-      if (hrefMatch?.[1]) {
-        return `<a href="${hrefMatch[1]}">${title}</a>`;
-      }
-      return `<span>[${title}]</span>`;
-    },
-  );
+  processed = replaceTagPairs(processed, "ac:link", (inner) => {
+    const titleMatch =
+      /<ac:link-body>([^<]*)<\/ac:link-body>/i.exec(inner) ??
+      /<ac:plain-text-link-body>[^<]*<!\[CDATA\[([^\]]*)\]\]>[^<]*<\/ac:plain-text-link-body>/i.exec(
+        inner,
+      );
+    const title = titleMatch?.[1] ?? "link";
+    const hrefMatch = /<ri:page\s+ri:content-title="([^"]*)"[^>]*/i.exec(inner);
+    if (hrefMatch?.[1]) {
+      return `<a href="${hrefMatch[1]}">${title}</a>`;
+    }
+    return `<span>[${title}]</span>`;
+  });
 
   // ri:attachment → [attached: filename] as span
   processed = processed.replace(
@@ -231,7 +299,7 @@ export function convertConfluenceStorage(html: string): string {
   );
 
   // Strip remaining ac:parameter tags
-  processed = processed.replace(/<ac:parameter[^>]*>[\s\S]*?<\/ac:parameter>/gi, "");
+  processed = replaceTagPairs(processed, "ac:parameter", () => "");
 
   // Strip remaining ac:structured-macro wrappers but keep body
   processed = processed.replace(/<\/?ac:structured-macro[^>]*>/gi, "");

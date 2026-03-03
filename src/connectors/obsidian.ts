@@ -207,11 +207,11 @@ function parseSimpleYaml(yaml: string): Record<string, unknown> {
       currentKey = undefined;
     }
 
-    const kvMatch = /^([a-zA-Z_][a-zA-Z0-9_-]*):[ ]*(.*)$/.exec(line);
-    if (!kvMatch) continue;
-
-    const key = kvMatch[1] ?? "";
-    const value = (kvMatch[2] ?? "").trim();
+    const colonIdx = line.indexOf(":");
+    if (colonIdx < 1) continue;
+    const key = line.slice(0, colonIdx);
+    if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(key)) continue;
+    const value = line.slice(colonIdx + 1).trim();
 
     if (value === "" || value === "[]") {
       // Could be start of a list
