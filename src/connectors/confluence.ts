@@ -171,11 +171,7 @@ function replaceStructuredMacros(
 }
 
 /** Replace paired `<tagName ...>...</tagName>` using indexOf (no backtracking regex). */
-function replaceTagPairs(
-  html: string,
-  tagName: string,
-  cb: (inner: string) => string,
-): string {
+function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => string): string {
   const openPrefix = `<${tagName}`;
   const closeTag = `</${tagName}>`;
   let result = "";
