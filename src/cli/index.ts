@@ -55,6 +55,7 @@ import {
   listInstalledPacks,
   listAvailablePacks,
   createPack,
+  createPackFromSource,
 } from "../core/packs.js";
 
 import { execSync } from "node:child_process";
@@ -1607,7 +1608,7 @@ const packCmd = program.command("pack").description("Manage knowledge packs");
 
 packCmd
   .command("install <nameOrPath>")
-  .description("Install a knowledge pack from registry or local .json file")
+  .description("Install a knowledge pack from registry or local .json/.json.gz file")
   .option("--registry <url>", "Custom registry URL")
   .action(async (nameOrPath: string, opts: { registry?: string }) => {
     const { db, provider } = initializeAppWithEmbedding();
@@ -1682,38 +1683,81 @@ packCmd
 
 packCmd
   .command("create")
-  .description("Export current documents as a pack file")
+  .description("Create a pack from the database, a local folder, or a URL")
   .requiredOption("--name <name>", "Pack name")
-  .option("--topic <topic>", "Filter documents by topic ID")
+  .option("--from <sources...>", "Source folder(s), file(s), or URL(s) to build pack from")
+  .option("--topic <topic>", "Filter documents by topic ID (database mode only)")
   .option("--version <version>", "Pack version (default: 1.0.0)")
   .option("--description <desc>", "Pack description")
   .option("--author <author>", "Pack author")
   .option("--output <path>", "Output file path")
+  .option(
+    "--extensions <exts>",
+    "Comma-separated file extensions to include (e.g. .md,.html). Default: all supported",
+  )
+  .option("--exclude <patterns...>", "Glob patterns to exclude (e.g. *.min.js, assets/**)")
+  .option("--no-recursive", "Do not recurse into subdirectories")
   .action(
-    (opts: {
+    async (opts: {
       name: string;
+      from?: string[];
       topic?: string;
       version?: string;
       description?: string;
       author?: string;
       output?: string;
+      extensions?: string;
+      exclude?: string[];
+      recursive: boolean;
     }) => {
-      const { db } = initializeApp();
-      try {
-        const outputPath = opts.output ?? `${opts.name}.json`;
-        const pack = createPack(db, {
+      if (opts.from && opts.from.length > 0) {
+        // Source mode: build pack directly from files/URLs (no database needed)
+        // Default to .json.gz for source packs (they can be large)
+        const outputPath = opts.output ?? `${opts.name}.json.gz`;
+        const extensionList = opts.extensions
+          ? opts.extensions.split(",").map((e) => e.trim())
+          : undefined;
+
+        const pack = await createPackFromSource({
           name: opts.name,
+          from: opts.from,
           version: opts.version,
           description: opts.description,
           author: opts.author,
-          topic: opts.topic,
           outputPath,
+          extensions: extensionList,
+          exclude: opts.exclude,
+          recursive: opts.recursive,
+          onProgress: ({ file, index, total }) => {
+            const pct = Math.round(((index + 1) / total) * 100);
+            const short = file.length > 60 ? `...${file.slice(-57)}` : file;
+            process.stdout.write(`\r  [${pct}%] ${index + 1}/${total} ${short}`.padEnd(80));
+          },
         });
+        // Clear progress line
+        process.stdout.write("\r" + " ".repeat(80) + "\r");
         console.log(
           `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
         );
-      } finally {
-        closeDatabase();
+      } else {
+        // Database mode: export existing documents
+        const outputPath = opts.output ?? `${opts.name}.json`;
+        const { db } = initializeApp();
+        try {
+          const pack = createPack(db, {
+            name: opts.name,
+            version: opts.version,
+            description: opts.description,
+            author: opts.author,
+            topic: opts.topic,
+            outputPath,
+          });
+          console.log(
+            `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
+          );
+        } finally {
+          closeDatabase();
+        }
       }
     },
   );

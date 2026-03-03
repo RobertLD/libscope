@@ -313,14 +313,39 @@ export function getDocumentsByTag(
 }
 
 /** Tokenize text into lowercase words, filtering stopwords and short words. */
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
 }
 
-/** Suggest tags for a document based on content analysis (TF-IDF-like keyword extraction). */
+/** Suggest tags from raw text without requiring a database (for pack creation). */
+export function suggestTagsFromText(
+  title: string,
+  content: string,
+  maxSuggestions?: number,
+): string[] {
+  const limit = maxSuggestions ?? 5;
+  const fullText = `${title} ${content}`;
+  const tokens = tokenize(fullText);
+  if (tokens.length === 0) return [];
+
+  const tf = new Map<string, number>();
+  for (const token of tokens) {
+    tf.set(token, (tf.get(token) ?? 0) + 1);
+  }
+
+  const maxTf = Math.max(...tf.values());
+  const scored: Array<{ term: string; score: number }> = [];
+
+  for (const [term, count] of tf) {
+    scored.push({ term, score: count / maxTf });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.term);
+}
 export function suggestTags(
   db: Database.Database,
   documentId: string,
