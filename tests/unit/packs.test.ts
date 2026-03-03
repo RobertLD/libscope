@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, existsSync, mkdtempSync } from "node:fs";
+import { writeFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type Database from "better-sqlite3";
@@ -11,6 +11,7 @@ import {
   listInstalledPacks,
   createPack,
   listAvailablePacks,
+  createPackFromSource,
 } from "../../src/core/packs.js";
 import type { KnowledgePack } from "../../src/core/packs.js";
 import { indexDocument } from "../../src/core/indexing.js";
@@ -441,6 +442,284 @@ describe("knowledge packs", () => {
       await expect(listAvailablePacks("https://192.168.1.1/registry.json")).rejects.toThrow(
         /private/,
       );
+    });
+  });
+
+  describe("createPackFromSource", () => {
+    let sourceDir: string;
+
+    beforeEach(() => {
+      sourceDir = mkdtempSync(join(tmpdir(), "libscope-pack-source-"));
+    });
+
+    it("should create a pack from a folder of markdown files", async () => {
+      writeFileSync(join(sourceDir, "guide.md"), "# Guide\n\nThis is a guide.");
+      writeFileSync(join(sourceDir, "api.md"), "# API\n\nEndpoint reference.");
+
+      const pack = await createPackFromSource({
+        name: "test-from-folder",
+        from: [sourceDir],
+      });
+
+      expect(pack.name).toBe("test-from-folder");
+      expect(pack.documents).toHaveLength(2);
+      expect(pack.documents.map((d) => d.title).sort()).toEqual(["api", "guide"]);
+      expect(pack.documents[0]!.content).toBeTruthy();
+      expect(pack.documents[0]!.source).toMatch(/^file:\/\//);
+      expect(pack.version).toBe("1.0.0");
+      expect(pack.metadata.author).toBe("libscope");
+    });
+
+    it("should write pack to outputPath", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent here.");
+      const outputPath = join(tempDir, "output-pack.json");
+
+      const pack = await createPackFromSource({
+        name: "output-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      expect(existsSync(outputPath)).toBe(true);
+      const written = JSON.parse(readFileSync(outputPath, "utf-8")) as KnowledgePack;
+      expect(written.name).toBe("output-test");
+      expect(written.documents).toHaveLength(1);
+      expect(pack.documents).toHaveLength(1);
+    });
+
+    it("should filter by extensions", async () => {
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme");
+      writeFileSync(join(sourceDir, "page.html"), "<h1>Page</h1><p>Content</p>");
+      writeFileSync(join(sourceDir, "data.json"), '{"key": "value"}');
+
+      const pack = await createPackFromSource({
+        name: "ext-filter",
+        from: [sourceDir],
+        extensions: [".md"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("readme");
+    });
+
+    it("should handle extensions without leading dot", async () => {
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme\n\nContent");
+
+      const pack = await createPackFromSource({
+        name: "ext-no-dot",
+        from: [sourceDir],
+        extensions: ["md"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+    });
+
+    it("should exclude files matching patterns", async () => {
+      writeFileSync(join(sourceDir, "guide.md"), "# Guide\n\nContent");
+      writeFileSync(join(sourceDir, "draft.md"), "# Draft\n\nNot ready");
+
+      const pack = await createPackFromSource({
+        name: "exclude-test",
+        from: [sourceDir],
+        exclude: ["draft.md"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("guide");
+    });
+
+    it("should recurse into subdirectories by default", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const subDir = join(sourceDir, "sub");
+      mkdirSync(subDir);
+      writeFileSync(join(sourceDir, "root.md"), "# Root");
+      writeFileSync(join(subDir, "nested.md"), "# Nested\n\nDeep content");
+
+      const pack = await createPackFromSource({
+        name: "recursive-test",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(2);
+      expect(pack.documents.map((d) => d.title).sort()).toEqual(["nested", "root"]);
+    });
+
+    it("should not recurse when recursive is false", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const subDir = join(sourceDir, "sub");
+      mkdirSync(subDir);
+      writeFileSync(join(sourceDir, "root.md"), "# Root");
+      writeFileSync(join(subDir, "nested.md"), "# Nested");
+
+      const pack = await createPackFromSource({
+        name: "no-recurse",
+        from: [sourceDir],
+        recursive: false,
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("root");
+    });
+
+    it("should throw for empty pack name", async () => {
+      await expect(
+        createPackFromSource({ name: "  ", from: [sourceDir] }),
+      ).rejects.toThrow(/Pack name is required/);
+    });
+
+    it("should throw for empty from array", async () => {
+      await expect(
+        createPackFromSource({ name: "test", from: [] }),
+      ).rejects.toThrow(/At least one --from source is required/);
+    });
+
+    it("should throw for non-existent source path", async () => {
+      await expect(
+        createPackFromSource({ name: "test", from: ["/nonexistent/path/xyz"] }),
+      ).rejects.toThrow(/does not exist/);
+    });
+
+    it("should throw when no documents could be created", async () => {
+      // Empty directory — no parseable files
+      await expect(
+        createPackFromSource({ name: "empty", from: [sourceDir] }),
+      ).rejects.toThrow(/No documents could be created/);
+    });
+
+    it("should skip files without a parser", async () => {
+      writeFileSync(join(sourceDir, "data.bin"), "binary stuff");
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme\n\nContent");
+
+      const pack = await createPackFromSource({
+        name: "skip-unsupported",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("readme");
+    });
+
+    it("should skip files with empty content after parsing", async () => {
+      writeFileSync(join(sourceDir, "empty.md"), "   ");
+      writeFileSync(join(sourceDir, "real.md"), "# Real\n\nActual content");
+
+      const pack = await createPackFromSource({
+        name: "skip-empty",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("real");
+    });
+
+    it("should accept a single file as source", async () => {
+      const filePath = join(sourceDir, "single.md");
+      writeFileSync(filePath, "# Single File\n\nJust one file.");
+
+      const pack = await createPackFromSource({
+        name: "single-file",
+        from: [filePath],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("single");
+    });
+
+    it("should accept multiple sources", async () => {
+      const dir2 = mkdtempSync(join(tmpdir(), "libscope-pack-source2-"));
+      writeFileSync(join(sourceDir, "a.md"), "# A\n\nFrom dir 1");
+      writeFileSync(join(dir2, "b.md"), "# B\n\nFrom dir 2");
+
+      const pack = await createPackFromSource({
+        name: "multi-source",
+        from: [sourceDir, dir2],
+      });
+
+      expect(pack.documents).toHaveLength(2);
+    });
+
+    it("should call onProgress callback", async () => {
+      writeFileSync(join(sourceDir, "a.md"), "# A");
+      writeFileSync(join(sourceDir, "b.md"), "# B");
+
+      const progress: Array<{ file: string; index: number; total: number }> = [];
+
+      await createPackFromSource({
+        name: "progress-test",
+        from: [sourceDir],
+        onProgress: (info) => progress.push(info),
+      });
+
+      expect(progress).toHaveLength(2);
+      expect(progress[0]!.index).toBe(0);
+      expect(progress[0]!.total).toBe(2);
+      expect(progress[1]!.index).toBe(1);
+    });
+
+    it("should set custom version, description, author", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent");
+
+      const pack = await createPackFromSource({
+        name: "custom-meta",
+        from: [sourceDir],
+        version: "2.0.0",
+        description: "Custom desc",
+        author: "Test Author",
+      });
+
+      expect(pack.version).toBe("2.0.0");
+      expect(pack.description).toBe("Custom desc");
+      expect(pack.metadata.author).toBe("Test Author");
+    });
+
+    it("should produce a valid pack that passes validatePack", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nSome content here");
+      const outputPath = join(tempDir, "validate-test.json");
+
+      await createPackFromSource({
+        name: "validate-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      // Read and re-validate through installPack (which calls validatePack internally)
+      const result = await installPack(db, provider, outputPath);
+      expect(result.packName).toBe("validate-test");
+      expect(result.documentsInstalled).toBe(1);
+    });
+
+    it("should handle HTML files", async () => {
+      writeFileSync(
+        join(sourceDir, "page.html"),
+        "<html><head><title>Test</title></head><body><h1>Hello</h1><p>World</p></body></html>",
+      );
+
+      const pack = await createPackFromSource({
+        name: "html-test",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("page");
+      expect(pack.documents[0]!.content).toContain("Hello");
+      expect(pack.documents[0]!.content).toContain("World");
+    });
+
+    it("should exclude with wildcard patterns", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const assetsDir = join(sourceDir, "assets");
+      mkdirSync(assetsDir);
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme\n\nContent");
+      writeFileSync(join(assetsDir, "data.md"), "# Asset data");
+
+      const pack = await createPackFromSource({
+        name: "wildcard-exclude",
+        from: [sourceDir],
+        exclude: ["assets/**"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("readme");
     });
   });
 });
