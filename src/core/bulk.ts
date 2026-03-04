@@ -2,7 +2,12 @@ import type Database from "better-sqlite3";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import { deleteDocument, listDocuments } from "./documents.js";
-import { addTagsToDocument, removeTagFromDocument, getDocumentTags } from "./tags.js";
+import {
+  addTagsToDocument,
+  removeTagFromDocument,
+  getDocumentTags,
+  getDocumentTagsBatch,
+} from "./tags.js";
 
 export interface BulkSelector {
   topicId?: string;
@@ -56,12 +61,10 @@ export function resolveSelector(
     limit: effectiveLimit,
   });
 
+  const docMap = new Map(docs.map((d) => [d.id, d]));
   let ids = docs.map((d) => d.id);
 
-  // Build a Map for O(1) lookup instead of O(n) .find() per id
-  const docMap = new Map(docs.map((d) => [d.id, d]));
-
-  // Apply date filters
+  // Apply date filters using the pre-built map — O(n) instead of O(n²)
   if (selector.dateFrom) {
     const from = selector.dateFrom;
     ids = ids.filter((id) => {
@@ -77,36 +80,13 @@ export function resolveSelector(
     });
   }
 
-  // Apply tag filter (AND logic — document must have ALL specified tags)
+  // Apply tag filter (AND logic — document must have ALL specified tags).
+  // Fetch all tags in a single query instead of one query per document.
   if (selector.tags && selector.tags.length > 0) {
     const requiredTags = selector.tags.map((t) => t.trim().toLowerCase());
-    // Batch query: fetch tags for all candidate documents, chunked to respect SQLite parameter limits
-    const SQLITE_MAX_PARAMS = 999;
-    const tagRows: Array<{ document_id: string; name: string }> = [];
-    for (let i = 0; i < ids.length; i += SQLITE_MAX_PARAMS) {
-      const chunk = ids.slice(i, i + SQLITE_MAX_PARAMS);
-      const placeholders = chunk.map(() => "?").join(", ");
-      const rows = db
-        .prepare(
-          `SELECT dt.document_id, t.name
-             FROM tags t
-             JOIN document_tags dt ON dt.tag_id = t.id
-             WHERE dt.document_id IN (${placeholders})`,
-        )
-        .all(...chunk) as Array<{ document_id: string; name: string }>;
-      tagRows.push(...rows);
-    }
-    const tagsByDoc = new Map<string, string[]>();
-    for (const row of tagRows) {
-      const existing = tagsByDoc.get(row.document_id);
-      if (existing) {
-        existing.push(row.name);
-      } else {
-        tagsByDoc.set(row.document_id, [row.name]);
-      }
-    }
+    const tagsByDoc = getDocumentTagsBatch(db, ids);
     ids = ids.filter((id) => {
-      const docTags = tagsByDoc.get(id) ?? [];
+      const docTags = (tagsByDoc.get(id) ?? []).map((t) => t.name);
       return requiredTags.every((rt) => docTags.includes(rt));
     });
   }

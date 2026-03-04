@@ -76,6 +76,25 @@ describe("bulk operations", () => {
       expect(ids).toContain("doc-b");
     });
 
+    it("filters by dateFrom", () => {
+      insertDoc(db, "doc-old", "Old Doc", {
+        library: "react",
+        createdAt: "2020-01-01T00:00:00.000Z",
+      });
+      const ids = resolveSelector(db, { library: "react", dateFrom: "2024-01-01T00:00:00.000Z" });
+      expect(ids).not.toContain("doc-old");
+      expect(ids).toContain("doc-a");
+    });
+
+    it("filters by dateTo", () => {
+      insertDoc(db, "doc-future", "Future Doc", {
+        library: "react",
+        createdAt: "2099-01-01T00:00:00.000Z",
+      });
+      const ids = resolveSelector(db, { library: "react", dateTo: "2025-01-01T00:00:00.000Z" });
+      expect(ids).not.toContain("doc-future");
+    });
+
     it("throws on empty selector", () => {
       expect(() => resolveSelector(db, {})).toThrow(ValidationError);
     });

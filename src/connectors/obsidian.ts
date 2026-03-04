@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { load as yamlLoad } from "js-yaml";
 import { join, relative, dirname, basename, extname, resolve } from "node:path";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
@@ -110,7 +111,20 @@ export function parseObsidianMarkdown(
   if (fmMatch) {
     const fmBlock = fmMatch[1] ?? "";
     body = content.slice((fmMatch[0] ?? "").length).trimStart();
-    frontmatter = parseSimpleYaml(fmBlock);
+    try {
+      const parsed = yamlLoad(fmBlock);
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+        // js-yaml parses bare YAML date literals (e.g. 2024-01-15) as Date objects per YAML 1.1.
+        // Normalise them to ISO-8601 strings so downstream code always sees strings.
+        const normalised: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+          normalised[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
+        }
+        frontmatter = normalised;
+      }
+    } catch {
+      // Malformed frontmatter — leave frontmatter as empty object and continue
+    }
   }
 
   // Build vault file map for wikilink resolution
@@ -182,61 +196,6 @@ export function parseObsidianMarkdown(
   const tags = [...tagSet];
 
   return { frontmatter, body: body.trim(), tags, wikilinks };
-}
-
-function parseSimpleYaml(yaml: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  const lines = yaml.split("\n");
-  let currentKey: string | undefined;
-  let listValues: string[] | undefined;
-
-  for (const line of lines) {
-    // List item continuation
-    if (listValues !== undefined && /^\s+-\s+(.*)/.test(line)) {
-      const itemMatch = /^\s+-\s+(.*)/.exec(line);
-      if (itemMatch?.[1] !== undefined) {
-        listValues.push(itemMatch[1].trim());
-      }
-      continue;
-    }
-
-    // Flush any pending list
-    if (currentKey !== undefined && listValues !== undefined) {
-      result[currentKey] = listValues;
-      listValues = undefined;
-      currentKey = undefined;
-    }
-
-    const colonIdx = line.indexOf(":");
-    if (colonIdx < 1) continue;
-    const key = line.slice(0, colonIdx);
-    if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(key)) continue;
-    const value = line.slice(colonIdx + 1).trim();
-
-    if (value === "" || value === "[]") {
-      // Could be start of a list
-      currentKey = key;
-      listValues = value === "[]" ? [] : [];
-      continue;
-    }
-
-    // Inline list: [a, b, c]
-    if (value.startsWith("[") && value.endsWith("]")) {
-      const inner = value.slice(1, -1);
-      result[key] = inner.split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
-      continue;
-    }
-
-    // Simple scalar
-    result[key] = value.replace(/^['"]|['"]$/g, "");
-  }
-
-  // Flush trailing list
-  if (currentKey !== undefined && listValues !== undefined) {
-    result[currentKey] = listValues;
-  }
-
-  return result;
 }
 
 function resolveEmbeds(
