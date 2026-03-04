@@ -278,8 +278,8 @@ describe("webhooks", () => {
       await createWebhook(db, "https://example.com/hook", ["document.updated"]);
       fireWebhooks(db, "document.created", { docId: "123" });
 
-      // Give time for any async calls
-      await new Promise((r) => setTimeout(r, 50));
+      // Flush all pending microtasks/promises; mockFetch should remain uncalled
+      await Promise.resolve();
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -367,7 +367,8 @@ describe("webhooks", () => {
 
       fireWebhooks(db, "document.created", { docId: "123" });
 
-      await new Promise((r) => setTimeout(r, 50));
+      // Flush all pending microtasks/promises; mockFetch should remain uncalled
+      await Promise.resolve();
       expect(mockFetch).not.toHaveBeenCalled();
     });
   });

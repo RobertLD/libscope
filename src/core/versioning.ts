@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DocumentNotFoundError } from "../errors.js";
 import { getDocument, updateDocument } from "./documents.js";
+import { getLogger } from "../logger.js";
 
 export const MAX_VERSIONS_DEFAULT = 10;
 
@@ -174,7 +175,11 @@ function mapRow(row: {
   if (row.metadata) {
     try {
       metadata = JSON.parse(row.metadata) as Record<string, unknown>;
-    } catch {
+    } catch (err) {
+      getLogger().warn(
+        { err, versionId: row.id },
+        "Failed to parse version metadata JSON; using null",
+      );
       metadata = null;
     }
   }

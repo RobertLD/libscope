@@ -32,7 +32,8 @@ import { fetchAndConvert } from "../core/url-fetcher.js";
 import { initLogger, getLogger } from "../logger.js";
 import { ConfigError, LibScopeError, ValidationError } from "../errors.js";
 
-function errorResponse(err: unknown): {
+/** Convert a thrown error into an MCP error response object. Exported for testing. */
+export function errorResponse(err: unknown): {
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
@@ -54,10 +55,10 @@ function errorResponse(err: unknown): {
   };
 }
 
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+export type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
-/** Wraps a tool handler so that thrown errors are converted to MCP error responses. */
-function withErrorHandling<P>(
+/** Wraps a tool handler so that thrown errors are converted to MCP error responses. Exported for testing. */
+export function withErrorHandling<P>(
   handler: (params: P) => ToolResult | Promise<ToolResult>,
 ): (params: P) => Promise<ToolResult> {
   return async (params: P) => {
