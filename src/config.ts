@@ -13,7 +13,7 @@ export interface LibScopeConfig {
     openaiModel?: string;
   };
   llm?: {
-    provider?: "openai" | "ollama";
+    provider?: "openai" | "ollama" | "passthrough";
     model?: string;
     ollamaUrl?: string;
     openaiApiKey?: string;
@@ -112,9 +112,16 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
     };
   }
 
-  if (llmProvider === "openai" || llmProvider === "ollama" || llmModel) {
+  if (
+    llmProvider === "openai" ||
+    llmProvider === "ollama" ||
+    llmProvider === "passthrough" ||
+    llmModel
+  ) {
     overrides.llm = {
-      ...(llmProvider === "openai" || llmProvider === "ollama" ? { provider: llmProvider } : {}),
+      ...(llmProvider === "openai" || llmProvider === "ollama" || llmProvider === "passthrough"
+        ? { provider: llmProvider }
+        : {}),
       ...(llmModel ? { model: llmModel } : {}),
     };
   }

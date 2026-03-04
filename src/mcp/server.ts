@@ -6,7 +6,13 @@ import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
 import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
-import { askQuestion, createLlmProvider, type LlmProvider } from "../core/rag.js";
+import {
+  askQuestion,
+  createLlmProvider,
+  getContextForQuestion,
+  isPassthroughMode,
+  type LlmProvider,
+} from "../core/rag.js";
 import { getDocument, listDocuments, deleteDocument, updateDocument } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
@@ -543,9 +549,30 @@ async function main(): Promise<void> {
       library: z.string().optional().describe("Filter by library name"),
     },
     withErrorHandling(async (params) => {
+      if (isPassthroughMode(config)) {
+        const { contextPrompt, sources } = await getContextForQuestion(db, provider, {
+          question: params.question,
+          topK: params.topK,
+          topic: params.topic,
+          library: params.library,
+        });
+
+        const sourcesText =
+          sources.length > 0
+            ? "\n\n**Sources:**\n" +
+              sources
+                .map((s) => `- ${s.title} (score: ${s.score.toFixed(2)}) [${s.documentId}]`)
+                .join("\n")
+            : "";
+
+        return {
+          content: [{ type: "text" as const, text: contextPrompt + sourcesText }],
+        };
+      }
+
       if (!llmProvider) {
         throw new ConfigError(
-          "No LLM provider configured. Set llm.provider to 'openai' or 'ollama' in your config.",
+          "No LLM provider configured. Set llm.provider to 'openai', 'ollama', or 'passthrough' in your config.",
         );
       }
 
