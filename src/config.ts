@@ -112,9 +112,16 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
     };
   }
 
-  if (llmProvider === "openai" || llmProvider === "ollama" || llmProvider === "passthrough" || llmModel) {
+  if (
+    llmProvider === "openai" ||
+    llmProvider === "ollama" ||
+    llmProvider === "passthrough" ||
+    llmModel
+  ) {
     overrides.llm = {
-      ...(llmProvider === "openai" || llmProvider === "ollama" ? { provider: llmProvider } : {}),
+      ...(llmProvider === "openai" || llmProvider === "ollama" || llmProvider === "passthrough"
+        ? { provider: llmProvider }
+        : {}),
       ...(llmModel ? { model: llmModel } : {}),
     };
   }
