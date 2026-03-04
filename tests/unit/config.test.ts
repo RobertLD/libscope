@@ -73,6 +73,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_OLLAMA_URL"];
     try {
       process.env["LIBSCOPE_OLLAMA_URL"] = "http://custom:11434";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
     } finally {
@@ -88,6 +89,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
     try {
       process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = "true";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.indexing.allowPrivateUrls).toBe(true);
     } finally {
@@ -103,6 +105,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
     try {
       process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = "1";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.indexing.allowSelfSignedCerts).toBe(true);
     } finally {
@@ -120,6 +123,7 @@ describe("config", () => {
     try {
       process.env["LIBSCOPE_LLM_PROVIDER"] = "ollama";
       process.env["LIBSCOPE_LLM_MODEL"] = "llama3";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.llm?.provider).toBe("ollama");
       expect(config.llm?.model).toBe("llama3");
