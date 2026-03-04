@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { initLogger } from "../../src/logger.js";
-import { errorResponse, withErrorHandling, type ToolResult } from "../../src/mcp/server.js";
+import { errorResponse, withErrorHandling, type ToolResult } from "../../src/mcp/errors.js";
 import { LibScopeError, ValidationError, DocumentNotFoundError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 
@@ -95,6 +95,10 @@ describe("MCP tool business logic", () => {
     initLogger("silent");
     db = createTestDbWithVec();
     provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   it("search returns empty response when no documents are indexed", async () => {
