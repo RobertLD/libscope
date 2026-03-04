@@ -67,10 +67,15 @@ export function extractSources(results: SearchResult[]): RagSource[] {
 }
 
 interface LlmConfig {
-  provider?: "openai" | "ollama";
+  provider?: "openai" | "ollama" | "passthrough";
   model?: string;
   ollamaUrl?: string;
   openaiApiKey?: string;
+}
+
+/** Returns true if the config is set to passthrough mode (delegate synthesis to the calling LLM). */
+export function isPassthroughMode(config: LibScopeConfig): boolean {
+  return config.llm?.provider === "passthrough";
 }
 
 /** Create an LLM provider from config. */
@@ -86,9 +91,38 @@ export function createLlmProvider(config: LibScopeConfig): LlmProvider {
   }
 
   throw new ConfigError(
-    "No LLM provider configured. Set llm.provider to 'openai' or 'ollama' in your config, " +
+    "No LLM provider configured. Set llm.provider to 'openai', 'ollama', or 'passthrough' in your config, " +
       "or set LIBSCOPE_LLM_PROVIDER environment variable.",
   );
+}
+
+export interface PassthroughResult {
+  contextPrompt: string;
+  sources: RagSource[];
+}
+
+/**
+ * Retrieve relevant chunks and return the formatted context prompt without calling an LLM.
+ * Used in passthrough mode so the calling LLM can synthesize the answer itself.
+ */
+export async function getContextForQuestion(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  options: RagOptions,
+): Promise<PassthroughResult> {
+  const topK = options.topK ?? 5;
+
+  const { results } = await searchDocuments(db, embeddingProvider, {
+    query: options.question,
+    topic: options.topic,
+    library: options.library,
+    limit: topK,
+  });
+
+  return {
+    contextPrompt: buildContextPrompt(options.question, results),
+    sources: extractSources(results),
+  };
 }
 
 function createOpenAiProvider(
