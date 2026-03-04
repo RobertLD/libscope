@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { writeFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -800,6 +800,111 @@ describe("knowledge packs", () => {
       const result = await installPack(db, provider, packPath);
       expect(result.packName).toBe("roundtrip-pack");
       expect(result.documentsInstalled).toBe(1);
+    });
+  });
+
+  describe("installPack — batch & progress options", () => {
+    it("should report progress via onProgress callback", async () => {
+      const pack = makeSamplePack();
+      const packPath = join(tempDir, "progress-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const calls: Array<{ current: number; total: number; label: string }> = [];
+      await installPack(db, provider, packPath, {
+        onProgress: (current, total, label) => {
+          calls.push({ current, total, label });
+        },
+      });
+
+      // Should have called onProgress at least once (one batch covering both docs)
+      expect(calls.length).toBeGreaterThan(0);
+      // Last call should report all docs processed
+      const last = calls[calls.length - 1]!;
+      expect(last.current).toBe(2);
+      expect(last.total).toBe(2);
+    });
+
+    it("should process in smaller batches when batchSize=1", async () => {
+      const pack = makeSamplePack();
+      const packPath = join(tempDir, "batch1-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const calls: number[] = [];
+      await installPack(db, provider, packPath, {
+        batchSize: 1,
+        onProgress: (current) => calls.push(current),
+      });
+
+      // With batchSize=1 and 2 docs, should get 2 progress calls
+      expect(calls).toEqual([1, 2]);
+    });
+
+    it("should skip documents when resumeFrom is set", async () => {
+      const pack = makeSamplePack({
+        name: "resume-pack",
+        documents: [
+          { title: "Doc 1", content: "Content one", source: "" },
+          { title: "Doc 2", content: "Content two", source: "" },
+          { title: "Doc 3", content: "Content three", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "resume-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath, { resumeFrom: 2 });
+
+      // Should only install doc 3 (skipped first 2)
+      expect(result.documentsInstalled).toBe(1);
+      expect(result.packName).toBe("resume-pack");
+    });
+
+    it("should count errors when embedBatch fails", async () => {
+      const pack = makeSamplePack({ name: "err-pack" });
+      const packPath = join(tempDir, "err-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const failProvider = new MockEmbeddingProvider();
+      failProvider.embedBatch = vi.fn().mockRejectedValue(new Error("embed failed"));
+
+      const result = await installPack(db, failProvider, packPath);
+
+      // embedBatch failure means documents in that batch are skipped
+      expect(result.errors).toBeGreaterThan(0);
+      expect(result.documentsInstalled).toBe(0);
+    });
+
+    it("should include errors=0 on successful install", async () => {
+      const pack = makeSamplePack({ name: "ok-pack" });
+      const packPath = join(tempDir, "ok-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.errors).toBe(0);
+      expect(result.documentsInstalled).toBe(2);
+    });
+
+    it("should use a single embedBatch call per batch for efficiency", async () => {
+      const pack = makeSamplePack({ name: "batch-efficiency" });
+      const packPath = join(tempDir, "batch-eff.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, provider, packPath, { batchSize: 10 });
+
+      // 2 docs in one batch → 1 embedBatch call
+      expect(provider.embedBatchCallCount).toBe(1);
+    });
+
+    it("should return errors=0 for already-installed pack", async () => {
+      const pack = makeSamplePack({ name: "already-pack" });
+      const packPath = join(tempDir, "already-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, provider, packPath);
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.alreadyInstalled).toBe(true);
+      expect(result.errors).toBe(0);
     });
   });
 });
