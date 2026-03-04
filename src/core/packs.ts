@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3";
+import { randomUUID, createHash } from "node:crypto";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import {
   resolve as pathResolve,
   isAbsolute as pathIsAbsolute,
@@ -11,11 +13,10 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
-import { indexDocument } from "./indexing.js";
+import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
-import { suggestTagsFromText, addTagsToDocument } from "./tags.js";
+import { suggestTagsFromText } from "./tags.js";
 import { fetchAndConvert } from "./url-fetcher.js";
-import { pathToFileURL } from "node:url";
 
 export interface PackDocument {
   title: string;
@@ -56,6 +57,17 @@ export interface InstallResult {
   packName: string;
   documentsInstalled: number;
   alreadyInstalled: boolean;
+  errors: number;
+}
+
+export interface InstallOptions {
+  registryUrl?: string | undefined;
+  /** Number of documents to embed and insert per batch. Default: 10. */
+  batchSize?: number | undefined;
+  /** Skip the first N documents (for resuming a partial install). Default: 0. */
+  resumeFrom?: number | undefined;
+  /** Called after each document is processed. */
+  onProgress?: ((current: number, total: number, docTitle: string) => void) | undefined;
 }
 
 export interface CreatePackOptions {
@@ -248,7 +260,7 @@ export async function installPack(
   db: Database.Database,
   provider: EmbeddingProvider,
   packNameOrPath: string,
-  options?: { registryUrl?: string | undefined },
+  options?: InstallOptions,
 ): Promise<InstallResult> {
   const log = getLogger();
   let pack: KnowledgePack;
@@ -273,6 +285,7 @@ export async function installPack(
   } else {
     // Fetch from registry
     const registryUrl = options?.registryUrl ?? DEFAULT_REGISTRY_URL;
+
     validateRegistryUrl(registryUrl);
     const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
     const packUrl = `${baseUrl}/${packNameOrPath}.json`;
@@ -299,10 +312,16 @@ export async function installPack(
 
   if (existing) {
     log.info({ pack: pack.name }, "Pack already installed");
-    return { packName: pack.name, documentsInstalled: 0, alreadyInstalled: true };
+    return { packName: pack.name, documentsInstalled: 0, alreadyInstalled: true, errors: 0 };
   }
 
-  log.info({ pack: pack.name, docCount: pack.documents.length }, "Installing pack");
+  const batchSize = options?.batchSize ?? 10;
+  const resumeFrom = options?.resumeFrom ?? 0;
+  const onProgress = options?.onProgress;
+  const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
+  const total = pack.documents.length;
+
+  log.info({ pack: pack.name, docCount: total, batchSize, resumeFrom }, "Installing pack");
 
   // Insert the pack record first (documents.pack_name has FK to packs.name)
   db.prepare("INSERT INTO packs (name, version, description, doc_count) VALUES (?, ?, ?, 0)").run(
@@ -311,45 +330,121 @@ export async function installPack(
     pack.description,
   );
 
+  // Prepare statements once
+  const insertDoc = db.prepare(`
+    INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertChunk = db.prepare(`
+    INSERT INTO chunks (id, document_id, content, chunk_index)
+    VALUES (?, ?, ?, ?)
+  `);
+  const insertEmbedding = db.prepare(`
+    INSERT INTO chunk_embeddings (chunk_id, embedding)
+    VALUES (?, ?)
+  `);
+
   let installed = 0;
-  const total = pack.documents.length;
-  for (const doc of pack.documents) {
-    try {
-      log.info(
-        { progress: `${installed + 1}/${total}`, title: doc.title },
-        "Indexing pack document",
-      );
-      const result = await indexDocument(db, provider, {
-        title: doc.title,
-        content: doc.content,
-        sourceType: "library",
-        url: doc.source || undefined,
-        submittedBy: "manual",
-        dedup: "skip",
+  let errors = 0;
+  let processedCount = resumeFrom;
+
+  // Process documents in batches for efficient embedding
+  for (let batchStart = 0; batchStart < docs.length; batchStart += batchSize) {
+    const batch = docs.slice(batchStart, batchStart + batchSize);
+
+    // Phase 1: chunk all documents in the batch
+    type DocChunkInfo = {
+      doc: PackDocument;
+      docId: string;
+      contentHash: string;
+      chunks: string[];
+      chunkOffset: number; // offset into allChunks
+    };
+    const docInfos: DocChunkInfo[] = [];
+    const allChunks: string[] = [];
+
+    for (const doc of batch) {
+      const contentHash = createHash("sha256").update(doc.content).digest("hex");
+      const useStreaming = doc.content.length > STREAMING_THRESHOLD;
+      const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
+      docInfos.push({
+        doc,
+        docId: randomUUID(),
+        contentHash,
+        chunks,
+        chunkOffset: allChunks.length,
       });
+      allChunks.push(...chunks);
+    }
 
-      // Tag the document with the pack name
-      db.prepare("UPDATE documents SET pack_name = ? WHERE id = ?").run(pack.name, result.id);
-
-      // Apply tags from the pack document (auto-generated or manually specified)
-      if (doc.tags && doc.tags.length > 0) {
-        addTagsToDocument(db, result.id, doc.tags);
-      }
-
-      installed++;
+    // Phase 2: embed all chunks in a single batch call
+    let allEmbeddings: number[][];
+    try {
+      allEmbeddings = allChunks.length > 0 ? await provider.embedBatch(allChunks) : [];
     } catch (err) {
       log.warn(
-        { err, title: doc.title, pack: pack.name },
-        "Failed to index pack document, skipping",
+        { err, pack: pack.name, batchStart },
+        "Failed to embed batch, skipping these documents",
       );
+      errors += batch.length;
+      processedCount += batch.length;
+      onProgress?.(processedCount, total, batch[batch.length - 1]?.title ?? "");
+      continue;
     }
+
+    // Phase 3: insert all docs, chunks, and embeddings in a single transaction
+    const insertBatch = db.transaction(() => {
+      for (const info of docInfos) {
+        insertDoc.run(
+          info.docId,
+          "library",
+          info.doc.title,
+          info.doc.content,
+          info.doc.source || null,
+          "manual",
+          info.contentHash,
+          pack.name,
+        );
+
+        for (let i = 0; i < info.chunks.length; i++) {
+          const chunkId = randomUUID();
+          const chunkText = info.chunks[i] ?? "";
+          const embedding = allEmbeddings[info.chunkOffset + i] ?? [];
+          insertChunk.run(chunkId, info.docId, chunkText, i);
+          try {
+            const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
+            insertEmbedding.run(chunkId, vecBuffer);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (!message.includes("no such table")) {
+              log.warn({ chunkId, err }, "Failed to insert vector embedding");
+            }
+          }
+        }
+        installed++;
+      }
+    });
+
+    try {
+      insertBatch();
+    } catch (err) {
+      log.warn(
+        { err, pack: pack.name, batchStart },
+        "Transaction failed for batch, skipping these documents",
+      );
+      errors += batch.length;
+      installed -= batch.length < installed ? batch.length : installed;
+    }
+
+    processedCount += batch.length;
+    onProgress?.(processedCount, total, batch[batch.length - 1]?.title ?? "");
   }
 
   // Update doc count
   db.prepare("UPDATE packs SET doc_count = ? WHERE name = ?").run(installed, pack.name);
 
-  log.info({ pack: pack.name, installed }, "Pack installed");
-  return { packName: pack.name, documentsInstalled: installed, alreadyInstalled: false };
+  log.info({ pack: pack.name, installed, errors }, "Pack installed");
+  return { packName: pack.name, documentsInstalled: installed, alreadyInstalled: false, errors };
 }
 
 /** Remove a pack and all its associated documents. */

@@ -32,6 +32,7 @@ import {
 } from "../core/analytics.js";
 import { startRepl } from "./repl.js";
 import { confirmAction } from "./confirm.js";
+import { createReporter, isVerbose } from "./reporter.js";
 import {
   addTagsToDocument,
   removeTagFromDocument,
@@ -1086,10 +1087,15 @@ interface ProgramOpts {
 }
 
 function setupLogging(opts: ProgramOpts): void {
-  const level: LogLevel = opts.verbose
-    ? "debug"
-    : ((opts.logLevel as LogLevel | undefined) ?? loadConfig().logging.level);
-  initLogger(level);
+  if (isVerbose(opts.verbose)) {
+    initLogger("debug");
+  } else if (opts.logLevel) {
+    initLogger(opts.logLevel as LogLevel);
+  } else {
+    // Default to silent in CLI mode — pretty reporter handles user-facing output.
+    // Set LIBSCOPE_VERBOSE=1 or pass --verbose to see structured JSON logs.
+    initLogger("silent");
+  }
 }
 
 /** Shared CLI initialization: loadConfig → setupLogging → getDatabase → runMigrations. */
@@ -1610,19 +1616,47 @@ packCmd
   .command("install <nameOrPath>")
   .description("Install a knowledge pack from registry or local .json/.json.gz file")
   .option("--registry <url>", "Custom registry URL")
-  .action(async (nameOrPath: string, opts: { registry?: string }) => {
-    const { db, provider } = initializeAppWithEmbedding();
-    const result = await installPack(db, provider, nameOrPath, {
-      registryUrl: opts.registry,
-    });
-    if (result.alreadyInstalled) {
-      console.log(`Pack "${result.packName}" is already installed.`);
-    } else {
-      console.log(
-        `✓ Pack "${result.packName}" installed (${result.documentsInstalled} documents).`,
-      );
-    }
-  });
+  .option("--batch-size <n>", "Number of documents to embed per batch (default: 10)")
+  .option("--resume-from <n>", "Skip the first N documents (resume a partial install)")
+  .action(
+    async (
+      nameOrPath: string,
+      opts: { registry?: string; batchSize?: string; resumeFrom?: string },
+    ) => {
+      const { db, provider } = initializeAppWithEmbedding();
+      const globalOpts = program.opts<ProgramOpts>();
+      const reporter = createReporter(globalOpts.verbose);
+
+      const batchSize = opts.batchSize ? parseIntOption(opts.batchSize, "--batch-size") : undefined;
+      const resumeFrom = opts.resumeFrom
+        ? parseIntOption(opts.resumeFrom, "--resume-from")
+        : undefined;
+
+      try {
+        const result = await installPack(db, provider, nameOrPath, {
+          registryUrl: opts.registry,
+          batchSize,
+          resumeFrom,
+          onProgress: (current, total, docTitle) => {
+            reporter.progress(current, total, docTitle);
+          },
+        });
+
+        reporter.clearProgress();
+
+        if (result.alreadyInstalled) {
+          reporter.log(`Pack "${result.packName}" is already installed.`);
+        } else {
+          const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
+          reporter.success(
+            `Pack "${result.packName}" installed: ${result.documentsInstalled} documents${errMsg}.`,
+          );
+        }
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
 
 packCmd
   .command("remove <name>")
@@ -1773,9 +1807,7 @@ connectCmd
   .option("--notebook <name>", "Sync a specific notebook")
   .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
     const config = loadConfig();
-    const logLevel =
-      (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
-    initLogger(logLevel);
+    setupLogging(program.opts<ProgramOpts>());
 
     const workspace = program.opts().workspace as string | undefined;
     if (workspace) {
@@ -1889,9 +1921,7 @@ disconnectCmd
       return;
     }
     const config = loadConfig();
-    const logLevel =
-      (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
-    initLogger(logLevel);
+    setupLogging(program.opts<ProgramOpts>());
 
     const workspace2 = program.opts().workspace as string | undefined;
     if (workspace2) {
