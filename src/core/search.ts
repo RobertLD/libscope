@@ -431,7 +431,7 @@ function keywordSearch(
     params.push(options.version);
   }
   if (options.minRating) {
-    sql += " AND (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) >= ?";
+    sql += " AND avg_r.avg_rating >= ?";
     params.push(options.minRating);
   }
   if (options.dateFrom) {
@@ -553,7 +553,7 @@ function fts5Search(
     params.push(options.version);
   }
   if (options.minRating) {
-    sql += " AND (SELECT AVG(r.rating) FROM ratings r WHERE r.document_id = d.id) >= ?";
+    sql += " AND avg_r.avg_rating >= ?";
     params.push(options.minRating);
   }
   if (options.dateFrom) {

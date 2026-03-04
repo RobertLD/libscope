@@ -129,8 +129,22 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
   return overrides;
 }
 
-/** Load config with precedence: env > project > user > defaults */
+let _configCache: LibScopeConfig | null = null;
+let _configCacheAt = 0;
+const CONFIG_CACHE_TTL_MS = 30_000;
+
+/** Invalidate the config cache (e.g. after saving new values). */
+export function invalidateConfigCache(): void {
+  _configCache = null;
+  _configCacheAt = 0;
+}
+
+/** Load config with precedence: env > project > user > defaults. Result is cached for 30 s. */
 export function loadConfig(): LibScopeConfig {
+  const now = Date.now();
+  if (_configCache && now - _configCacheAt < CONFIG_CACHE_TTL_MS) {
+    return _configCache;
+  }
   const userConfig = loadJsonFile(getUserConfigPath());
   const projectConfig = loadJsonFile(getProjectConfigPath());
   const envOverrides = getEnvOverrides();
@@ -167,6 +181,8 @@ export function loadConfig(): LibScopeConfig {
 
   validateConfig(config);
 
+  _configCache = config;
+  _configCacheAt = now;
   return config;
 }
 
@@ -264,4 +280,5 @@ export function saveUserConfig(config: Partial<LibScopeConfig>): void {
     },
   };
   writeFileSync(getUserConfigPath(), JSON.stringify(merged, null, 2), "utf-8");
+  invalidateConfigCache();
 }

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { createVectorTable } from "../db/schema.js";
 
 export interface ReindexOptions {
   /** Only reindex chunks belonging to these document IDs. */
@@ -59,16 +60,12 @@ export async function reindex(
 
   log.info({ total }, "Chunks to reindex");
 
-  // Ensure the vector table exists for the current provider dimensions
+  // Ensure the vector table exists with the correct dimensions for this provider.
+  // Delegates to schema.createVectorTable() — single source of truth for the DDL.
   try {
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
-        chunk_id TEXT PRIMARY KEY,
-        embedding float[${provider.dimensions}]
-      );
-    `);
-  } catch (err: unknown) {
-    log.warn({ err }, "Could not ensure vector table — continuing anyway");
+    createVectorTable(db, provider.dimensions);
+  } catch {
+    log.warn("Could not ensure vector table — continuing anyway");
   }
 
   const deleteStmt = db.prepare("DELETE FROM chunk_embeddings WHERE chunk_id = ?");

@@ -348,9 +348,11 @@ export async function indexDocument(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("no such table")) {
-          log.debug({ chunkId, err }, "Skipped vector insertion (sqlite-vec may not be loaded)");
+          log.debug({ chunkId }, "Skipped vector insertion (sqlite-vec not loaded)");
         } else {
-          log.warn({ chunkId, err }, "Failed to insert vector embedding");
+          // Re-throw so the transaction rolls back — don't silently commit
+          // chunks that have no embedding (they would be invisible to semantic search).
+          throw err;
         }
       }
     }

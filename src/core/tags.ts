@@ -222,6 +222,37 @@ export function removeTagFromDocument(
   log.info({ documentId, tagId }, "Tag removed from document");
 }
 
+/** Get all tags for multiple documents in a single query. Returns a Map of documentId → tags. */
+export function getDocumentTagsBatch(
+  db: Database.Database,
+  documentIds: string[],
+): Map<string, Tag[]> {
+  if (documentIds.length === 0) return new Map();
+  const placeholders = documentIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT dt.document_id, t.id, t.name, t.created_at
+       FROM tags t
+       JOIN document_tags dt ON dt.tag_id = t.id
+       WHERE dt.document_id IN (${placeholders})
+       ORDER BY t.name`,
+    )
+    .all(...documentIds) as Array<{
+    document_id: string;
+    id: string;
+    name: string;
+    created_at: string;
+  }>;
+
+  const result = new Map<string, Tag[]>();
+  for (const row of rows) {
+    const entry = result.get(row.document_id) ?? [];
+    entry.push({ id: row.id, name: row.name, createdAt: row.created_at });
+    result.set(row.document_id, entry);
+  }
+  return result;
+}
+
 /** Get all tags for a specific document. */
 export function getDocumentTags(db: Database.Database, documentId: string): Tag[] {
   const rows = db
