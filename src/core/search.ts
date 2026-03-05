@@ -326,9 +326,9 @@ function appendFilters(
 }
 
 /**
- * Lazy totalCount: only run the expensive COUNT query when pagination is active
- * (offset > 0 or the caller explicitly needs to know the total).
- * Returns -1 when skipped so callers can distinguish.
+ * Lazy totalCount: skip the expensive COUNT query when we can infer the total
+ * from the result set (offset === 0 and fewer results than the limit).
+ * Always returns a non-negative count.
  */
 function lazyCount(
   db: Database.Database,
