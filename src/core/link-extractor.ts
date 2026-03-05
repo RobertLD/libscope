@@ -64,6 +64,15 @@ function extractHref(tag: string): string | null {
     const hrefIdx = lowerTag.indexOf("href", searchPos);
     if (hrefIdx === -1) return null;
 
+    // Require an attribute boundary before "href" to avoid matching data-href, aria-href, etc.
+    // The character immediately preceding "href" must be whitespace (or it's at position 0,
+    // which can't happen in a valid <a> tag and so we skip it).
+    const charBefore = hrefIdx > 0 ? lowerTag[hrefIdx - 1] : "";
+    if (charBefore !== " " && charBefore !== "\t" && charBefore !== "\n" && charBefore !== "\r") {
+      searchPos = hrefIdx + 4;
+      continue;
+    }
+
     // Skip whitespace before =
     let eqIdx = hrefIdx + 4;
     while (eqIdx < tag.length && (tag[eqIdx] === " " || tag[eqIdx] === "\t")) eqIdx++;

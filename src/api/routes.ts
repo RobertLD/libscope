@@ -35,7 +35,7 @@ import {
 } from "../core/index.js";
 import type { LinkType, BulkSelector } from "../core/index.js";
 import { loadConfig } from "../config.js";
-import { DocumentNotFoundError, LibScopeError } from "../errors.js";
+import { DocumentNotFoundError, FetchError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { parseJsonBody, sendJson, sendError } from "./middleware.js";
 import { OPENAPI_SPEC } from "./openapi.js";
@@ -356,52 +356,64 @@ export async function handleRequest(
 
       // Spider mode — crawl linked pages
       if (b["spider"] === true) {
+        // Validate optional numeric fields — must be finite positive integers
+        if (b["maxPages"] !== undefined) {
+          const v = b["maxPages"];
+          if (typeof v !== "number" || !Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+            sendError(res, 400, "VALIDATION_ERROR", "maxPages must be a positive integer");
+            return;
+          }
+        }
+        if (b["maxDepth"] !== undefined) {
+          const v = b["maxDepth"];
+          if (typeof v !== "number" || !Number.isFinite(v) || !Number.isInteger(v) || v < 0) {
+            sendError(res, 400, "VALIDATION_ERROR", "maxDepth must be a non-negative integer");
+            return;
+          }
+        }
+
         const spiderOptions: SpiderOptions = {
           fetchOptions,
-          ...(typeof b["maxPages"] === "number" && { maxPages: b["maxPages"] }),
-          ...(typeof b["maxDepth"] === "number" && { maxDepth: b["maxDepth"] }),
-          ...(typeof b["sameDomain"] === "boolean" && { sameDomain: b["sameDomain"] }),
-          ...(typeof b["pathPrefix"] === "string" && { pathPrefix: b["pathPrefix"] }),
-          ...(Array.isArray(b["excludePatterns"]) && {
-            excludePatterns: (b["excludePatterns"] as unknown[]).filter(
-              (p): p is string => typeof p === "string",
-            ),
-          }),
+          ...(typeof b["maxPages"] === "number" ? { maxPages: b["maxPages"] } : {}),
+          ...(typeof b["maxDepth"] === "number" ? { maxDepth: b["maxDepth"] } : {}),
+          ...(typeof b["sameDomain"] === "boolean" ? { sameDomain: b["sameDomain"] } : {}),
+          ...(typeof b["pathPrefix"] === "string" ? { pathPrefix: b["pathPrefix"] } : {}),
+          ...(Array.isArray(b["excludePatterns"])
+            ? {
+                excludePatterns: (b["excludePatterns"] as unknown[]).filter(
+                  (p): p is string => typeof p === "string",
+                ),
+              }
+            : {}),
         };
 
         const indexedDocs: Array<{ id: string; title: string; url: string }> = [];
         const errors: Array<{ url: string; error: string }> = [];
-        let stats: SpiderStats = { pagesIndexed: 0, pagesCrawled: 0, pagesSkipped: 0, errors };
+        let stats: SpiderStats = { pagesFetched: 0, pagesCrawled: 0, pagesSkipped: 0, errors };
 
-        try {
-          const gen = spiderUrl(url, spiderOptions);
-          let result = await gen.next();
-          while (!result.done) {
-            const page = result.value;
-            try {
-              const doc = await indexDocument(db, provider, {
-                content: page.content,
-                title: page.title,
-                sourceType: "manual",
-                url: page.url,
-                topicId,
-              });
-              indexedDocs.push({ id: doc.id, title: page.title, url: page.url });
-            } catch (indexErr) {
-              const msg = indexErr instanceof Error ? indexErr.message : String(indexErr);
-              errors.push({ url: page.url, error: msg });
-            }
-            result = await gen.next();
+        const gen = spiderUrl(url, spiderOptions);
+        let result = await gen.next();
+        while (!result.done) {
+          const page = result.value;
+          try {
+            const doc = await indexDocument(db, provider, {
+              content: page.content,
+              title: page.title,
+              sourceType: "manual",
+              url: page.url,
+              topicId,
+            });
+            indexedDocs.push({ id: doc.id, title: page.title, url: page.url });
+          } catch (indexErr) {
+            const msg = indexErr instanceof Error ? indexErr.message : String(indexErr);
+            errors.push({ url: page.url, error: msg });
           }
-          // result.value is SpiderStats when done (generator is exhausted)
-          if (result.done && result.value) {
-            stats = result.value;
-            stats.errors = errors;
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          sendError(res, 502, "FETCH_ERROR", msg);
-          return;
+          result = await gen.next();
+        }
+        // result.value is SpiderStats when done (generator is exhausted)
+        if (result.done && result.value) {
+          stats = result.value;
+          stats.errors = errors;
         }
 
         const took = Math.round(performance.now() - start);
@@ -410,7 +422,7 @@ export async function handleRequest(
           201,
           {
             documents: indexedDocs,
-            pagesIndexed: indexedDocs.length,
+            pagesFetched: indexedDocs.length,
             pagesCrawled: stats.pagesCrawled,
             pagesSkipped: stats.pagesSkipped,
             errors,
@@ -922,6 +934,10 @@ export async function handleRequest(
 
     if (err instanceof DocumentNotFoundError) {
       sendError(res, 404, "NOT_FOUND", err.message);
+      return;
+    }
+    if (err instanceof FetchError) {
+      sendError(res, 502, "FETCH_ERROR", err.message);
       return;
     }
     if (err instanceof LibScopeError && err.code === "VALIDATION_ERROR") {

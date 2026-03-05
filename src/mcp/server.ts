@@ -366,15 +366,16 @@ async function main(): Promise<void> {
       };
 
       // Spider mode — crawl linked pages from the URL
+      if (params.spider && !url) {
+        throw new ValidationError("Field 'url' is required when spider is true");
+      }
       if (params.spider && url) {
-        const spiderOptions: SpiderOptions = {
-          fetchOptions,
-          ...(params.maxPages !== undefined && { maxPages: params.maxPages }),
-          ...(params.maxDepth !== undefined && { maxDepth: params.maxDepth }),
-          ...(params.sameDomain !== undefined && { sameDomain: params.sameDomain }),
-          ...(params.pathPrefix !== undefined && { pathPrefix: params.pathPrefix }),
-          ...(params.excludePatterns !== undefined && { excludePatterns: params.excludePatterns }),
-        };
+        const spiderOptions: SpiderOptions = { fetchOptions };
+        if (params.maxPages !== undefined) spiderOptions.maxPages = params.maxPages;
+        if (params.maxDepth !== undefined) spiderOptions.maxDepth = params.maxDepth;
+        if (params.sameDomain !== undefined) spiderOptions.sameDomain = params.sameDomain;
+        if (params.pathPrefix !== undefined) spiderOptions.pathPrefix = params.pathPrefix;
+        if (params.excludePatterns !== undefined) spiderOptions.excludePatterns = params.excludePatterns;
 
         const indexed: Array<{ id: string; title: string }> = [];
         const errors: Array<{ url: string; error: string }> = [];

@@ -51,7 +51,8 @@ export interface SpiderResult {
 }
 
 export interface SpiderStats {
-  pagesIndexed: number;
+  /** Pages successfully fetched and yielded to the caller (caller decides whether to index). */
+  pagesFetched: number;
   pagesCrawled: number;
   pagesSkipped: number;
   errors: Array<{ url: string; error: string }>;
@@ -60,14 +61,19 @@ export interface SpiderStats {
 
 // ── robots.txt parsing ───────────────────────────────────────────────────────
 
-/** Fetch and parse robots.txt for an origin. Returns a set of Disallow paths for our user-agent. */
+/** Fetch robots.txt for an origin, capping the timeout at 10 s regardless of caller options. */
 async function fetchRobotsTxt(
   origin: string,
   fetchOptions?: SpiderOptions["fetchOptions"],
 ): Promise<Set<string>> {
   const robotsUrl = origin + "/robots.txt";
+  // Cap robots.txt timeout: use caller's timeout only if shorter than our hard cap.
+  const effectiveTimeout =
+    fetchOptions?.timeout !== undefined && Number.isFinite(fetchOptions.timeout)
+      ? Math.min(fetchOptions.timeout, 10_000)
+      : 10_000;
   try {
-    const raw = await fetchRaw(robotsUrl, { timeout: 10_000, ...fetchOptions });
+    const raw = await fetchRaw(robotsUrl, { ...fetchOptions, timeout: effectiveTimeout });
     return parseRobotsTxt(raw.body);
   } catch {
     // robots.txt missing or inaccessible — no restrictions
@@ -77,30 +83,46 @@ async function fetchRobotsTxt(
 
 /**
  * Parse robots.txt and return Disallow path prefixes that apply to our agent.
- * Matches rules for "LibScope", "libscope", "*" (in that priority order).
+ *
+ * Implements proper UA precedence: if any group explicitly names "libscope",
+ * only those groups apply (ignoring wildcard). Otherwise wildcard groups apply.
+ * This matches the robots.txt spec — a specific UA rule overrides the wildcard.
  */
 function parseRobotsTxt(text: string): Set<string> {
-  const disallowed = new Set<string>();
-  const lines = text.split(/\r?\n/);
+  type RobotsGroup = { agents: string[]; disallows: string[] };
+  const groups: RobotsGroup[] = [];
+  let current: RobotsGroup | null = null;
 
-  let applicable = false;
-  for (const raw of lines) {
+  for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith("#") || line.length === 0) continue;
 
     const lower = line.toLowerCase();
     if (lower.startsWith("user-agent:")) {
-      const agent = line.slice("user-agent:".length).trim().toLowerCase();
-      applicable = agent === "*" || agent === "libscope";
-    } else if (applicable && lower.startsWith("disallow:")) {
+      const agent = line.slice("user-agent:".length).trim();
+      // Start a new group only if current has already collected Disallow lines
+      if (current === null || current.disallows.length > 0) {
+        current = { agents: [], disallows: [] };
+        groups.push(current);
+      }
+      current.agents.push(agent.toLowerCase());
+    } else if (lower.startsWith("disallow:") && current !== null) {
       const path = line.slice("disallow:".length).trim();
-      if (path.length > 0) disallowed.add(path);
-    } else if (lower.startsWith("user-agent:")) {
-      // New block — reset
-      applicable = false;
+      if (path.length > 0) current.disallows.push(path);
     }
   }
 
+  // Prefer explicit "libscope" group over the wildcard group
+  const libscopeGroups = groups.filter((g) => g.agents.includes("libscope"));
+  const selected =
+    libscopeGroups.length > 0
+      ? libscopeGroups
+      : groups.filter((g) => g.agents.includes("*"));
+
+  const disallowed = new Set<string>();
+  for (const group of selected) {
+    for (const path of group.disallows) disallowed.add(path);
+  }
   return disallowed;
 }
 
@@ -284,15 +306,18 @@ export async function* spiderUrl(
   }
 
   const stats: SpiderStats = {
-    pagesIndexed: 0,
+    pagesFetched: 0,
     pagesCrawled: 0,
     pagesSkipped: 0,
     errors: [],
   };
 
-  // Fetch robots.txt once for the origin
-  const disallowed = await fetchRobotsTxt(seedOrigin, fetchOptions);
-  log.debug({ origin: seedOrigin, rules: disallowed.size }, "Loaded robots.txt rules");
+  // Per-origin robots.txt cache — fetched lazily as new origins are encountered.
+  // Pre-populate with the seed origin so we don't re-fetch it on the first page.
+  const robotsCache = new Map<string, Set<string>>();
+  const seedRobots = await fetchRobotsTxt(seedOrigin, fetchOptions);
+  robotsCache.set(seedOrigin, seedRobots);
+  log.debug({ origin: seedOrigin, rules: seedRobots.size }, "Loaded robots.txt rules");
 
   const visited = new Set<string>();
   // BFS queue entries
@@ -301,10 +326,10 @@ export async function* spiderUrl(
 
   const deadline = Date.now() + HARD_TOTAL_TIMEOUT_MS;
 
-  while (queue.length > 0 && stats.pagesIndexed < maxPages) {
+  while (queue.length > 0 && stats.pagesFetched < maxPages) {
     // Check total timeout
     if (Date.now() > deadline) {
-      log.warn({ pagesIndexed: stats.pagesIndexed }, "Spider total timeout reached");
+      log.warn({ pagesFetched: stats.pagesFetched }, "Spider total timeout reached");
       stats.abortReason = "timeout";
       break;
     }
@@ -333,7 +358,19 @@ export async function* spiderUrl(
         stats.pagesSkipped++;
         continue;
       }
-      if (isDisallowedByRobots(url, disallowed)) {
+      // Fetch robots.txt for new origins (cross-domain crawl when sameDomain is false)
+      let urlOrigin: string;
+      try {
+        urlOrigin = new URL(url).origin;
+      } catch {
+        urlOrigin = seedOrigin;
+      }
+      if (!robotsCache.has(urlOrigin)) {
+        const rules = await fetchRobotsTxt(urlOrigin, fetchOptions);
+        robotsCache.set(urlOrigin, rules);
+        log.debug({ origin: urlOrigin, rules: rules.size }, "Loaded robots.txt rules for new origin");
+      }
+      if (isDisallowedByRobots(url, robotsCache.get(urlOrigin)!)) {
         log.debug({ url }, "Spider: skipping URL disallowed by robots.txt");
         stats.pagesSkipped++;
         continue;
@@ -341,7 +378,7 @@ export async function* spiderUrl(
     }
 
     // Check maxPages before fetching
-    if (stats.pagesIndexed >= maxPages) {
+    if (stats.pagesFetched >= maxPages) {
       stats.abortReason = "maxPages";
       break;
     }
@@ -365,18 +402,25 @@ export async function* spiderUrl(
       continue;
     }
 
+    // Normalize to the final URL after any redirects.
+    // This ensures the visited set, yielded URL, and link-extraction base are all consistent.
+    const canonicalUrl = raw.finalUrl || url;
+    if (canonicalUrl !== url) {
+      visited.add(canonicalUrl);
+    }
+
     // Convert to markdown
     const isHtml = raw.contentType.includes("text/html");
     const content = isHtml ? htmlToMarkdown(raw.body) : raw.body;
-    const title = isHtml ? extractTitle(raw.body, url) : extractTextTitle(raw.body, url);
+    const title = isHtml ? extractTitle(raw.body, canonicalUrl) : extractTextTitle(raw.body, canonicalUrl);
 
-    stats.pagesIndexed++;
-    yield { url, title, content, depth };
+    stats.pagesFetched++;
+    yield { url: canonicalUrl, title, content, depth };
 
     // Extract and enqueue child links if we haven't hit maxDepth
     if (depth < maxDepth) {
       if (isHtml) {
-        const links = extractLinks(raw.body, raw.finalUrl || url);
+        const links = extractLinks(raw.body, canonicalUrl);
         for (const link of links) {
           if (!visited.has(link)) {
             queue.push({ url: link, depth: depth + 1 });
@@ -389,13 +433,13 @@ export async function* spiderUrl(
 
   // If the loop exited via the outer while condition hitting maxPages (not via
   // an explicit break with abortReason already set), record the reason now.
-  if (!stats.abortReason && queue.length > 0 && stats.pagesIndexed >= maxPages) {
+  if (!stats.abortReason && queue.length > 0 && stats.pagesFetched >= maxPages) {
     stats.abortReason = "maxPages";
   }
 
   log.info(
     {
-      pagesIndexed: stats.pagesIndexed,
+      pagesFetched: stats.pagesFetched,
       pagesCrawled: stats.pagesCrawled,
       pagesSkipped: stats.pagesSkipped,
       errors: stats.errors.length,

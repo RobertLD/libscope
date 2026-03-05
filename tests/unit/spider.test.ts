@@ -148,7 +148,7 @@ describe("spiderUrl", () => {
     const { pages, stats } = await collectPages(gen);
 
     expect(pages.length).toBeLessThanOrEqual(3);
-    expect((stats as { pagesIndexed: number }).pagesIndexed).toBeLessThanOrEqual(3);
+    expect((stats as { pagesFetched: number }).pagesFetched).toBeLessThanOrEqual(3);
   });
 
   it("does not visit the same URL twice (cycle detection)", async () => {
@@ -390,22 +390,22 @@ describe("spiderUrl", () => {
     const gen = spiderUrl("https://example.com/", { maxPages: 5, maxDepth: 1, requestDelay: 0 });
     const { stats } = await collectPages(gen);
     const s = stats as {
-      pagesIndexed: number;
+      pagesFetched: number;
       pagesCrawled: number;
       pagesSkipped: number;
       errors: unknown[];
     };
 
-    expect(typeof s.pagesIndexed).toBe("number");
+    expect(typeof s.pagesFetched).toBe("number");
     expect(typeof s.pagesCrawled).toBe("number");
     expect(typeof s.pagesSkipped).toBe("number");
     expect(Array.isArray(s.errors)).toBe(true);
-    expect(s.pagesIndexed).toBeGreaterThan(0);
+    expect(s.pagesFetched).toBeGreaterThan(0);
   });
 
   it("caps maxPages to the hard limit of 200", async () => {
-    // We just confirm that requesting 999 is capped — we test via stats.pagesIndexed ≤ 200
-    // In practice, our mock only has one page so pagesIndexed will be 1.
+    // We just confirm that requesting 999 is capped — we test via stats.pagesFetched ≤ 200
+    // In practice, our mock only has one page so pagesFetched will be 1.
     // The important thing is that the option is accepted without error.
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
