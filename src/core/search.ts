@@ -369,9 +369,10 @@ export async function searchDocuments(
   const vecBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
   // Try hybrid search: vector + FTS5 merged via RRF
-  // Fetch enough candidates from each source so that after fusion we can
-  // still satisfy offset + limit results.
-  const candidateLimit = offset + limit;
+  // Over-fetch from each source by 2x to compensate for overlap between
+  // vector and FTS5 lists — RRF deduplicates shared chunks, so the fused
+  // unique set is often smaller than the sum of both lists.
+  const candidateLimit = (offset + limit) * 2;
   try {
     const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit, 0);
     let ftsResults: SearchResult[] | null = null;
@@ -402,15 +403,23 @@ export async function searchDocuments(
     // Re-sort after boost
     mergedResults.sort((a, b) => b.score - a.score);
 
-    // Apply pagination to merged results
+    // Apply per-document deduplication on the full ranked list BEFORE
+    // pagination so that page sizes stay stable and later pages aren't
+    // short-changed by dedup removing items from within the page.
+    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
+      mergedResults = deduplicateByDocument(mergedResults, options.maxChunksPerDocument);
+    }
+
+    // Apply pagination to merged (and possibly deduped) results
     const paginatedResults = mergedResults.slice(offset, offset + limit);
 
-    // Use the larger underlying count as the best estimate of total matches.
-    // For vector-only, vectorResults.totalCount reflects the candidate pool;
-    // for hybrid, the true total is at least as large as either source count.
+    // totalCount: the fused unique set is the best lower bound we have.
+    // For hybrid searches, the true match count is at least as large as
+    // the unique items after fusion; use the max of that and each source's
+    // reported count so we never under-report.
     const totalCount =
       searchMethod === "hybrid"
-        ? Math.max(vectorResults.totalCount, ftsTotalCount)
+        ? Math.max(mergedResults.length, vectorResults.totalCount, ftsTotalCount)
         : vectorResults.totalCount;
 
     const response: SearchResponse = {
@@ -432,11 +441,6 @@ export async function searchDocuments(
         topScore: response.results[0]?.score ?? null,
         searchType: searchMethod,
       });
-    }
-
-    // Deduplicate by document — keep top N chunks per document
-    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
-      response.results = deduplicateByDocument(response.results, options.maxChunksPerDocument);
     }
 
     if (options.contextChunks) {
