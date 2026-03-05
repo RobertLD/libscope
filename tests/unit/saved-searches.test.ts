@@ -11,6 +11,9 @@ import {
 import { indexDocument } from "../../src/core/indexing.js";
 import { ValidationError, DocumentNotFoundError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
+import { initLogger } from "../../src/logger.js";
+
+initLogger("silent");
 
 describe("saved-searches", () => {
   let db: Database.Database;
@@ -189,6 +192,19 @@ describe("saved-searches", () => {
     it("should handle null filters", () => {
       const created = createSavedSearch(db, "No Filters", "query");
       const fetched = getSavedSearch(db, created.id);
+      expect(fetched.filters).toBeNull();
+    });
+
+    it("should default to null when filters JSON is corrupted", () => {
+      // Directly insert a row with invalid JSON in the filters column
+      db.prepare("INSERT INTO saved_searches (id, name, query, filters) VALUES (?, ?, ?, ?)").run(
+        "corrupt-ss",
+        "Corrupt Search",
+        "test query",
+        "{not valid json",
+      );
+
+      const fetched = getSavedSearch(db, "corrupt-ss");
       expect(fetched.filters).toBeNull();
     });
   });

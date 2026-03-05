@@ -60,7 +60,11 @@ export function loadDbConnectorConfig(
     | { config_json: string }
     | undefined;
   if (!row) return undefined;
-  return JSON.parse(row.config_json) as ConnectorConfig;
+  try {
+    return JSON.parse(row.config_json) as ConnectorConfig;
+  } catch (err) {
+    throw new ConfigError(`Corrupted connector config for type "${type}"`, err);
+  }
 }
 
 /** Delete connector config from the database. */
@@ -102,7 +106,11 @@ export function loadNamedConnectorConfig<T>(name: string): T {
     );
   }
   const raw = readFileSync(filePath, "utf-8");
-  return JSON.parse(raw) as T;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (err) {
+    throw new ConfigError(`Corrupted connector config file for "${name}"`, err);
+  }
 }
 
 /** Check if a named connector config exists */

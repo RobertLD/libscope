@@ -8,6 +8,7 @@ import {
   basename,
   relative,
   join as pathJoin,
+  extname,
 } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
@@ -714,7 +715,7 @@ function collectFiles(
         results.push(...collectFiles(fullPath, rootDir, recursive, extensions, excludePatterns));
       }
     } else if (stat.isFile()) {
-      const ext = fullPath.substring(fullPath.lastIndexOf(".")).toLowerCase();
+      const ext = extname(fullPath).toLowerCase();
       if (extensions.has(ext)) {
         results.push(fullPath);
       }

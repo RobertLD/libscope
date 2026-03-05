@@ -96,6 +96,8 @@ export function listDocuments(
     library?: string | undefined;
     topicId?: string | undefined;
     sourceType?: string | undefined;
+    dateFrom?: string | undefined;
+    dateTo?: string | undefined;
     limit?: number | undefined;
   },
 ): Document[] {
@@ -116,6 +118,14 @@ export function listDocuments(
   if (options?.sourceType) {
     sql += " AND source_type = ?";
     params.push(options.sourceType);
+  }
+  if (options?.dateFrom) {
+    sql += " AND created_at >= ?";
+    params.push(options.dateFrom);
+  }
+  if (options?.dateTo) {
+    sql += " AND created_at <= ?";
+    params.push(options.dateTo);
   }
 
   sql += " ORDER BY updated_at DESC LIMIT ?";

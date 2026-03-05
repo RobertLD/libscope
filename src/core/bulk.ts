@@ -47,38 +47,27 @@ export function resolveSelector(
     throw new ValidationError("Bulk selector must specify at least one filter criterion");
   }
 
+  if (limit !== undefined && limit < 0) {
+    throw new ValidationError("limit must be a non-negative integer");
+  }
+
   const effectiveLimit = Math.max(0, Math.min(limit ?? MAX_BATCH_SIZE, MAX_BATCH_SIZE));
 
   if (effectiveLimit === 0) {
     return [];
   }
 
-  // Use listDocuments for basic filters
+  // Push date filters into the SQL query so they apply before LIMIT
   const docs = listDocuments(db, {
     library: selector.library,
     topicId: selector.topicId,
     sourceType: selector.sourceType,
+    dateFrom: selector.dateFrom,
+    dateTo: selector.dateTo,
     limit: effectiveLimit,
   });
 
-  const docMap = new Map(docs.map((d) => [d.id, d]));
   let ids = docs.map((d) => d.id);
-
-  // Apply date filters using the pre-built map — O(n) instead of O(n²)
-  if (selector.dateFrom) {
-    const from = selector.dateFrom;
-    ids = ids.filter((id) => {
-      const doc = docMap.get(id);
-      return doc != null && doc.createdAt >= from;
-    });
-  }
-  if (selector.dateTo) {
-    const to = selector.dateTo;
-    ids = ids.filter((id) => {
-      const doc = docMap.get(id);
-      return doc != null && doc.createdAt <= to;
-    });
-  }
 
   // Apply tag filter (AND logic — document must have ALL specified tags).
   // Fetch all tags in a single query instead of one query per document.

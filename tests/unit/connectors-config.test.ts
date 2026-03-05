@@ -144,6 +144,17 @@ describe("connectors config", () => {
       expect(result).toBe(true);
       expect(loadDbConnectorConfig(db, "notion")).toBeUndefined();
     });
+
+    it("loadDbConnectorConfig throws ConfigError when config_json is corrupted", () => {
+      // Directly insert corrupted JSON into the database
+      db.prepare(
+        "INSERT INTO connector_configs (type, config_json, updated_at) VALUES (?, ?, datetime('now'))",
+      ).run("corrupted", "not valid json{{{");
+
+      expect(() => loadDbConnectorConfig(db, "corrupted")).toThrow(
+        /Corrupted connector config for type "corrupted"/,
+      );
+    });
   });
 
   describe("sync tracker", () => {
