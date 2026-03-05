@@ -76,7 +76,9 @@ export LIBSCOPE_LLM_PROVIDER=openai
 export LIBSCOPE_LLM_MODEL=gpt-4o-mini
 ```
 
-Supported providers: `openai`, `ollama`.
+Supported providers: `openai`, `ollama`, `passthrough`.
+
+The `passthrough` provider is for advanced integrations where you supply your own LLM responses externally. When set, the `ask` command emits an event stream that your application handles rather than calling an LLM directly.
 
 ## Environment Variables
 

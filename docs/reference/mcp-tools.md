@@ -46,6 +46,20 @@ Index a new document. You can provide content directly, or a URL to fetch automa
 | `topic`      | string |          | Topic to categorize under                            |
 | `sourceType` | string |          | `library`, `topic`, `manual`, or `model-generated`   |
 
+## update-document
+
+Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding.
+
+| Parameter    | Type   | Required | Description                             |
+| ------------ | ------ | -------- | --------------------------------------- |
+| `documentId` | string | ✅       | The document ID to update               |
+| `title`      | string |          | New title                               |
+| `content`    | string |          | New content (triggers re-chunking)      |
+| `library`    | string |          | New library name (pass `null` to clear) |
+| `version`    | string |          | New version (pass `null` to clear)      |
+| `url`        | string |          | New source URL (pass `null` to clear)   |
+| `topicId`    | string |          | New topic ID (pass `null` to clear)     |
+
 ## rate-document
 
 Rate a document and optionally suggest corrections.
@@ -170,6 +184,42 @@ List installed or available knowledge packs.
 | ------------- | ------- | -------- | ------------------------------------------------ |
 | `available`   | boolean |          | If true, list from registry instead of installed |
 | `registryUrl` | string  |          | Custom registry URL                              |
+
+## suggest-tags
+
+Suggest tags for a document based on content analysis (compares against existing tags in the knowledge base).
+
+| Parameter        | Type   | Required | Description                          |
+| ---------------- | ------ | -------- | ------------------------------------ |
+| `documentId`     | string | ✅       | The document ID                      |
+| `maxSuggestions` | number |          | Maximum suggestions to return (1–20, default: 5) |
+
+## link-documents
+
+Create a typed cross-reference relationship between two documents.
+
+| Parameter  | Type   | Required | Description                                                          |
+| ---------- | ------ | -------- | -------------------------------------------------------------------- |
+| `sourceId` | string | ✅       | The source document ID                                               |
+| `targetId` | string | ✅       | The target document ID                                               |
+| `linkType` | string | ✅       | Relationship type: `see_also`, `prerequisite`, `supersedes`, `related` |
+| `label`    | string |          | Optional human-readable description of the relationship              |
+
+## get-document-links
+
+Get all cross-reference links for a document, both outgoing and incoming.
+
+| Parameter    | Type   | Required | Description     |
+| ------------ | ------ | -------- | --------------- |
+| `documentId` | string | ✅       | The document ID |
+
+## delete-link
+
+Remove a cross-reference link between documents.
+
+| Parameter | Type   | Required | Description              |
+| --------- | ------ | -------- | ------------------------ |
+| `linkId`  | string | ✅       | The link ID to delete    |
 
 ## save-search
 

@@ -72,25 +72,34 @@ Once connected, your assistant can search docs, submit new documents, rate conte
 <details>
 <summary>Full list of MCP tools</summary>
 
-| Tool                  | What it does                                              |
-| --------------------- | --------------------------------------------------------- |
-| `search-docs`         | Semantic search with topic/library/version/rating filters |
-| `get-document`        | Retrieve a document by ID                                 |
-| `delete-document`     | Remove a document                                         |
-| `submit-document`     | Index new content (raw text or a URL to fetch)            |
-| `rate-document`       | Rate a doc 1–5 with optional feedback and corrections     |
-| `list-documents`      | List docs with filters                                    |
-| `list-topics`         | Browse the topic hierarchy                                |
-| `ask-question`        | RAG question-answering with source citations              |
-| `reindex-documents`   | Re-embed chunks (useful after switching providers)        |
-| `health-check`        | DB status, doc/chunk counts                               |
-| `sync-obsidian-vault` | Sync an Obsidian vault                                    |
-| `sync-onenote`        | Sync OneNote notebooks via Microsoft Graph                |
-| `sync-notion`         | Sync Notion pages and databases                           |
-| `sync-confluence`     | Sync Confluence spaces                                    |
-| `sync-slack`          | Sync Slack channels and threads                           |
-| `install-pack`        | Install a knowledge pack                                  |
-| `list-packs`          | List installed or registry packs                          |
+| Tool                   | What it does                                              |
+| ---------------------- | --------------------------------------------------------- |
+| `search-docs`          | Semantic search with topic/library/version/rating filters |
+| `ask-question`         | RAG question-answering with source citations              |
+| `get-document`         | Retrieve a document by ID                                 |
+| `list-documents`       | List docs with filters                                    |
+| `list-topics`          | Browse the topic hierarchy                                |
+| `submit-document`      | Index new content (raw text or a URL to fetch)            |
+| `update-document`      | Update a document's title, content, or metadata           |
+| `delete-document`      | Remove a document                                         |
+| `rate-document`        | Rate a doc 1–5 with optional feedback and corrections     |
+| `suggest-tags`         | Auto-suggest tags based on content analysis               |
+| `save-search`          | Save a named search query with filters                    |
+| `list-saved-searches`  | List all saved searches                                   |
+| `run-saved-search`     | Execute a saved search by name or ID                      |
+| `delete-saved-search`  | Delete a saved search                                     |
+| `link-documents`       | Create a cross-reference between two documents            |
+| `get-document-links`   | List all incoming and outgoing links for a document       |
+| `delete-link`          | Remove a cross-reference link                             |
+| `reindex-documents`    | Re-embed chunks (useful after switching providers)        |
+| `health-check`         | DB status, doc/chunk counts                               |
+| `sync-obsidian-vault`  | Sync an Obsidian vault                                    |
+| `sync-onenote`         | Sync OneNote notebooks via Microsoft Graph                |
+| `sync-notion`          | Sync Notion pages and databases                           |
+| `sync-confluence`      | Sync Confluence spaces                                    |
+| `sync-slack`           | Sync Slack channels and threads                           |
+| `install-pack`         | Install a knowledge pack                                  |
+| `list-packs`           | List installed or registry packs                          |
 
 </details>
 
@@ -194,17 +203,32 @@ libscope serve --api --port 3378
 
 OpenAPI 3.0 spec at `GET /openapi.json`. Key endpoints:
 
-| Method       | Endpoint                | Description              |
-| ------------ | ----------------------- | ------------------------ |
-| `GET`        | `/api/v1/search?q=...`  | Semantic search          |
-| `GET/POST`   | `/api/v1/documents`     | List or create documents |
-| `GET/DELETE` | `/api/v1/documents/:id` | Get or remove a document |
-| `POST`       | `/api/v1/documents/url` | Index from a URL         |
-| `POST`       | `/api/v1/ask`           | RAG question-answering   |
-| `GET/POST`   | `/api/v1/topics`        | List or create topics    |
-| `GET`        | `/api/v1/tags`          | List tags                |
-| `GET`        | `/api/v1/stats`         | Usage statistics         |
-| `GET`        | `/api/v1/health`        | Health check             |
+| Method          | Endpoint                          | Description                        |
+| --------------- | --------------------------------- | ---------------------------------- |
+| `GET`           | `/api/v1/search?q=...`            | Semantic search                    |
+| `POST`          | `/api/v1/ask`                     | RAG question-answering             |
+| `GET/POST`      | `/api/v1/documents`               | List or create documents           |
+| `GET/PATCH/DELETE` | `/api/v1/documents/:id`        | Get, update, or delete a document  |
+| `POST`          | `/api/v1/documents/url`           | Index from a URL                   |
+| `POST`          | `/api/v1/documents/:id/tags`      | Add tags                           |
+| `GET`           | `/api/v1/documents/:id/suggest-tags` | Auto-suggest tags               |
+| `GET/POST`      | `/api/v1/documents/:id/links`     | List or create cross-references    |
+| `DELETE`        | `/api/v1/links/:id`               | Delete a cross-reference           |
+| `GET/POST`      | `/api/v1/topics`                  | List or create topics              |
+| `GET`           | `/api/v1/tags`                    | List tags                          |
+| `GET/POST`      | `/api/v1/searches`                | List or create saved searches      |
+| `POST`          | `/api/v1/searches/:id/run`        | Run a saved search                 |
+| `DELETE`        | `/api/v1/searches/:id`            | Delete a saved search              |
+| `POST`          | `/api/v1/bulk/delete`             | Bulk delete documents              |
+| `POST`          | `/api/v1/bulk/retag`              | Bulk add/remove tags               |
+| `POST`          | `/api/v1/bulk/move`               | Bulk move to a topic               |
+| `GET/POST`      | `/api/v1/webhooks`                | List or create webhooks            |
+| `DELETE`        | `/api/v1/webhooks/:id`            | Delete a webhook                   |
+| `POST`          | `/api/v1/webhooks/:id/test`       | Send a test ping to a webhook      |
+| `GET`           | `/api/v1/analytics/searches`      | Search analytics and knowledge gaps|
+| `GET`           | `/api/v1/connectors/status`       | Connector sync status and history  |
+| `GET`           | `/api/v1/stats`                   | Usage statistics                   |
+| `GET`           | `/api/v1/health`                  | Health check                       |
 
 ## Configuration
 
@@ -304,6 +328,28 @@ export LIBSCOPE_ALLOW_PRIVATE_URLS=true
 export LIBSCOPE_ALLOW_SELF_SIGNED_CERTS=true
 ```
 
+## Webhooks
+
+LibScope can push events to any HTTP endpoint. Useful for triggering CI pipelines, Slack notifications, or custom workflows whenever documents are created or updated.
+
+```bash
+libscope serve --api  # webhooks require the REST API
+```
+
+```bash
+# Create a webhook
+curl -X POST http://localhost:3378/api/v1/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://hooks.example.com/libscope", "events": ["document.created", "document.updated"], "secret": "my-hmac-secret"}'
+
+# Send a test ping
+curl -X POST http://localhost:3378/api/v1/webhooks/<id>/test
+```
+
+Webhook payloads are signed with HMAC-SHA256 when a secret is set. The signature is in the `X-LibScope-Signature` header.
+
+Supported events: `document.created`, `document.updated`, `document.deleted`.
+
 ## Other Tools
 
 LibScope ships with a few more utilities beyond the core index-and-search loop:
@@ -352,27 +398,54 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 
 **Documents**
 
-| Command                             | Description       |
-| ----------------------------------- | ----------------- |
-| `libscope docs list`                | List documents    |
-| `libscope docs show <id>`           | Show a document   |
-| `libscope docs delete <id>`         | Delete a document |
-| `libscope docs history <id>`        | Version history   |
-| `libscope docs rollback <id> <ver>` | Roll back         |
+| Command                                 | Description                  |
+| --------------------------------------- | ---------------------------- |
+| `libscope docs list`                    | List documents               |
+| `libscope docs show <id>`               | Show a document              |
+| `libscope docs update <id>`             | Update title/content/metadata|
+| `libscope docs delete <id>`             | Delete a document            |
+| `libscope docs history <id>`            | Version history              |
+| `libscope docs rollback <id> <ver>`     | Roll back to a prior version |
 
 **Organization**
 
-| Command                            | Description      |
-| ---------------------------------- | ---------------- |
-| `libscope topics list`             | List topics      |
-| `libscope topics create <name>`    | Create a topic   |
-| `libscope tag add <id> <tags...>`  | Add tags         |
-| `libscope tag remove <id> <tag>`   | Remove a tag     |
-| `libscope tag list`                | List tags        |
-| `libscope workspace create <name>` | Create workspace |
-| `libscope workspace list`          | List workspaces  |
-| `libscope workspace use <name>`    | Switch workspace |
-| `libscope workspace delete <name>` | Delete workspace |
+| Command                              | Description                      |
+| ------------------------------------ | -------------------------------- |
+| `libscope topics list`               | List topics                      |
+| `libscope topics create <name>`      | Create a topic                   |
+| `libscope tag add <id> <tags...>`    | Add tags                         |
+| `libscope tag remove <id> <tag>`     | Remove a tag                     |
+| `libscope tag list`                  | List tags                        |
+| `libscope workspace create <name>`   | Create workspace                 |
+| `libscope workspace list`            | List workspaces                  |
+| `libscope workspace use <name>`      | Switch workspace                 |
+| `libscope workspace delete <name>`   | Delete workspace                 |
+
+**Saved Searches**
+
+| Command                              | Description                   |
+| ------------------------------------ | ----------------------------- |
+| `libscope searches list`             | List all saved searches       |
+| `libscope searches run <name>`       | Re-run a saved search         |
+| `libscope searches delete <name>`    | Delete a saved search         |
+| `libscope search <q> --save <name>`  | Save a search while running it|
+
+**Document Links**
+
+| Command                               | Description                      |
+| ------------------------------------- | -------------------------------- |
+| `libscope link <srcId> <tgtId>`       | Create a cross-reference         |
+| `libscope links <docId>`              | Show all links for a document    |
+| `libscope unlink <linkId>`            | Remove a link                    |
+| `libscope prereqs <docId>`            | Show prerequisite reading chain  |
+
+**Bulk Operations**
+
+| Command                      | Description                         |
+| ---------------------------- | ----------------------------------- |
+| `libscope bulk delete`       | Delete all matching documents       |
+| `libscope bulk retag`        | Add/remove tags on matching docs    |
+| `libscope bulk move`         | Move matching docs to a topic       |
 
 **Connectors**
 
@@ -432,4 +505,4 @@ npm run lint       # lint
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[Business Source License 1.1](LICENSE) — see [LICENSE](LICENSE) for full terms.
