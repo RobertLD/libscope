@@ -133,7 +133,7 @@ export function chunkContent(
 
 /**
  * Split oversized text at paragraph boundaries (double-newline).
- * Falls back to single-newline boundaries, then hard character split.
+ * Falls back to hard character split when a paragraph exceeds maxSize.
  */
 function splitAtParagraphs(text: string, maxSize: number, out: string[]): void {
   // Try splitting on double newlines (paragraph boundaries) first

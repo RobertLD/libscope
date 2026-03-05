@@ -301,7 +301,7 @@ function appendFilters(
     sql += ` AND ${docAlias}.version = ?`;
     params.push(options.version);
   }
-  if (options.minRating) {
+  if (options.minRating !== undefined) {
     sql += " AND avg_r.avg_rating >= ?";
     params.push(options.minRating);
   }
@@ -369,13 +369,18 @@ export async function searchDocuments(
   const vecBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
   // Try hybrid search: vector + FTS5 merged via RRF
+  // Fetch enough candidates from each source so that after fusion we can
+  // still satisfy offset + limit results.
+  const candidateLimit = offset + limit;
   try {
-    const vectorResults = vectorSearch(db, options, vecBuffer, limit, offset);
+    const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit, 0);
     let ftsResults: SearchResult[] | null = null;
+    let ftsTotalCount = 0;
 
     try {
-      const ftsResponse = fts5Search(db, options, limit, 0);
+      const ftsResponse = fts5Search(db, options, candidateLimit, 0);
       ftsResults = ftsResponse.results;
+      ftsTotalCount = ftsResponse.totalCount;
     } catch {
       // FTS5 not available — proceed with vector-only results
     }
@@ -400,7 +405,13 @@ export async function searchDocuments(
     // Apply pagination to merged results
     const paginatedResults = mergedResults.slice(offset, offset + limit);
 
-    const totalCount = mergedResults.length;
+    // Use the larger underlying count as the best estimate of total matches.
+    // For vector-only, vectorResults.totalCount reflects the candidate pool;
+    // for hybrid, the true total is at least as large as either source count.
+    const totalCount =
+      searchMethod === "hybrid"
+        ? Math.max(vectorResults.totalCount, ftsTotalCount)
+        : vectorResults.totalCount;
 
     const response: SearchResponse = {
       totalCount,
@@ -474,7 +485,8 @@ export async function searchDocuments(
   }
 }
 
-/** Pure vector search — returns un-paginated results for fusion. */
+/** Pure vector search — returns candidates for fusion/pagination.
+ *  `limit` should already account for offset (i.e. caller passes offset+limit). */
 function vectorSearch(
   db: Database.Database,
   options: SearchOptions,
@@ -482,6 +494,9 @@ function vectorSearch(
   limit: number,
   _offset: number,
 ): SearchResponse {
+  // Over-fetch from the ANN index so post-filter still yields enough rows.
+  const annCandidateLimit = limit * 3;
+
   let sql = `
     SELECT
       candidates.chunk_id,
@@ -512,11 +527,11 @@ function vectorSearch(
     WHERE 1=1
   `;
 
-  const params: unknown[] = [vecBuffer, limit * 3];
+  const params: unknown[] = [vecBuffer, annCandidateLimit];
   sql = appendFilters(sql, params, options, "d");
 
   sql += ` ORDER BY candidates.distance`;
-  // Fetch enough for RRF fusion (no pagination here, done after merge)
+
   const rows = db.prepare(sql).all(...params) as Array<{
     chunk_id: string;
     distance: number;
@@ -531,8 +546,14 @@ function vectorSearch(
     avg_rating: number | null;
   }>;
 
+  // totalCount: if we got fewer rows than the ANN candidate limit, we know
+  // the true total (all candidates survived filtering). Otherwise the real
+  // total may be larger than what we fetched — report the row count as a
+  // lower bound (exact COUNT is not feasible over an ANN index).
+  const totalCount = rows.length;
+
   return {
-    totalCount: rows.length,
+    totalCount,
     results: rows.map((row) => {
       const similarity = 1 - row.distance;
       return {
