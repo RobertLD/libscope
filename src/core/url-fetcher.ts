@@ -238,6 +238,57 @@ async function _fetchWithRedirects(
   throw new FetchError(`Too many redirects (max ${maxRedirects})`);
 }
 
+/** Result of a raw fetch — HTML/text body before any conversion, plus resolved final URL. */
+export interface FetchedRaw {
+  body: string;
+  contentType: string;
+  finalUrl: string;
+}
+
+/**
+ * Fetch a URL and return the raw body without converting to markdown.
+ * Useful for callers (e.g. the spider) that need access to raw HTML for link extraction.
+ * Applies all the same SSRF protection, redirect following, and body-size limits as fetchAndConvert.
+ */
+export async function fetchRaw(url: string, options?: FetchOptions): Promise<FetchedRaw> {
+  const log = getLogger();
+  log.debug({ url }, "Fetching raw URL");
+
+  const { timeout, maxRedirects, maxBodySize, allowPrivateUrls, allowSelfSignedCerts } = {
+    ...DEFAULT_FETCH_OPTIONS,
+    ...options,
+  };
+
+  try {
+    await validateUrl(url, allowPrivateUrls);
+
+    const response = await fetchWithRedirects(
+      url,
+      timeout,
+      maxRedirects,
+      allowPrivateUrls,
+      allowSelfSignedCerts,
+    );
+
+    if (!response.ok) {
+      throw new FetchError(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const body = await readBodyWithLimit(response, maxBodySize);
+    // Derive final URL from redirect chain (fetchWithRedirects resolves relative locations)
+    const finalUrl = response.url ?? url;
+
+    return { body, contentType, finalUrl };
+  } catch (err) {
+    if (err instanceof FetchError) throw err;
+    throw new FetchError(
+      `Failed to fetch URL: ${url} — ${err instanceof Error ? err.message : String(err)}`,
+      err,
+    );
+  }
+}
+
 /**
  * Fetch a URL and convert its HTML content to clean markdown-like text.
  * Strips tags, preserves code blocks and headings.

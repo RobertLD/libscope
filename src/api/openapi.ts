@@ -127,22 +127,44 @@ export const OPENAPI_SPEC = {
     },
     "/api/v1/documents/url": {
       post: {
-        summary: "Index document from URL",
+        summary: "Index document from URL (with optional spidering)",
         operationId: "indexFromUrl",
         requestBody: {
           required: true,
           content: {
             "application/json": {
               schema: { $ref: "#/components/schemas/IndexFromUrlRequest" },
-              example: { url: "https://example.com/docs", topic: "guides" },
+              examples: {
+                single: {
+                  summary: "Single URL",
+                  value: { url: "https://example.com/page", topic: "guides" },
+                },
+                spider: {
+                  summary: "Spider mode",
+                  value: {
+                    url: "https://docs.example.com",
+                    spider: true,
+                    maxPages: 50,
+                    maxDepth: 2,
+                  },
+                },
+              },
             },
           },
         },
         responses: {
           "201": {
-            description: "Document indexed from URL",
+            description:
+              "Document(s) indexed. Returns DocumentResponse for single-URL mode, SpiderResponse for spider mode.",
             content: {
-              "application/json": { schema: { $ref: "#/components/schemas/DocumentResponse" } },
+              "application/json": {
+                schema: {
+                  oneOf: [
+                    { $ref: "#/components/schemas/DocumentResponse" },
+                    { $ref: "#/components/schemas/SpiderResponse" },
+                  ],
+                },
+              },
             },
           },
         },
@@ -343,6 +365,70 @@ export const OPENAPI_SPEC = {
         properties: {
           url: { type: "string", format: "uri" },
           topic: { type: "string" },
+          spider: {
+            type: "boolean",
+            description: "When true, crawl linked pages starting from the URL (BFS spider mode).",
+          },
+          maxPages: {
+            type: "integer",
+            minimum: 1,
+            description:
+              "Maximum total pages to fetch in spider mode (default: 25, hard cap: 200).",
+          },
+          maxDepth: {
+            type: "integer",
+            minimum: 0,
+            description:
+              "Maximum hop depth from the seed URL in spider mode (default: 2, hard cap: 5).",
+          },
+          sameDomain: {
+            type: "boolean",
+            description: "Only follow links sharing the seed hostname (default: true).",
+          },
+          pathPrefix: {
+            type: "string",
+            description: "Only follow links whose path starts with this prefix (e.g. '/docs/').",
+          },
+          excludePatterns: {
+            type: "array",
+            items: { type: "string" },
+            description: "Glob patterns for URLs to skip during spidering (e.g. ['*/changelog*']).",
+          },
+        },
+      },
+      SpiderResponse: {
+        type: "object",
+        properties: {
+          documents: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                url: { type: "string" },
+              },
+            },
+          },
+          pagesFetched: { type: "integer", description: "Pages successfully fetched and indexed." },
+          pagesCrawled: { type: "integer", description: "Total pages attempted." },
+          pagesSkipped: { type: "integer", description: "Pages skipped by filters or robots.txt." },
+          errors: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                url: { type: "string" },
+                error: { type: "string" },
+              },
+            },
+          },
+          abortReason: {
+            type: "string",
+            nullable: true,
+            enum: ["maxPages", "timeout", null],
+            description: "Set if the crawl was aborted early.",
+          },
         },
       },
       AskRequest: {
