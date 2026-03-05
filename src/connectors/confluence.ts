@@ -115,19 +115,10 @@ async function confluenceFetch<T>(url: string, auth: string): Promise<T> {
 async function fetchAllPages<T>(initialUrl: string, baseUrl: string, auth: string): Promise<T[]> {
   const all: T[] = [];
   let url: string | undefined = initialUrl;
-  const MAX_PAGES = 10_000;
 
   while (url) {
     const resp: PaginatedResponse<T> = await confluenceFetch<PaginatedResponse<T>>(url, auth);
     all.push(...resp.results);
-    if (all.length >= MAX_PAGES) {
-      const log = getLogger();
-      log.warn(
-        { count: all.length, max: MAX_PAGES },
-        "Reached max page limit, stopping pagination",
-      );
-      break;
-    }
     const next: string | undefined = resp._links?.next;
     url = next ? `${baseUrl}${next}` : undefined;
   }
@@ -221,6 +212,38 @@ function extractTagContent(html: string, tagName: string): string {
   return html.slice(contentStart, end);
 }
 
+/**
+ * Remove self-closing `<ac:structured-macro ... />` tags whose attribute
+ * string matches `nameTest`. Uses indexOf so there is no regex backtracking.
+ */
+function removeSelfClosingMacros(html: string, nameTest: RegExp): string {
+  const OPEN = "<ac:structured-macro";
+  let result = "";
+  let pos = 0;
+
+  while (pos < html.length) {
+    const start = html.toLowerCase().indexOf(OPEN.toLowerCase(), pos);
+    if (start === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const tagEnd = html.indexOf(">", start + OPEN.length);
+    if (tagEnd === -1) {
+      result += html.slice(pos);
+      break;
+    }
+    const isSelfClosing = html[tagEnd - 1] === "/";
+    const attrs = html.slice(start, tagEnd + 1);
+    if (isSelfClosing && nameTest.test(attrs)) {
+      result += html.slice(pos, start); // drop the self-closing tag
+    } else {
+      result += html.slice(pos, tagEnd + 1); // keep it
+    }
+    pos = tagEnd + 1;
+  }
+  return result;
+}
+
 export function convertConfluenceStorage(html: string): string {
   let processed = html;
 
@@ -263,13 +286,12 @@ export function convertConfluenceStorage(html: string): string {
     return `<p><strong>${title}</strong></p>${body.trim()}`;
   });
 
-  // TOC → strip
+  // TOC → strip (paired tags handled by replaceStructuredMacros, self-closing by indexOf helper)
   processed = replaceStructuredMacros(processed, (_inner, attrs) => {
     if (!/ac:name="toc"/i.test(attrs)) return undefined;
     return "";
   });
-  // Self-closing TOC
-  processed = processed.replace(/<ac:structured-macro\s[^>]*ac:name="toc"[^>]*\/>/gi, "");
+  processed = removeSelfClosingMacros(processed, /ac:name="toc"/i);
 
   // JIRA macro → [JIRA: KEY-123] as a span to avoid escaping
   processed = replaceStructuredMacros(processed, (inner, attrs) => {
