@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { loadConfig, validateConfig } from "../../src/config.js";
+import { loadConfig, validateConfig, invalidateConfigCache } from "../../src/config.js";
 import type { LibScopeConfig } from "../../src/config.js";
 import * as loggerModule from "../../src/logger.js";
 
 describe("config", () => {
   it("should return default config when no files exist", () => {
+    invalidateConfigCache();
     const config = loadConfig();
 
     expect(config.embedding.provider).toBe("local");
@@ -12,10 +13,18 @@ describe("config", () => {
     expect(config.database.path).toContain("libscope.db");
   });
 
+  it("should return cached config on repeated calls", () => {
+    invalidateConfigCache();
+    const first = loadConfig();
+    const second = loadConfig(); // cache hit
+    expect(second).toBe(first); // same object reference
+  });
+
   it("should respect LIBSCOPE_EMBEDDING_PROVIDER env var", () => {
     const original = process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
     try {
       process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = "ollama";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.embedding.provider).toBe("ollama");
     } finally {
@@ -31,6 +40,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
     try {
       process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = "invalid";
+      invalidateConfigCache();
       const config = loadConfig();
       // Should fall through to default since "invalid" doesn't match the switch
       expect(config.embedding.provider).toBe("local");
@@ -47,6 +57,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_OPENAI_API_KEY"];
     try {
       process.env["LIBSCOPE_OPENAI_API_KEY"] = "sk-test123";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.embedding.openaiApiKey).toBe("sk-test123");
     } finally {
@@ -62,6 +73,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_OLLAMA_URL"];
     try {
       process.env["LIBSCOPE_OLLAMA_URL"] = "http://custom:11434";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
     } finally {
@@ -77,6 +89,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
     try {
       process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = "true";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.indexing.allowPrivateUrls).toBe(true);
     } finally {
@@ -92,6 +105,7 @@ describe("config", () => {
     const original = process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
     try {
       process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = "1";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.indexing.allowSelfSignedCerts).toBe(true);
     } finally {
@@ -109,6 +123,7 @@ describe("config", () => {
     try {
       process.env["LIBSCOPE_LLM_PROVIDER"] = "ollama";
       process.env["LIBSCOPE_LLM_MODEL"] = "llama3";
+      invalidateConfigCache();
       const config = loadConfig();
       expect(config.llm?.provider).toBe("ollama");
       expect(config.llm?.model).toBe("llama3");

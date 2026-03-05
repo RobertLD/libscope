@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import {
   getDocument,
@@ -87,17 +87,21 @@ describe("updateDocument", () => {
   });
 
   it("should update updated_at timestamp", async () => {
-    const before: Document = getDocument(db, docId);
-    // SQLite datetime('now') has 1-second resolution; wait just enough for it to tick
-    await new Promise((r) => setTimeout(r, 1100));
-    const input: UpdateDocumentInput = { title: "Updated" };
-    await updateDocument(db, provider, docId, input);
-    const after: Document = getDocument(db, docId);
+    vi.useFakeTimers();
+    try {
+      const before: Document = getDocument(db, docId);
+      // Advance fake clock by 2 seconds so the JS timestamp differs
+      vi.advanceTimersByTime(2000);
+      const input: UpdateDocumentInput = { title: "Updated" };
+      await updateDocument(db, provider, docId, input);
+      const after: Document = getDocument(db, docId);
 
-    expect(new Date(after.updatedAt).getTime()).toBeGreaterThanOrEqual(
-      new Date(before.updatedAt).getTime(),
-    );
-    expect(after.updatedAt).not.toBe(before.updatedAt);
+      expect(new Date(after.updatedAt).getTime()).toBeGreaterThan(
+        new Date(before.updatedAt).getTime(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("should throw for nonexistent document", async () => {

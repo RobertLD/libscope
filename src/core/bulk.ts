@@ -2,7 +2,12 @@ import type Database from "better-sqlite3";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import { deleteDocument, listDocuments } from "./documents.js";
-import { addTagsToDocument, removeTagFromDocument, getDocumentTags } from "./tags.js";
+import {
+  addTagsToDocument,
+  removeTagFromDocument,
+  getDocumentTags,
+  getDocumentTagsBatch,
+} from "./tags.js";
 
 export interface BulkSelector {
   topicId?: string;
@@ -42,71 +47,35 @@ export function resolveSelector(
     throw new ValidationError("Bulk selector must specify at least one filter criterion");
   }
 
+  if (limit !== undefined && limit < 0) {
+    throw new ValidationError("limit must be a non-negative integer");
+  }
+
   const effectiveLimit = Math.max(0, Math.min(limit ?? MAX_BATCH_SIZE, MAX_BATCH_SIZE));
 
   if (effectiveLimit === 0) {
     return [];
   }
 
-  // Use listDocuments for basic filters
+  // Push date filters into the SQL query so they apply before LIMIT
   const docs = listDocuments(db, {
     library: selector.library,
     topicId: selector.topicId,
     sourceType: selector.sourceType,
+    dateFrom: selector.dateFrom,
+    dateTo: selector.dateTo,
     limit: effectiveLimit,
   });
 
   let ids = docs.map((d) => d.id);
 
-  // Build a Map for O(1) lookup instead of O(n) .find() per id
-  const docMap = new Map(docs.map((d) => [d.id, d]));
-
-  // Apply date filters
-  if (selector.dateFrom) {
-    const from = selector.dateFrom;
-    ids = ids.filter((id) => {
-      const doc = docMap.get(id);
-      return doc != null && doc.createdAt >= from;
-    });
-  }
-  if (selector.dateTo) {
-    const to = selector.dateTo;
-    ids = ids.filter((id) => {
-      const doc = docMap.get(id);
-      return doc != null && doc.createdAt <= to;
-    });
-  }
-
-  // Apply tag filter (AND logic — document must have ALL specified tags)
+  // Apply tag filter (AND logic — document must have ALL specified tags).
+  // Fetch all tags in a single query instead of one query per document.
   if (selector.tags && selector.tags.length > 0) {
     const requiredTags = selector.tags.map((t) => t.trim().toLowerCase());
-    // Batch query: fetch tags for all candidate documents, chunked to respect SQLite parameter limits
-    const SQLITE_MAX_PARAMS = 999;
-    const tagRows: Array<{ document_id: string; name: string }> = [];
-    for (let i = 0; i < ids.length; i += SQLITE_MAX_PARAMS) {
-      const chunk = ids.slice(i, i + SQLITE_MAX_PARAMS);
-      const placeholders = chunk.map(() => "?").join(", ");
-      const rows = db
-        .prepare(
-          `SELECT dt.document_id, t.name
-             FROM tags t
-             JOIN document_tags dt ON dt.tag_id = t.id
-             WHERE dt.document_id IN (${placeholders})`,
-        )
-        .all(...chunk) as Array<{ document_id: string; name: string }>;
-      tagRows.push(...rows);
-    }
-    const tagsByDoc = new Map<string, string[]>();
-    for (const row of tagRows) {
-      const existing = tagsByDoc.get(row.document_id);
-      if (existing) {
-        existing.push(row.name);
-      } else {
-        tagsByDoc.set(row.document_id, [row.name]);
-      }
-    }
+    const tagsByDoc = getDocumentTagsBatch(db, ids);
     ids = ids.filter((id) => {
-      const docTags = tagsByDoc.get(id) ?? [];
+      const docTags = (tagsByDoc.get(id) ?? []).map((t) => t.name);
       return requiredTags.every((rt) => docTags.includes(rt));
     });
   }

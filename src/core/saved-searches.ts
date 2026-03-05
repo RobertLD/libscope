@@ -4,6 +4,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { searchDocuments } from "./search.js";
 import type { SearchOptions, SearchResult } from "./search.js";
 import { ValidationError, DocumentNotFoundError } from "../errors.js";
+import { getLogger } from "../logger.js";
 
 export interface SavedSearch {
   id: string;
@@ -28,7 +29,11 @@ interface SavedSearchRow {
 function rowToSavedSearch(row: SavedSearchRow): SavedSearch {
   let filters: Omit<SearchOptions, "query"> | null = null;
   if (row.filters) {
-    filters = JSON.parse(row.filters) as Omit<SearchOptions, "query">;
+    try {
+      filters = JSON.parse(row.filters) as Omit<SearchOptions, "query">;
+    } catch {
+      getLogger().warn({ id: row.id }, "Failed to parse saved search filters JSON; using null");
+    }
   }
   return {
     id: row.id,

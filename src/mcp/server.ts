@@ -6,7 +6,13 @@ import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
 import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments } from "../core/search.js";
-import { askQuestion, createLlmProvider, type LlmProvider } from "../core/rag.js";
+import {
+  askQuestion,
+  createLlmProvider,
+  getContextForQuestion,
+  isPassthroughMode,
+  type LlmProvider,
+} from "../core/rag.js";
 import { getDocument, listDocuments, deleteDocument, updateDocument } from "../core/documents.js";
 import { rateDocument, getDocumentRatings } from "../core/ratings.js";
 import { indexDocument } from "../core/indexing.js";
@@ -23,45 +29,12 @@ import { createWebhook, listWebhooks, deleteWebhook, redactWebhook } from "../co
 import type { WebhookEvent } from "../core/webhooks.js";
 import { suggestTags } from "../core/tags.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
+import { spiderUrl } from "../core/spider.js";
+import type { SpiderOptions } from "../core/spider.js";
 import { initLogger, getLogger } from "../logger.js";
-import { ConfigError, LibScopeError, ValidationError } from "../errors.js";
-
-function errorResponse(err: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  let message: string;
-  if (err instanceof LibScopeError) {
-    message = err.message;
-  } else if (err instanceof Error) {
-    message = `${err.name}: ${err.message}`;
-  } else {
-    message = `An unexpected error occurred: ${String(err)}`;
-  }
-
-  const log = getLogger();
-  log.error({ err }, "MCP tool error");
-
-  return {
-    content: [{ type: "text" as const, text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
-
-/** Wraps a tool handler so that thrown errors are converted to MCP error responses. */
-function withErrorHandling<P>(
-  handler: (params: P) => ToolResult | Promise<ToolResult>,
-): (params: P) => Promise<ToolResult> {
-  return async (params: P) => {
-    try {
-      return await handler(params);
-    } catch (err) {
-      return errorResponse(err);
-    }
-  };
-}
+import { ConfigError, ValidationError } from "../errors.js";
+import { errorResponse, withErrorHandling } from "./errors.js";
+export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
 
 // Start the server
 async function main(): Promise<void> {
@@ -330,7 +303,7 @@ async function main(): Promise<void> {
   // Tool: submit-document
   server.tool(
     "submit-document",
-    "Submit a new document for indexing into the knowledge base. You can provide content directly, or provide a URL to fetch and index automatically.",
+    "Submit a new document for indexing into the knowledge base. You can provide content directly, or provide a URL to fetch and index automatically. Set spider=true to crawl linked pages from the URL.",
     {
       title: z
         .string()
@@ -353,17 +326,104 @@ async function main(): Promise<void> {
       topic: z.string().optional().describe("Topic ID to categorize under"),
       library: z.string().optional().describe("Library name (for library docs)"),
       version: z.string().optional().describe("Library version"),
+      spider: z
+        .boolean()
+        .optional()
+        .describe("When true, crawl pages linked from the URL. Requires 'url'. Default: false."),
+      maxPages: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum pages to index during a spider run (default: 25, hard cap: 200)."),
+      maxDepth: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          "Maximum link-hop depth from the seed URL (default: 2, hard cap: 5). 0 = seed only.",
+        ),
+      sameDomain: z
+        .boolean()
+        .optional()
+        .describe("Only follow links on the same domain as the seed URL (default: true)."),
+      pathPrefix: z
+        .string()
+        .optional()
+        .describe("Only follow links whose path starts with this prefix (e.g. '/docs/')."),
+      excludePatterns: z
+        .array(z.string())
+        .optional()
+        .describe("Glob patterns for URLs to skip (e.g. ['*/changelog*', '*/api/v1/*'])."),
     },
     withErrorHandling(async (params) => {
       let { title, content } = params;
       const { url, library, version, topic } = params;
+      const fetchOptions = {
+        allowPrivateUrls: config.indexing.allowPrivateUrls,
+        allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
+      };
+
+      // Spider mode — crawl linked pages from the URL
+      if (params.spider && !url) {
+        throw new ValidationError("Field 'url' is required when spider is true");
+      }
+      if (params.spider && url) {
+        const spiderOptions: SpiderOptions = { fetchOptions };
+        if (params.maxPages !== undefined) spiderOptions.maxPages = params.maxPages;
+        if (params.maxDepth !== undefined) spiderOptions.maxDepth = params.maxDepth;
+        if (params.sameDomain !== undefined) spiderOptions.sameDomain = params.sameDomain;
+        if (params.pathPrefix !== undefined) spiderOptions.pathPrefix = params.pathPrefix;
+        if (params.excludePatterns !== undefined)
+          spiderOptions.excludePatterns = params.excludePatterns;
+
+        const indexed: Array<{ id: string; title: string }> = [];
+        const errors: Array<{ url: string; error: string }> = [];
+        const sourceType = params.sourceType ?? (library ? "library" : "manual");
+
+        const gen = spiderUrl(url, spiderOptions);
+        let result = await gen.next();
+        while (!result.done) {
+          const page = result.value;
+          try {
+            const doc = await indexDocument(db, provider, {
+              title: page.title,
+              content: page.content,
+              sourceType,
+              library,
+              version,
+              topicId: topic,
+              url: page.url,
+              submittedBy: "model",
+            });
+            indexed.push({ id: doc.id, title: page.title });
+          } catch (err) {
+            errors.push({ url: page.url, error: err instanceof Error ? err.message : String(err) });
+          }
+          result = await gen.next();
+        }
+        const stats = result.value;
+
+        const summary = [
+          `Spider complete.`,
+          `Pages indexed: ${indexed.length}`,
+          `Pages crawled: ${stats?.pagesCrawled ?? indexed.length}`,
+          `Pages skipped: ${stats?.pagesSkipped ?? 0}`,
+          errors.length > 0 ? `Errors: ${errors.length}` : null,
+          stats?.abortReason ? `Stopped early: ${stats.abortReason}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        return {
+          content: [{ type: "text" as const, text: summary }],
+        };
+      }
 
       // If URL is provided and no content, fetch it
       if (url && !content) {
-        const fetched = await fetchAndConvert(url, {
-          allowPrivateUrls: config.indexing.allowPrivateUrls,
-          allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
-        });
+        const fetched = await fetchAndConvert(url, fetchOptions);
         content = fetched.content;
         title ??= fetched.title;
       }
@@ -543,9 +603,30 @@ async function main(): Promise<void> {
       library: z.string().optional().describe("Filter by library name"),
     },
     withErrorHandling(async (params) => {
+      if (isPassthroughMode(config)) {
+        const { contextPrompt, sources } = await getContextForQuestion(db, provider, {
+          question: params.question,
+          topK: params.topK,
+          topic: params.topic,
+          library: params.library,
+        });
+
+        const sourcesText =
+          sources.length > 0
+            ? "\n\n**Sources:**\n" +
+              sources
+                .map((s) => `- ${s.title} (score: ${s.score.toFixed(2)}) [${s.documentId}]`)
+                .join("\n")
+            : "";
+
+        return {
+          content: [{ type: "text" as const, text: contextPrompt + sourcesText }],
+        };
+      }
+
       if (!llmProvider) {
         throw new ConfigError(
-          "No LLM provider configured. Set llm.provider to 'openai' or 'ollama' in your config.",
+          "No LLM provider configured. Set llm.provider to 'openai', 'ollama', or 'passthrough' in your config.",
         );
       }
 

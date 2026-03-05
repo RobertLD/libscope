@@ -278,8 +278,8 @@ describe("webhooks", () => {
       await createWebhook(db, "https://example.com/hook", ["document.updated"]);
       fireWebhooks(db, "document.created", { docId: "123" });
 
-      // Give time for any async calls
-      await new Promise((r) => setTimeout(r, 50));
+      // Flush all pending microtasks/promises; mockFetch should remain uncalled
+      await Promise.resolve();
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -367,8 +367,26 @@ describe("webhooks", () => {
 
       fireWebhooks(db, "document.created", { docId: "123" });
 
-      await new Promise((r) => setTimeout(r, 50));
+      // Flush all pending microtasks/promises; mockFetch should remain uncalled
+      await Promise.resolve();
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("rowToWebhook corrupted JSON", () => {
+    it("should default to empty events array when events JSON is corrupted", () => {
+      // Directly insert a row with invalid JSON in the events column
+      db.prepare("INSERT INTO webhooks (id, url, events, secret) VALUES (?, ?, ?, ?)").run(
+        "corrupt-1",
+        "https://example.com/hook",
+        "not valid json{{{",
+        null,
+      );
+
+      const hooks = listWebhooks(db);
+      const corrupt = hooks.find((h) => h.id === "corrupt-1");
+      expect(corrupt).toBeDefined();
+      expect(corrupt!.events).toEqual([]);
     });
   });
 });

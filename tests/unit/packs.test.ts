@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, existsSync, mkdtempSync } from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { writeFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { gzipSync, gunzipSync } from "node:zlib";
 import type Database from "better-sqlite3";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
@@ -11,6 +12,7 @@ import {
   listInstalledPacks,
   createPack,
   listAvailablePacks,
+  createPackFromSource,
 } from "../../src/core/packs.js";
 import type { KnowledgePack } from "../../src/core/packs.js";
 import { indexDocument } from "../../src/core/indexing.js";
@@ -441,6 +443,628 @@ describe("knowledge packs", () => {
       await expect(listAvailablePacks("https://192.168.1.1/registry.json")).rejects.toThrow(
         /private/,
       );
+    });
+  });
+
+  describe("createPackFromSource", () => {
+    let sourceDir: string;
+
+    beforeEach(() => {
+      sourceDir = mkdtempSync(join(tmpdir(), "libscope-pack-source-"));
+    });
+
+    it("should create a pack from a folder of markdown files", async () => {
+      writeFileSync(join(sourceDir, "guide.md"), "# Guide\n\nThis is a guide.");
+      writeFileSync(join(sourceDir, "api.md"), "# API\n\nEndpoint reference.");
+
+      const pack = await createPackFromSource({
+        name: "test-from-folder",
+        from: [sourceDir],
+      });
+
+      expect(pack.name).toBe("test-from-folder");
+      expect(pack.documents).toHaveLength(2);
+      expect(pack.documents.map((d) => d.title).sort()).toEqual(["api", "guide"]);
+      expect(pack.documents[0]!.content).toBeTruthy();
+      expect(pack.documents[0]!.source).toMatch(/^file:\/\//);
+      expect(pack.version).toBe("1.0.0");
+      expect(pack.metadata.author).toBe("libscope");
+    });
+
+    it("should write pack to outputPath", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent here.");
+      const outputPath = join(tempDir, "output-pack.json");
+
+      const pack = await createPackFromSource({
+        name: "output-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      expect(existsSync(outputPath)).toBe(true);
+      const written = JSON.parse(readFileSync(outputPath, "utf-8")) as KnowledgePack;
+      expect(written.name).toBe("output-test");
+      expect(written.documents).toHaveLength(1);
+      expect(pack.documents).toHaveLength(1);
+    });
+
+    it("should filter by extensions", async () => {
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme");
+      writeFileSync(join(sourceDir, "page.html"), "<h1>Page</h1><p>Content</p>");
+      writeFileSync(join(sourceDir, "data.json"), '{"key": "value"}');
+
+      const pack = await createPackFromSource({
+        name: "ext-filter",
+        from: [sourceDir],
+        extensions: [".md"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("readme");
+    });
+
+    it("should handle extensions without leading dot", async () => {
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme\n\nContent");
+
+      const pack = await createPackFromSource({
+        name: "ext-no-dot",
+        from: [sourceDir],
+        extensions: ["md"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+    });
+
+    it("should exclude files matching patterns", async () => {
+      writeFileSync(join(sourceDir, "guide.md"), "# Guide\n\nContent");
+      writeFileSync(join(sourceDir, "draft.md"), "# Draft\n\nNot ready");
+
+      const pack = await createPackFromSource({
+        name: "exclude-test",
+        from: [sourceDir],
+        exclude: ["draft.md"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("guide");
+    });
+
+    it("should recurse into subdirectories by default", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const subDir = join(sourceDir, "sub");
+      mkdirSync(subDir);
+      writeFileSync(join(sourceDir, "root.md"), "# Root");
+      writeFileSync(join(subDir, "nested.md"), "# Nested\n\nDeep content");
+
+      const pack = await createPackFromSource({
+        name: "recursive-test",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(2);
+      expect(pack.documents.map((d) => d.title).sort()).toEqual(["nested", "root"]);
+    });
+
+    it("should not recurse when recursive is false", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const subDir = join(sourceDir, "sub");
+      mkdirSync(subDir);
+      writeFileSync(join(sourceDir, "root.md"), "# Root");
+      writeFileSync(join(subDir, "nested.md"), "# Nested");
+
+      const pack = await createPackFromSource({
+        name: "no-recurse",
+        from: [sourceDir],
+        recursive: false,
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("root");
+    });
+
+    it("should throw for empty pack name", async () => {
+      await expect(createPackFromSource({ name: "  ", from: [sourceDir] })).rejects.toThrow(
+        /Pack name is required/,
+      );
+    });
+
+    it("should throw for empty from array", async () => {
+      await expect(createPackFromSource({ name: "test", from: [] })).rejects.toThrow(
+        /At least one --from source is required/,
+      );
+    });
+
+    it("should throw for non-existent source path", async () => {
+      await expect(
+        createPackFromSource({ name: "test", from: ["/nonexistent/path/xyz"] }),
+      ).rejects.toThrow(/does not exist/);
+    });
+
+    it("should throw when no documents could be created", async () => {
+      // Empty directory — no parseable files
+      await expect(createPackFromSource({ name: "empty", from: [sourceDir] })).rejects.toThrow(
+        /No documents could be created/,
+      );
+    });
+
+    it("should skip files without a parser", async () => {
+      writeFileSync(join(sourceDir, "data.bin"), "binary stuff");
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme\n\nContent");
+
+      const pack = await createPackFromSource({
+        name: "skip-unsupported",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("readme");
+    });
+
+    it("should skip files with empty content after parsing", async () => {
+      writeFileSync(join(sourceDir, "empty.md"), "   ");
+      writeFileSync(join(sourceDir, "real.md"), "# Real\n\nActual content");
+
+      const pack = await createPackFromSource({
+        name: "skip-empty",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("real");
+    });
+
+    it("should accept a single file as source", async () => {
+      const filePath = join(sourceDir, "single.md");
+      writeFileSync(filePath, "# Single File\n\nJust one file.");
+
+      const pack = await createPackFromSource({
+        name: "single-file",
+        from: [filePath],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("single");
+    });
+
+    it("should accept multiple sources", async () => {
+      const dir2 = mkdtempSync(join(tmpdir(), "libscope-pack-source2-"));
+      writeFileSync(join(sourceDir, "a.md"), "# A\n\nFrom dir 1");
+      writeFileSync(join(dir2, "b.md"), "# B\n\nFrom dir 2");
+
+      const pack = await createPackFromSource({
+        name: "multi-source",
+        from: [sourceDir, dir2],
+      });
+
+      expect(pack.documents).toHaveLength(2);
+    });
+
+    it("should call onProgress callback", async () => {
+      writeFileSync(join(sourceDir, "a.md"), "# A");
+      writeFileSync(join(sourceDir, "b.md"), "# B");
+
+      const progress: Array<{ file: string; index: number; total: number }> = [];
+
+      await createPackFromSource({
+        name: "progress-test",
+        from: [sourceDir],
+        onProgress: (info) => progress.push(info),
+      });
+
+      expect(progress).toHaveLength(2);
+      expect(progress[0]!.index).toBe(0);
+      expect(progress[0]!.total).toBe(2);
+      expect(progress[1]!.index).toBe(1);
+    });
+
+    it("should set custom version, description, author", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent");
+
+      const pack = await createPackFromSource({
+        name: "custom-meta",
+        from: [sourceDir],
+        version: "2.0.0",
+        description: "Custom desc",
+        author: "Test Author",
+      });
+
+      expect(pack.version).toBe("2.0.0");
+      expect(pack.description).toBe("Custom desc");
+      expect(pack.metadata.author).toBe("Test Author");
+    });
+
+    it("should produce a valid pack that passes validatePack", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nSome content here");
+      const outputPath = join(tempDir, "validate-test.json");
+
+      await createPackFromSource({
+        name: "validate-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      // Read and re-validate through installPack (which calls validatePack internally)
+      const result = await installPack(db, provider, outputPath);
+      expect(result.packName).toBe("validate-test");
+      expect(result.documentsInstalled).toBe(1);
+    });
+
+    it("should handle HTML files", async () => {
+      writeFileSync(
+        join(sourceDir, "page.html"),
+        "<html><head><title>Test</title></head><body><h1>Hello</h1><p>World</p></body></html>",
+      );
+
+      const pack = await createPackFromSource({
+        name: "html-test",
+        from: [sourceDir],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("page");
+      expect(pack.documents[0]!.content).toContain("Hello");
+      expect(pack.documents[0]!.content).toContain("World");
+    });
+
+    it("should exclude with wildcard patterns", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const assetsDir = join(sourceDir, "assets");
+      mkdirSync(assetsDir);
+      writeFileSync(join(sourceDir, "readme.md"), "# Readme\n\nContent");
+      writeFileSync(join(assetsDir, "data.md"), "# Asset data");
+
+      const pack = await createPackFromSource({
+        name: "wildcard-exclude",
+        from: [sourceDir],
+        exclude: ["assets/**"],
+      });
+
+      expect(pack.documents).toHaveLength(1);
+      expect(pack.documents[0]!.title).toBe("readme");
+    });
+
+    it("should write gzipped pack when output ends in .gz", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent here.");
+      const outputPath = join(tempDir, "test.json.gz");
+
+      await createPackFromSource({
+        name: "gzip-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      expect(existsSync(outputPath)).toBe(true);
+      const raw = readFileSync(outputPath);
+      // Verify gzip magic bytes
+      expect(raw[0]).toBe(0x1f);
+      expect(raw[1]).toBe(0x8b);
+      // Decompress and verify JSON
+      const json = gunzipSync(raw).toString("utf-8");
+      const parsed = JSON.parse(json) as KnowledgePack;
+      expect(parsed.name).toBe("gzip-test");
+      expect(parsed.documents).toHaveLength(1);
+    });
+
+    it("should write plain JSON when output ends in .json", async () => {
+      writeFileSync(join(sourceDir, "doc.md"), "# Doc\n\nContent here.");
+      const outputPath = join(tempDir, "test.json");
+
+      await createPackFromSource({
+        name: "json-test",
+        from: [sourceDir],
+        outputPath,
+      });
+
+      const raw = readFileSync(outputPath, "utf-8");
+      const parsed = JSON.parse(raw) as KnowledgePack;
+      expect(parsed.name).toBe("json-test");
+    });
+  });
+
+  describe("gzip pack install", () => {
+    it("should install a gzipped pack file", async () => {
+      const pack = makeSamplePack({ name: "gz-pack" });
+      const packPath = join(tempDir, "gz-pack.json.gz");
+      writeFileSync(packPath, gzipSync(Buffer.from(JSON.stringify(pack), "utf-8")));
+
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.packName).toBe("gz-pack");
+      expect(result.documentsInstalled).toBe(2);
+      expect(result.alreadyInstalled).toBe(false);
+    });
+
+    it("should auto-detect gzip by magic bytes even with .json extension", async () => {
+      const pack = makeSamplePack({ name: "magic-detect" });
+      const packPath = join(tempDir, "magic-detect.json");
+      // Write gzipped content but with .json extension
+      writeFileSync(packPath, gzipSync(Buffer.from(JSON.stringify(pack), "utf-8")));
+
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.packName).toBe("magic-detect");
+      expect(result.documentsInstalled).toBe(2);
+    });
+
+    it("should round-trip: create gzipped pack from source then install it", async () => {
+      const rtDir = mkdtempSync(join(tmpdir(), "libscope-pack-rt-"));
+      writeFileSync(join(rtDir, "guide.md"), "# Guide\n\nThis is a guide.");
+      const packPath = join(tempDir, "roundtrip.json.gz");
+
+      await createPackFromSource({
+        name: "roundtrip-pack",
+        from: [rtDir],
+        outputPath: packPath,
+      });
+
+      const result = await installPack(db, provider, packPath);
+      expect(result.packName).toBe("roundtrip-pack");
+      expect(result.documentsInstalled).toBe(1);
+    });
+  });
+
+  describe("installPack — batch & progress options", () => {
+    it("should report progress via onProgress callback", async () => {
+      const pack = makeSamplePack();
+      const packPath = join(tempDir, "progress-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const calls: Array<{ current: number; total: number; label: string }> = [];
+      await installPack(db, provider, packPath, {
+        onProgress: (current, total, label) => {
+          calls.push({ current, total, label });
+        },
+      });
+
+      // Should have called onProgress at least once (one batch covering both docs)
+      expect(calls.length).toBeGreaterThan(0);
+      // Last call should report all docs processed
+      const last = calls[calls.length - 1]!;
+      expect(last.current).toBe(2);
+      expect(last.total).toBe(2);
+    });
+
+    it("should process in smaller batches when batchSize=1", async () => {
+      const pack = makeSamplePack();
+      const packPath = join(tempDir, "batch1-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const calls: number[] = [];
+      await installPack(db, provider, packPath, {
+        batchSize: 1,
+        onProgress: (current) => calls.push(current),
+      });
+
+      // With batchSize=1 and 2 docs, should get 2 progress calls
+      expect(calls).toEqual([1, 2]);
+    });
+
+    it("should skip documents when resumeFrom is set", async () => {
+      const pack = makeSamplePack({
+        name: "resume-pack",
+        documents: [
+          { title: "Doc 1", content: "Content one", source: "" },
+          { title: "Doc 2", content: "Content two", source: "" },
+          { title: "Doc 3", content: "Content three", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "resume-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath, { resumeFrom: 2 });
+
+      // Should only install doc 3 (skipped first 2)
+      expect(result.documentsInstalled).toBe(1);
+      expect(result.packName).toBe("resume-pack");
+    });
+
+    it("should count errors when embedBatch fails", async () => {
+      const pack = makeSamplePack({ name: "err-pack" });
+      const packPath = join(tempDir, "err-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const failProvider = new MockEmbeddingProvider();
+      failProvider.embedBatch = vi.fn().mockRejectedValue(new Error("embed failed"));
+
+      const result = await installPack(db, failProvider, packPath);
+
+      // embedBatch failure means documents in that batch are skipped
+      expect(result.errors).toBeGreaterThan(0);
+      expect(result.documentsInstalled).toBe(0);
+    });
+
+    it("should include errors=0 on successful install", async () => {
+      const pack = makeSamplePack({ name: "ok-pack" });
+      const packPath = join(tempDir, "ok-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.errors).toBe(0);
+      expect(result.documentsInstalled).toBe(2);
+    });
+
+    it("should use a single embedBatch call per batch for efficiency", async () => {
+      const pack = makeSamplePack({ name: "batch-efficiency" });
+      const packPath = join(tempDir, "batch-eff.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, provider, packPath, { batchSize: 10 });
+
+      // 2 docs in one batch → 1 embedBatch call
+      expect(provider.embedBatchCallCount).toBe(1);
+    });
+
+    it("should return errors=0 for already-installed pack", async () => {
+      const pack = makeSamplePack({ name: "already-pack" });
+      const packPath = join(tempDir, "already-pack.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, provider, packPath);
+      const result = await installPack(db, provider, packPath);
+
+      expect(result.alreadyInstalled).toBe(true);
+      expect(result.errors).toBe(0);
+    });
+  });
+
+  describe("installPack — concurrency option", () => {
+    it("should install all docs correctly with concurrency=1 (sequential)", async () => {
+      const pack = makeSamplePack({
+        name: "concurrent-1",
+        documents: [
+          { title: "Doc A", content: "# Doc A\n\nContent A.", source: "" },
+          { title: "Doc B", content: "# Doc B\n\nContent B.", source: "" },
+          { title: "Doc C", content: "# Doc C\n\nContent C.", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "concurrent-1.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath, { batchSize: 1, concurrency: 1 });
+
+      expect(result.documentsInstalled).toBe(3);
+      expect(result.errors).toBe(0);
+    });
+
+    it("should install all docs correctly with concurrency=4 (parallel)", async () => {
+      const pack = makeSamplePack({
+        name: "concurrent-4",
+        documents: [
+          { title: "Doc A", content: "# Doc A\n\nContent A.", source: "" },
+          { title: "Doc B", content: "# Doc B\n\nContent B.", source: "" },
+          { title: "Doc C", content: "# Doc C\n\nContent C.", source: "" },
+          { title: "Doc D", content: "# Doc D\n\nContent D.", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "concurrent-4.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath, { batchSize: 1, concurrency: 4 });
+
+      expect(result.documentsInstalled).toBe(4);
+      expect(result.errors).toBe(0);
+
+      // Verify all 4 docs are in the DB
+      const docs = db
+        .prepare("SELECT id FROM documents WHERE pack_name = ?")
+        .all("concurrent-4") as Array<{ id: string }>;
+      expect(docs.length).toBe(4);
+    });
+
+    it("should make multiple embedBatch calls with small batchSize and high concurrency", async () => {
+      const pack = makeSamplePack({
+        name: "multi-batch",
+        documents: [
+          { title: "Doc 1", content: "Content 1", source: "" },
+          { title: "Doc 2", content: "Content 2", source: "" },
+          { title: "Doc 3", content: "Content 3", source: "" },
+          { title: "Doc 4", content: "Content 4", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "multi-batch.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, provider, packPath, { batchSize: 2, concurrency: 2 });
+
+      // 4 docs with batchSize=2 → 2 batches → 2 embedBatch calls
+      expect(provider.embedBatchCallCount).toBe(2);
+    });
+
+    it("should not exceed concurrency limit for embed calls", async () => {
+      // Track the maximum number of concurrent embedBatch calls in flight
+      let maxConcurrent = 0;
+      let activeCalls = 0;
+      let totalCalls = 0;
+
+      const trackingProvider = new MockEmbeddingProvider();
+      trackingProvider.embedBatch = vi.fn().mockImplementation((texts: string[]) => {
+        totalCalls++;
+        activeCalls++;
+        maxConcurrent = Math.max(maxConcurrent, activeCalls);
+        // Simulate slight async delay so concurrent calls can overlap
+        return Promise.resolve().then(() => {
+          activeCalls--;
+          return texts.map(() => [0.1, 0.2, 0.3, 0.4]);
+        });
+      });
+
+      const pack = makeSamplePack({
+        name: "concurrency-limit",
+        documents: Array.from({ length: 8 }, (_, i) => ({
+          title: `Doc ${i}`,
+          content: `Content ${i}`,
+          source: "",
+        })),
+      });
+      const packPath = join(tempDir, "concurrency-limit.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, trackingProvider, packPath, { batchSize: 1, concurrency: 3 });
+
+      // Should never exceed the concurrency limit of 3
+      expect(maxConcurrent).toBeLessThanOrEqual(3);
+      // Should have made 8 embedBatch calls (8 docs, batchSize=1)
+      expect(totalCalls).toBe(8);
+    });
+
+    it("should report progress after each batch when embedding concurrently", async () => {
+      const pack = makeSamplePack({
+        name: "concurrent-progress",
+        documents: [
+          { title: "Doc A", content: "Content A", source: "" },
+          { title: "Doc B", content: "Content B", source: "" },
+          { title: "Doc C", content: "Content C", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "concurrent-progress.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const calls: Array<{ current: number; total: number }> = [];
+      await installPack(db, provider, packPath, {
+        batchSize: 1,
+        concurrency: 2,
+        onProgress: (current, total) => calls.push({ current, total }),
+      });
+
+      // Should have 3 progress calls (one per batch/doc with batchSize=1)
+      expect(calls).toHaveLength(3);
+      // Final call should report all docs processed
+      expect(calls[calls.length - 1]!.current).toBe(3);
+      expect(calls[calls.length - 1]!.total).toBe(3);
+    });
+
+    it("should count errors correctly when some batches fail during concurrent embedding", async () => {
+      let callCount = 0;
+      const partialFailProvider = new MockEmbeddingProvider();
+      partialFailProvider.embedBatch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount % 2 === 0) {
+          return Promise.reject(new Error("embed failed"));
+        }
+        return Promise.resolve([[0.1, 0.2, 0.3, 0.4]]);
+      });
+
+      const pack = makeSamplePack({
+        name: "partial-fail",
+        documents: [
+          { title: "Doc 1", content: "Content 1", source: "" },
+          { title: "Doc 2", content: "Content 2", source: "" },
+          { title: "Doc 3", content: "Content 3", source: "" },
+          { title: "Doc 4", content: "Content 4", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "partial-fail.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, partialFailProvider, packPath, {
+        batchSize: 1,
+        concurrency: 4,
+      });
+
+      // 4 docs, batchSize=1 → 4 batches; even-numbered calls fail → 2 errors, 2 installed
+      expect(result.errors).toBe(2);
+      expect(result.documentsInstalled).toBe(2);
     });
   });
 });

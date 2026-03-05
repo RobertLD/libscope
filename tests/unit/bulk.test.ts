@@ -76,6 +76,25 @@ describe("bulk operations", () => {
       expect(ids).toContain("doc-b");
     });
 
+    it("filters by dateFrom", () => {
+      insertDoc(db, "doc-old", "Old Doc", {
+        library: "react",
+        createdAt: "2020-01-01T00:00:00.000Z",
+      });
+      const ids = resolveSelector(db, { library: "react", dateFrom: "2024-01-01T00:00:00.000Z" });
+      expect(ids).not.toContain("doc-old");
+      expect(ids).toContain("doc-a");
+    });
+
+    it("filters by dateTo", () => {
+      insertDoc(db, "doc-future", "Future Doc", {
+        library: "react",
+        createdAt: "2099-01-01T00:00:00.000Z",
+      });
+      const ids = resolveSelector(db, { library: "react", dateTo: "2025-01-01T00:00:00.000Z" });
+      expect(ids).not.toContain("doc-future");
+    });
+
     it("throws on empty selector", () => {
       expect(() => resolveSelector(db, {})).toThrow(ValidationError);
     });
@@ -90,9 +109,64 @@ describe("bulk operations", () => {
       expect(ids.length).toBeLessThanOrEqual(10);
     });
 
-    it("returns empty array for negative limit", () => {
-      const ids = resolveSelector(db, { library: "react" }, -5);
-      expect(ids).toHaveLength(0);
+    it("throws ValidationError for negative limit", () => {
+      expect(() => resolveSelector(db, { library: "react" }, -5)).toThrow(ValidationError);
+      expect(() => resolveSelector(db, { library: "react" }, -1)).toThrow(
+        "limit must be a non-negative integer",
+      );
+    });
+
+    it("applies dateFrom filter at SQL level before LIMIT", () => {
+      // Insert enough docs to exceed a small limit, with varying dates
+      for (let i = 0; i < 20; i++) {
+        insertDoc(db, `old-${i}`, `Old Doc ${i}`, {
+          library: "test-lib",
+          createdAt: "2020-01-01T00:00:00.000Z",
+        });
+      }
+      for (let i = 0; i < 5; i++) {
+        insertDoc(db, `new-${i}`, `New Doc ${i}`, {
+          library: "test-lib",
+          createdAt: "2025-06-01T00:00:00.000Z",
+        });
+      }
+
+      // With a limit of 10, date filter must happen in SQL before LIMIT,
+      // otherwise old docs could fill the limit and exclude new ones
+      const ids = resolveSelector(
+        db,
+        { library: "test-lib", dateFrom: "2025-01-01T00:00:00.000Z" },
+        10,
+      );
+      expect(ids).toHaveLength(5);
+      for (const id of ids) {
+        expect(id).toMatch(/^new-/);
+      }
+    });
+
+    it("applies dateTo filter at SQL level before LIMIT", () => {
+      for (let i = 0; i < 20; i++) {
+        insertDoc(db, `future-${i}`, `Future Doc ${i}`, {
+          library: "test-lib",
+          createdAt: "2099-01-01T00:00:00.000Z",
+        });
+      }
+      for (let i = 0; i < 5; i++) {
+        insertDoc(db, `past-${i}`, `Past Doc ${i}`, {
+          library: "test-lib",
+          createdAt: "2020-06-01T00:00:00.000Z",
+        });
+      }
+
+      const ids = resolveSelector(
+        db,
+        { library: "test-lib", dateTo: "2025-01-01T00:00:00.000Z" },
+        10,
+      );
+      expect(ids).toHaveLength(5);
+      for (const id of ids) {
+        expect(id).toMatch(/^past-/);
+      }
     });
   });
 

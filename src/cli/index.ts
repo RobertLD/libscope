@@ -32,6 +32,7 @@ import {
 } from "../core/analytics.js";
 import { startRepl } from "./repl.js";
 import { confirmAction } from "./confirm.js";
+import { createReporter, isVerbose } from "./reporter.js";
 import {
   addTagsToDocument,
   removeTagFromDocument,
@@ -55,6 +56,7 @@ import {
   listInstalledPacks,
   listAvailablePacks,
   createPack,
+  createPackFromSource,
 } from "../core/packs.js";
 
 import { execSync } from "node:child_process";
@@ -119,7 +121,7 @@ program
   .name("libscope")
   .description("AI-powered knowledge base with MCP integration")
   .version(_pkg.version)
-  .option("--verbose", "Enable verbose logging")
+  .option("-v, --verbose", "Enable verbose logging")
   .option("--log-level <level>", "Set log level (debug, info, warn, error, silent)")
   .option("--workspace <name>", "Use a specific workspace");
 
@@ -1085,10 +1087,15 @@ interface ProgramOpts {
 }
 
 function setupLogging(opts: ProgramOpts): void {
-  const level: LogLevel = opts.verbose
-    ? "debug"
-    : ((opts.logLevel as LogLevel | undefined) ?? loadConfig().logging.level);
-  initLogger(level);
+  if (isVerbose(opts.verbose)) {
+    initLogger("debug");
+  } else if (opts.logLevel) {
+    initLogger(opts.logLevel as LogLevel);
+  } else {
+    // Default to silent in CLI mode — pretty reporter handles user-facing output.
+    // Set LIBSCOPE_VERBOSE=1 or pass --verbose to see structured JSON logs.
+    initLogger("silent");
+  }
 }
 
 /** Shared CLI initialization: loadConfig → setupLogging → getDatabase → runMigrations. */
@@ -1607,21 +1614,61 @@ const packCmd = program.command("pack").description("Manage knowledge packs");
 
 packCmd
   .command("install <nameOrPath>")
-  .description("Install a knowledge pack from registry or local .json file")
+  .description("Install a knowledge pack from registry or local .json/.json.gz file")
   .option("--registry <url>", "Custom registry URL")
-  .action(async (nameOrPath: string, opts: { registry?: string }) => {
-    const { db, provider } = initializeAppWithEmbedding();
-    const result = await installPack(db, provider, nameOrPath, {
-      registryUrl: opts.registry,
-    });
-    if (result.alreadyInstalled) {
-      console.log(`Pack "${result.packName}" is already installed.`);
-    } else {
-      console.log(
-        `✓ Pack "${result.packName}" installed (${result.documentsInstalled} documents).`,
-      );
-    }
-  });
+  .option("--batch-size <n>", "Number of documents to embed per batch (default: 10)")
+  .option("--resume-from <n>", "Skip the first N documents (resume a partial install)")
+  .option("--concurrency <n>", "Number of batches to embed in parallel (default: 4)")
+  .action(
+    async (
+      nameOrPath: string,
+      opts: { registry?: string; batchSize?: string; resumeFrom?: string; concurrency?: string },
+    ) => {
+      const { db, provider } = initializeAppWithEmbedding();
+      const globalOpts = program.opts<ProgramOpts>();
+      const reporter = createReporter(globalOpts.verbose);
+
+      const batchSize = opts.batchSize ? parseIntOption(opts.batchSize, "--batch-size") : undefined;
+      const resumeFrom = opts.resumeFrom
+        ? parseIntOption(opts.resumeFrom, "--resume-from")
+        : undefined;
+      const concurrency = opts.concurrency
+        ? parseIntOption(opts.concurrency, "--concurrency")
+        : undefined;
+
+      if (concurrency !== undefined && concurrency < 1) {
+        reporter.log('Error: "--concurrency" must be an integer greater than or equal to 1.');
+        closeDatabase();
+        process.exit(1);
+        return;
+      }
+
+      try {
+        const result = await installPack(db, provider, nameOrPath, {
+          registryUrl: opts.registry,
+          batchSize,
+          resumeFrom,
+          concurrency,
+          onProgress: (current, total, docTitle) => {
+            reporter.progress(current, total, docTitle);
+          },
+        });
+
+        reporter.clearProgress();
+
+        if (result.alreadyInstalled) {
+          reporter.log(`Pack "${result.packName}" is already installed.`);
+        } else {
+          const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
+          reporter.success(
+            `Pack "${result.packName}" installed: ${result.documentsInstalled} documents${errMsg}.`,
+          );
+        }
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
 
 packCmd
   .command("remove <name>")
@@ -1682,38 +1729,81 @@ packCmd
 
 packCmd
   .command("create")
-  .description("Export current documents as a pack file")
+  .description("Create a pack from the database, a local folder, or a URL")
   .requiredOption("--name <name>", "Pack name")
-  .option("--topic <topic>", "Filter documents by topic ID")
+  .option("--from <sources...>", "Source folder(s), file(s), or URL(s) to build pack from")
+  .option("--topic <topic>", "Filter documents by topic ID (database mode only)")
   .option("--version <version>", "Pack version (default: 1.0.0)")
   .option("--description <desc>", "Pack description")
   .option("--author <author>", "Pack author")
   .option("--output <path>", "Output file path")
+  .option(
+    "--extensions <exts>",
+    "Comma-separated file extensions to include (e.g. .md,.html). Default: all supported",
+  )
+  .option("--exclude <patterns...>", "Glob patterns to exclude (e.g. *.min.js, assets/**)")
+  .option("--no-recursive", "Do not recurse into subdirectories")
   .action(
-    (opts: {
+    async (opts: {
       name: string;
+      from?: string[];
       topic?: string;
       version?: string;
       description?: string;
       author?: string;
       output?: string;
+      extensions?: string;
+      exclude?: string[];
+      recursive: boolean;
     }) => {
-      const { db } = initializeApp();
-      try {
-        const outputPath = opts.output ?? `${opts.name}.json`;
-        const pack = createPack(db, {
+      if (opts.from && opts.from.length > 0) {
+        // Source mode: build pack directly from files/URLs (no database needed)
+        // Default to .json.gz for source packs (they can be large)
+        const outputPath = opts.output ?? `${opts.name}.json.gz`;
+        const extensionList = opts.extensions
+          ? opts.extensions.split(",").map((e) => e.trim())
+          : undefined;
+
+        const pack = await createPackFromSource({
           name: opts.name,
+          from: opts.from,
           version: opts.version,
           description: opts.description,
           author: opts.author,
-          topic: opts.topic,
           outputPath,
+          extensions: extensionList,
+          exclude: opts.exclude,
+          recursive: opts.recursive,
+          onProgress: ({ file, index, total }) => {
+            const pct = Math.round(((index + 1) / total) * 100);
+            const short = file.length > 60 ? `...${file.slice(-57)}` : file;
+            process.stdout.write(`\r  [${pct}%] ${index + 1}/${total} ${short}`.padEnd(80));
+          },
         });
+        // Clear progress line
+        process.stdout.write("\r" + " ".repeat(80) + "\r");
         console.log(
           `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
         );
-      } finally {
-        closeDatabase();
+      } else {
+        // Database mode: export existing documents
+        const outputPath = opts.output ?? `${opts.name}.json`;
+        const { db } = initializeApp();
+        try {
+          const pack = createPack(db, {
+            name: opts.name,
+            version: opts.version,
+            description: opts.description,
+            author: opts.author,
+            topic: opts.topic,
+            outputPath,
+          });
+          console.log(
+            `✓ Pack "${pack.name}" created with ${pack.documents.length} documents → ${outputPath}`,
+          );
+        } finally {
+          closeDatabase();
+        }
       }
     },
   );
@@ -1729,9 +1819,7 @@ connectCmd
   .option("--notebook <name>", "Sync a specific notebook")
   .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
     const config = loadConfig();
-    const logLevel =
-      (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
-    initLogger(logLevel);
+    setupLogging(program.opts<ProgramOpts>());
 
     const workspace = program.opts().workspace as string | undefined;
     if (workspace) {
@@ -1845,9 +1933,7 @@ disconnectCmd
       return;
     }
     const config = loadConfig();
-    const logLevel =
-      (program.opts().logLevel as LogLevel) ?? (program.opts().verbose ? "debug" : "info");
-    initLogger(logLevel);
+    setupLogging(program.opts<ProgramOpts>());
 
     const workspace2 = program.opts().workspace as string | undefined;
     if (workspace2) {

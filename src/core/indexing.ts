@@ -253,9 +253,24 @@ export async function indexDocument(
     .prepare("SELECT id FROM documents WHERE title = ? AND LENGTH(content) = ?")
     .get(input.title, contentLength) as { id: string } | undefined;
   if (existingByContent) {
-    throw new ValidationError(
-      `Document with same title and content length already exists (id: ${existingByContent.id}). Delete it first or modify the content.`,
-    );
+    if (input.dedup === "skip") {
+      log.info(
+        { existingDocId: existingByContent.id, title: input.title },
+        "Duplicate by title+length detected, skipping",
+      );
+      return { id: existingByContent.id, chunkCount: 0 };
+    }
+    if (input.dedup === "warn") {
+      log.warn(
+        { existingDocId: existingByContent.id, title: input.title },
+        "Duplicate by title+length detected, indexing anyway",
+      );
+      // Continue indexing with a new ID
+    } else {
+      throw new ValidationError(
+        `Document with same title and content length already exists (id: ${existingByContent.id}). Delete it first or modify the content.`,
+      );
+    }
   }
 
   const docId = randomUUID();
@@ -333,9 +348,11 @@ export async function indexDocument(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes("no such table")) {
-          log.debug({ chunkId, err }, "Skipped vector insertion (sqlite-vec may not be loaded)");
+          log.debug({ chunkId }, "Skipped vector insertion (sqlite-vec not loaded)");
         } else {
-          log.warn({ chunkId, err }, "Failed to insert vector embedding");
+          // Re-throw so the transaction rolls back — don't silently commit
+          // chunks that have no embedding (they would be invisible to semantic search).
+          throw err;
         }
       }
     }

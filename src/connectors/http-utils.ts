@@ -1,22 +1,13 @@
+import { Agent } from "undici";
 import { getLogger } from "../logger.js";
 import { FetchError } from "../errors.js";
 import { loadConfig } from "../config.js";
 
-let tlsWarningLogged = false;
-
-/**
- * Log a one-time warning when `allowSelfSignedCerts` is enabled but the
- * user has not set `NODE_TLS_REJECT_UNAUTHORIZED=0` in their environment.
- */
-function warnIfTlsBypassMissing(): void {
-  if (tlsWarningLogged) return;
-  if (process.env["NODE_TLS_REJECT_UNAUTHORIZED"] === "0") return;
-  tlsWarningLogged = true;
-  const log = getLogger();
-  log.warn(
-    "allowSelfSignedCerts is enabled but NODE_TLS_REJECT_UNAUTHORIZED is not set. " +
-      "Set NODE_TLS_REJECT_UNAUTHORIZED=0 in your environment to allow self-signed certificates.",
-  );
+/** Lazy singleton undici Agent that skips TLS certificate verification. */
+let _insecureAgent: Agent | undefined;
+function getInsecureAgent(): Agent {
+  _insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } });
+  return _insecureAgent;
 }
 
 export interface RetryConfig {
@@ -39,52 +30,45 @@ export async function fetchWithRetry(
   const log = getLogger();
 
   const config = loadConfig();
-  if (config.indexing.allowSelfSignedCerts) {
-    warnIfTlsBypassMissing();
-  }
+  // Use a per-request undici Agent when self-signed certs are allowed.
+  // This is scoped to this fetch chain and does not affect concurrent requests.
+  const dispatcher = config.indexing.allowSelfSignedCerts ? getInsecureAgent() : undefined;
 
-  try {
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const timeoutSignal = AbortSignal.timeout(30_000);
-      const combinedSignal =
-        options?.signal != null ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const fetchOptions = {
+      ...(options ?? {}),
+      ...(dispatcher ? { dispatcher: dispatcher as unknown } : {}),
+    } as RequestInit;
+    const response = await fetch(url, fetchOptions);
 
-      const response = await fetch(url, {
-        ...options,
-        signal: combinedSignal,
-      });
-
-      if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
-        if (attempt >= maxRetries - 1) {
-          const body = await response.text().catch(() => "");
-          throw new FetchError(`HTTP ${response.status} after ${maxRetries} attempts: ${body}`);
-        }
-
-        let delayMs = baseDelay * 2 ** attempt;
-        if (response.status === 429) {
-          const retryAfter = response.headers.get("Retry-After");
-          if (retryAfter) {
-            const parsed = Number(retryAfter);
-            if (!Number.isNaN(parsed)) {
-              delayMs = parsed * 1000;
-            }
-          }
-        }
-
-        log.warn(
-          { status: response.status, attempt: attempt + 1, delayMs },
-          "Retrying after transient error",
-        );
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
+    if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
+      if (attempt >= maxRetries) {
+        const body = await response.text().catch(() => "");
+        throw new FetchError(`HTTP ${response.status} after ${maxRetries + 1} attempts: ${body}`);
       }
 
-      return response;
+      let delayMs = baseDelay * 2 ** attempt;
+      if (response.status === 429) {
+        const retryAfter = response.headers.get("Retry-After");
+        if (retryAfter) {
+          const parsed = Number(retryAfter);
+          if (!Number.isNaN(parsed)) {
+            delayMs = parsed * 1000;
+          }
+        }
+      }
+
+      log.warn(
+        { status: response.status, attempt: attempt + 1, delayMs },
+        "Retrying after transient error",
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
     }
 
-    // Unreachable, but satisfies TypeScript
-    throw new FetchError("fetchWithRetry: unexpected code path");
-  } finally {
-    // no-op: TLS state is managed by the user's environment, not this function
+    return response;
   }
+
+  // Unreachable, but satisfies TypeScript
+  throw new FetchError("fetchWithRetry: unexpected code path");
 }

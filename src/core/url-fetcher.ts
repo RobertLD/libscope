@@ -1,29 +1,18 @@
 import { promises as dns, lookup as dnsLookup } from "node:dns";
 import { promisify } from "node:util";
+import { Agent } from "undici";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const lookupAsync = promisify(dnsLookup);
-
-let tlsWarningLogged = false;
-
-/**
- * Log a one-time warning when `allowSelfSignedCerts` is enabled but the
- * user has not set `NODE_TLS_REJECT_UNAUTHORIZED=0` in their environment.
- * Setting the env var programmatically is a security anti-pattern flagged
- * by static analysis tools — the user must opt in at the process level.
- */
-function warnIfTlsBypassMissing(): void {
-  if (tlsWarningLogged) return;
-  if (process.env["NODE_TLS_REJECT_UNAUTHORIZED"] === "0") return;
-  tlsWarningLogged = true;
-  const log = getLogger();
-  log.warn(
-    "allowSelfSignedCerts is enabled but NODE_TLS_REJECT_UNAUTHORIZED is not set. " +
-      "Set NODE_TLS_REJECT_UNAUTHORIZED=0 in your environment to allow self-signed certificates.",
-  );
+/** Lazy singleton undici Agent that skips TLS certificate verification. */
+let _insecureAgent: Agent | undefined;
+function getInsecureAgent(): Agent {
+  _insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } });
+  return _insecureAgent;
 }
+
+const lookupAsync = promisify(dnsLookup);
 
 export interface FetchedDocument {
   title: string;
@@ -178,10 +167,11 @@ async function fetchWithRedirects(
   allowPrivateUrls: boolean,
   allowSelfSignedCerts: boolean,
 ): Promise<Response> {
-  if (allowSelfSignedCerts) {
-    warnIfTlsBypassMissing();
-  }
-  return _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls);
+  // Pass a per-request undici Agent when self-signed certs are allowed.
+  // This is scoped to this specific request chain and does not affect other
+  // concurrent requests (unlike mutating process.env["NODE_TLS_REJECT_UNAUTHORIZED"]).
+  const dispatcher = allowSelfSignedCerts ? getInsecureAgent() : undefined;
+  return _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls, dispatcher);
 }
 
 async function _fetchWithRedirects(
@@ -189,6 +179,7 @@ async function _fetchWithRedirects(
   timeout: number,
   maxRedirects: number,
   allowPrivateUrls: boolean,
+  dispatcher: Agent | undefined,
 ): Promise<Response> {
   let current = url;
   for (let i = 0; i < maxRedirects; i++) {
@@ -205,7 +196,8 @@ async function _fetchWithRedirects(
       },
       signal: AbortSignal.timeout(timeout),
       redirect: "manual",
-    });
+      ...(dispatcher ? { dispatcher: dispatcher as unknown } : {}),
+    } as RequestInit);
 
     // Re-validate the connected IP hasn't changed (DNS rebinding defense)
     // Re-resolve and confirm it still matches the pinned set
@@ -244,6 +236,57 @@ async function _fetchWithRedirects(
   }
 
   throw new FetchError(`Too many redirects (max ${maxRedirects})`);
+}
+
+/** Result of a raw fetch — HTML/text body before any conversion, plus resolved final URL. */
+export interface FetchedRaw {
+  body: string;
+  contentType: string;
+  finalUrl: string;
+}
+
+/**
+ * Fetch a URL and return the raw body without converting to markdown.
+ * Useful for callers (e.g. the spider) that need access to raw HTML for link extraction.
+ * Applies all the same SSRF protection, redirect following, and body-size limits as fetchAndConvert.
+ */
+export async function fetchRaw(url: string, options?: FetchOptions): Promise<FetchedRaw> {
+  const log = getLogger();
+  log.debug({ url }, "Fetching raw URL");
+
+  const { timeout, maxRedirects, maxBodySize, allowPrivateUrls, allowSelfSignedCerts } = {
+    ...DEFAULT_FETCH_OPTIONS,
+    ...options,
+  };
+
+  try {
+    await validateUrl(url, allowPrivateUrls);
+
+    const response = await fetchWithRedirects(
+      url,
+      timeout,
+      maxRedirects,
+      allowPrivateUrls,
+      allowSelfSignedCerts,
+    );
+
+    if (!response.ok) {
+      throw new FetchError(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const body = await readBodyWithLimit(response, maxBodySize);
+    // Derive final URL from redirect chain (fetchWithRedirects resolves relative locations)
+    const finalUrl = response.url ?? url;
+
+    return { body, contentType, finalUrl };
+  } catch (err) {
+    if (err instanceof FetchError) throw err;
+    throw new FetchError(
+      `Failed to fetch URL: ${url} — ${err instanceof Error ? err.message : String(err)}`,
+      err,
+    );
+  }
 }
 
 /**

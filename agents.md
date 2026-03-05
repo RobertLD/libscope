@@ -35,14 +35,32 @@ LibScope is an **AI-powered knowledge base with MCP (Model Context Protocol) int
 src/
 ├── cli/index.ts          # CLI entry point (commander). All commands in one file.
 ├── mcp/server.ts         # MCP server (stdio transport, @modelcontextprotocol/sdk)
+├── api/
+│   ├── server.ts          #   HTTP server bootstrap (createServer, listen)
+│   ├── routes.ts          #   All REST route handlers in one function (~700 lines)
+│   ├── middleware.ts       #   Auth (checkApiKey), rate limiting, body parsing, sendError/sendJson
+│   └── openapi.ts         #   OpenAPI spec generation
 ├── core/                 # Business logic — framework-agnostic, no side effects
 │   ├── indexing.ts        #   Document parsing, chunking by heading, embedding + storage
 │   ├── search.ts          #   Semantic (vector) + FTS5 + LIKE fallback search
 │   ├── ratings.ts         #   Rating storage, aggregation, correction suggestions
 │   ├── documents.ts       #   Document CRUD
 │   ├── topics.ts          #   Topic hierarchy management
-│   ├── url-fetcher.ts     #   Fetch URL → convert HTML to markdown-like text
+│   ├── bulk.ts            #   Bulk delete/move/retag operations with selector resolution
+│   ├── tags.ts            #   Tag CRUD and document–tag associations
+│   ├── dedup.ts           #   Content deduplication helpers
+│   ├── rag.ts             #   Retrieval-augmented generation (ask a question over the index)
+│   ├── url-fetcher.ts     #   Fetch URL → convert HTML to markdown-like text (SSRF-protected)
 │   └── index.ts           #   Public re-exports (barrel file)
+├── connectors/           # External-service sync connectors
+│   ├── obsidian.ts        #   Obsidian vault sync (reads .md files + YAML frontmatter)
+│   ├── confluence.ts      #   Confluence Cloud sync (REST API)
+│   ├── notion.ts          #   Notion sync (official API)
+│   ├── onenote.ts         #   OneNote sync (Microsoft Graph API)
+│   ├── slack.ts           #   Slack channel sync (Web API)
+│   ├── sync-tracker.ts    #   Tracks last-synced state per connector in SQLite
+│   ├── http-utils.ts      #   Authenticated fetch helper shared by connectors (respects allowSelfSignedCerts)
+│   └── index.ts           #   Re-exports
 ├── db/
 │   ├── connection.ts      #   SQLite connection + sqlite-vec extension loading
 │   ├── schema.ts          #   Migrations (versioned) + vector table creation
@@ -145,6 +163,64 @@ The factory in `src/providers/index.ts` selects the provider based on config. De
 Environment variables > project `.libscope.json` > user `~/.libscope/config.json` > hardcoded defaults.
 
 Env vars: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_OPENAI_API_KEY`, `LIBSCOPE_OLLAMA_URL`, `LIBSCOPE_ALLOW_PRIVATE_URLS`, `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS`.
+
+## Security Patterns
+
+### Authentication — use constant-time comparison
+
+The API key check in `src/api/middleware.ts` must use `crypto.timingSafeEqual` to prevent timing attacks. Direct string equality (`===` / `!==`) short-circuits on the first differing byte, leaking information about the key length and value.
+
+```typescript
+import { timingSafeEqual } from "node:crypto";
+
+// ✅ Correct
+const tokenBuf = Buffer.from(token);
+const keyBuf = Buffer.from(apiKey);
+if (tokenBuf.length !== keyBuf.length || !timingSafeEqual(tokenBuf, keyBuf)) {
+  return sendError(res, 401, "UNAUTHORIZED", "Invalid API key");
+}
+
+// ❌ Wrong — timing-attack vulnerable
+if (token !== apiKey) { ... }
+```
+
+### TLS — use per-request undici Agent, not process-wide env var
+
+When self-signed certificates must be accepted (controlled by `config.indexing.allowSelfSignedCerts`), configure TLS per-request via an `undici.Agent` passed as `dispatcher`. Do **not** mutate `process.env["NODE_TLS_REJECT_UNAUTHORIZED"]` — it is process-global and creates a race condition with concurrent requests.
+
+```typescript
+import { Agent } from "undici";
+
+// ✅ Correct — scoped to this request chain only
+let _insecureAgent: Agent | undefined;
+const getInsecureAgent = (): Agent =>
+  (_insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } }));
+
+const response = await fetch(url, {
+  // @ts-expect-error — Node.js undici-based fetch accepts dispatcher for per-request TLS config
+  dispatcher: allowSelfSigned ? getInsecureAgent() : undefined,
+});
+
+// ❌ Wrong — affects all concurrent requests until restored
+process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
+```
+
+### SSE streaming — check backpressure
+
+`res.write()` returns `false` when the socket buffer is full or the client has disconnected. Ignoring the return value wastes compute and holds open connections indefinitely.
+
+```typescript
+// ✅ Correct
+for await (const event of stream) {
+  const ok = res.write(`data: ${JSON.stringify(event)}\n\n`);
+  if (!ok) break;
+}
+
+// ❌ Wrong — no backpressure handling
+for await (const event of stream) {
+  res.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+```
 
 ## Testing
 
