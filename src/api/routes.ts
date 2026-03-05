@@ -52,6 +52,8 @@ import {
 } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
+import { spiderUrl } from "../core/spider.js";
+import type { SpiderOptions } from "../core/spider.js";
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
@@ -332,7 +334,7 @@ export async function handleRequest(
       return;
     }
 
-    // Index from URL
+    // Index from URL (with optional spidering)
     if (pathname === "/api/v1/documents/url" && method === "POST") {
       const body = await parseJsonBody(req);
       if (!body || typeof body !== "object") {
@@ -344,16 +346,88 @@ export async function handleRequest(
         sendError(res, 400, "VALIDATION_ERROR", "Field 'url' is required");
         return;
       }
-      const fetched = await fetchAndConvert(b["url"], {
-        allowPrivateUrls: loadConfig().indexing.allowPrivateUrls,
-        allowSelfSignedCerts: loadConfig().indexing.allowSelfSignedCerts,
-      });
+      const url = b["url"];
       const topicId = typeof b["topic"] === "string" ? b["topic"] : undefined;
+      const config = loadConfig();
+      const fetchOptions = {
+        allowPrivateUrls: config.indexing.allowPrivateUrls,
+        allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
+      };
+
+      // Spider mode — crawl linked pages
+      if (b["spider"] === true) {
+        const spiderOptions: SpiderOptions = {
+          fetchOptions,
+          ...(typeof b["maxPages"] === "number" && { maxPages: b["maxPages"] }),
+          ...(typeof b["maxDepth"] === "number" && { maxDepth: b["maxDepth"] }),
+          ...(typeof b["sameDomain"] === "boolean" && { sameDomain: b["sameDomain"] }),
+          ...(typeof b["pathPrefix"] === "string" && { pathPrefix: b["pathPrefix"] }),
+          ...(Array.isArray(b["excludePatterns"]) && {
+            excludePatterns: (b["excludePatterns"] as unknown[]).filter(
+              (p): p is string => typeof p === "string",
+            ),
+          }),
+        };
+
+        const indexedDocs: Array<{ id: string; title: string; url: string }> = [];
+        const errors: Array<{ url: string; error: string }> = [];
+        let stats = { pagesIndexed: 0, pagesCrawled: 0, pagesSkipped: 0, errors: errors, abortReason: undefined as string | undefined };
+
+        try {
+          const gen = spiderUrl(url, spiderOptions);
+          let result = await gen.next();
+          while (!result.done) {
+            const page = result.value as import("../core/spider.js").SpiderResult;
+            try {
+              const doc = await indexDocument(db, provider, {
+                content: page.content,
+                title: page.title,
+                sourceType: "manual",
+                url: page.url,
+                topicId,
+              });
+              indexedDocs.push({ id: doc.id, title: page.title, url: page.url });
+            } catch (indexErr) {
+              const msg = indexErr instanceof Error ? indexErr.message : String(indexErr);
+              errors.push({ url: page.url, error: msg });
+            }
+            result = await gen.next();
+          }
+          // result.value is SpiderStats when done
+          if (result.value && typeof result.value === "object") {
+            stats = result.value as typeof stats;
+            stats.errors = errors;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(res, 502, "FETCH_ERROR", msg);
+          return;
+        }
+
+        const took = Math.round(performance.now() - start);
+        sendJson(
+          res,
+          201,
+          {
+            documents: indexedDocs,
+            pagesIndexed: indexedDocs.length,
+            pagesCrawled: stats.pagesCrawled,
+            pagesSkipped: stats.pagesSkipped,
+            errors,
+            abortReason: stats.abortReason ?? null,
+          },
+          took,
+        );
+        return;
+      }
+
+      // Single-URL mode (default)
+      const fetched = await fetchAndConvert(url, fetchOptions);
       const doc = await indexDocument(db, provider, {
         content: fetched.content,
         title: fetched.title,
         sourceType: "manual",
-        url: b["url"],
+        url,
         topicId,
       });
       const took = Math.round(performance.now() - start);
