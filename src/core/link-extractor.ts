@@ -26,7 +26,14 @@ export function extractLinks(html: string, baseUrl: string): string[] {
 
     // Make sure it's really an <a> tag (next char must be space, >, or /)
     const charAfterA = lower[tagStart + 2];
-    if (charAfterA !== " " && charAfterA !== "\t" && charAfterA !== "\n" && charAfterA !== "\r" && charAfterA !== ">" && charAfterA !== "/") {
+    if (
+      charAfterA !== " " &&
+      charAfterA !== "\t" &&
+      charAfterA !== "\n" &&
+      charAfterA !== "\r" &&
+      charAfterA !== ">" &&
+      charAfterA !== "/"
+    ) {
       pos = tagStart + 2;
       continue;
     }
@@ -97,7 +104,13 @@ function extractHref(tag: string): string | null {
     } else {
       // Unquoted attribute value — ends at whitespace or >
       let end = valStart;
-      while (end < tag.length && tag[end] !== " " && tag[end] !== "\t" && tag[end] !== ">" && tag[end] !== "\n") {
+      while (
+        end < tag.length &&
+        tag[end] !== " " &&
+        tag[end] !== "\t" &&
+        tag[end] !== ">" &&
+        tag[end] !== "\n"
+      ) {
         end++;
       }
       href = tag.slice(valStart, end);

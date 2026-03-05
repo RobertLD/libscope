@@ -329,9 +329,7 @@ async function main(): Promise<void> {
       spider: z
         .boolean()
         .optional()
-        .describe(
-          "When true, crawl pages linked from the URL. Requires 'url'. Default: false.",
-        ),
+        .describe("When true, crawl pages linked from the URL. Requires 'url'. Default: false."),
       maxPages: z
         .number()
         .int()
@@ -343,7 +341,9 @@ async function main(): Promise<void> {
         .int()
         .min(0)
         .optional()
-        .describe("Maximum link-hop depth from the seed URL (default: 2, hard cap: 5). 0 = seed only."),
+        .describe(
+          "Maximum link-hop depth from the seed URL (default: 2, hard cap: 5). 0 = seed only.",
+        ),
       sameDomain: z
         .boolean()
         .optional()
@@ -375,7 +375,8 @@ async function main(): Promise<void> {
         if (params.maxDepth !== undefined) spiderOptions.maxDepth = params.maxDepth;
         if (params.sameDomain !== undefined) spiderOptions.sameDomain = params.sameDomain;
         if (params.pathPrefix !== undefined) spiderOptions.pathPrefix = params.pathPrefix;
-        if (params.excludePatterns !== undefined) spiderOptions.excludePatterns = params.excludePatterns;
+        if (params.excludePatterns !== undefined)
+          spiderOptions.excludePatterns = params.excludePatterns;
 
         const indexed: Array<{ id: string; title: string }> = [];
         const errors: Array<{ url: string; error: string }> = [];

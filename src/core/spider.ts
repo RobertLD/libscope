@@ -40,7 +40,10 @@ export interface SpiderOptions {
   /** Milliseconds to wait between requests (default: 1000). */
   requestDelay?: number;
   /** Passed through to fetchRaw for each page request. */
-  fetchOptions?: Pick<FetchOptions, "allowPrivateUrls" | "allowSelfSignedCerts" | "timeout" | "maxBodySize">;
+  fetchOptions?: Pick<
+    FetchOptions,
+    "allowPrivateUrls" | "allowSelfSignedCerts" | "timeout" | "maxBodySize"
+  >;
 }
 
 export interface SpiderResult {
@@ -115,9 +118,7 @@ function parseRobotsTxt(text: string): Set<string> {
   // Prefer explicit "libscope" group over the wildcard group
   const libscopeGroups = groups.filter((g) => g.agents.includes("libscope"));
   const selected =
-    libscopeGroups.length > 0
-      ? libscopeGroups
-      : groups.filter((g) => g.agents.includes("*"));
+    libscopeGroups.length > 0 ? libscopeGroups : groups.filter((g) => g.agents.includes("*"));
 
   const disallowed = new Set<string>();
   for (const group of selected) {
@@ -368,7 +369,10 @@ export async function* spiderUrl(
       if (!robotsCache.has(urlOrigin)) {
         const rules = await fetchRobotsTxt(urlOrigin, fetchOptions);
         robotsCache.set(urlOrigin, rules);
-        log.debug({ origin: urlOrigin, rules: rules.size }, "Loaded robots.txt rules for new origin");
+        log.debug(
+          { origin: urlOrigin, rules: rules.size },
+          "Loaded robots.txt rules for new origin",
+        );
       }
       if (isDisallowedByRobots(url, robotsCache.get(urlOrigin)!)) {
         log.debug({ url }, "Spider: skipping URL disallowed by robots.txt");
@@ -412,7 +416,9 @@ export async function* spiderUrl(
     // Convert to markdown
     const isHtml = raw.contentType.includes("text/html");
     const content = isHtml ? htmlToMarkdown(raw.body) : raw.body;
-    const title = isHtml ? extractTitle(raw.body, canonicalUrl) : extractTextTitle(raw.body, canonicalUrl);
+    const title = isHtml
+      ? extractTitle(raw.body, canonicalUrl)
+      : extractTextTitle(raw.body, canonicalUrl);
 
     stats.pagesFetched++;
     yield { url: canonicalUrl, title, content, depth };

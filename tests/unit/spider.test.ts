@@ -85,9 +85,7 @@ describe("spiderUrl", () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
       if (url === "https://example.com/") {
-        return Promise.resolve(
-          pageResponse(htmlPage("Root", ["https://example.com/child"]), url),
-        );
+        return Promise.resolve(pageResponse(htmlPage("Root", ["https://example.com/child"]), url));
       }
       if (url === "https://example.com/child") {
         return Promise.resolve(
@@ -114,9 +112,7 @@ describe("spiderUrl", () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
       if (url === "https://example.com/") {
-        return Promise.resolve(
-          pageResponse(htmlPage("Root", ["https://example.com/child"]), url),
-        );
+        return Promise.resolve(pageResponse(htmlPage("Root", ["https://example.com/child"]), url));
       }
       if (url === "https://example.com/child") {
         return Promise.resolve(
@@ -201,9 +197,7 @@ describe("spiderUrl", () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
       if (url === "https://example.com/") {
-        return Promise.resolve(
-          pageResponse(htmlPage("Root", ["https://other.com/page"]), url),
-        );
+        return Promise.resolve(pageResponse(htmlPage("Root", ["https://other.com/page"]), url));
       }
       return Promise.resolve(pageResponse(htmlPage("Other", []), url));
     });
@@ -244,10 +238,7 @@ describe("spiderUrl", () => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
       return Promise.resolve(
         pageResponse(
-          htmlPage("Docs", [
-            "https://example.com/docs/guide",
-            "https://example.com/blog/post",
-          ]),
+          htmlPage("Docs", ["https://example.com/docs/guide", "https://example.com/blog/post"]),
           url,
         ),
       );
@@ -334,10 +325,7 @@ describe("spiderUrl", () => {
         });
       }
       return Promise.resolve(
-        pageResponse(
-          htmlPage("Root", ["https://example.com/restricted/data"]),
-          url,
-        ),
+        pageResponse(htmlPage("Root", ["https://example.com/restricted/data"]), url),
       );
     });
 
@@ -353,10 +341,7 @@ describe("spiderUrl", () => {
       if (url === "https://example.com/") {
         return Promise.resolve(
           pageResponse(
-            htmlPage("Root", [
-              "https://example.com/good",
-              "https://example.com/bad",
-            ]),
+            htmlPage("Root", ["https://example.com/good", "https://example.com/bad"]),
             url,
           ),
         );
@@ -382,9 +367,7 @@ describe("spiderUrl", () => {
   it("returns SpiderStats from the generator return value", async () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
-      return Promise.resolve(
-        pageResponse(htmlPage("Page", ["https://example.com/child"]), url),
-      );
+      return Promise.resolve(pageResponse(htmlPage("Page", ["https://example.com/child"]), url));
     });
 
     const gen = spiderUrl("https://example.com/", { maxPages: 5, maxDepth: 1, requestDelay: 0 });
@@ -434,9 +417,7 @@ describe("spiderUrl", () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
       if (url === "https://example.com/") {
-        return Promise.resolve(
-          pageResponse(htmlPage("Seed", ["https://example.com/child"]), url),
-        );
+        return Promise.resolve(pageResponse(htmlPage("Seed", ["https://example.com/child"]), url));
       }
       return Promise.reject(new Error("should not fetch children at depth 0"));
     });
@@ -455,16 +436,11 @@ describe("spiderUrl", () => {
       fetchOrder.push(url);
       if (url === "https://example.com/") {
         return Promise.resolve(
-          pageResponse(
-            htmlPage("Root", ["https://example.com/a", "https://example.com/b"]),
-            url,
-          ),
+          pageResponse(htmlPage("Root", ["https://example.com/a", "https://example.com/b"]), url),
         );
       }
       if (url === "https://example.com/a") {
-        return Promise.resolve(
-          pageResponse(htmlPage("A", ["https://example.com/a1"]), url),
-        );
+        return Promise.resolve(pageResponse(htmlPage("A", ["https://example.com/a1"]), url));
       }
       if (url === "https://example.com/b") {
         return Promise.resolve(pageResponse(htmlPage("B", []), url));

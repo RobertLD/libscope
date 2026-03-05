@@ -135,10 +135,18 @@ export const OPENAPI_SPEC = {
             "application/json": {
               schema: { $ref: "#/components/schemas/IndexFromUrlRequest" },
               examples: {
-                single: { summary: "Single URL", value: { url: "https://example.com/page", topic: "guides" } },
+                single: {
+                  summary: "Single URL",
+                  value: { url: "https://example.com/page", topic: "guides" },
+                },
                 spider: {
                   summary: "Spider mode",
-                  value: { url: "https://docs.example.com", spider: true, maxPages: 50, maxDepth: 2 },
+                  value: {
+                    url: "https://docs.example.com",
+                    spider: true,
+                    maxPages: 50,
+                    maxDepth: 2,
+                  },
                 },
               },
             },
@@ -146,7 +154,8 @@ export const OPENAPI_SPEC = {
         },
         responses: {
           "201": {
-            description: "Document(s) indexed. Returns DocumentResponse for single-URL mode, SpiderResponse for spider mode.",
+            description:
+              "Document(s) indexed. Returns DocumentResponse for single-URL mode, SpiderResponse for spider mode.",
             content: {
               "application/json": {
                 schema: {
@@ -363,12 +372,14 @@ export const OPENAPI_SPEC = {
           maxPages: {
             type: "integer",
             minimum: 1,
-            description: "Maximum total pages to fetch in spider mode (default: 25, hard cap: 200).",
+            description:
+              "Maximum total pages to fetch in spider mode (default: 25, hard cap: 200).",
           },
           maxDepth: {
             type: "integer",
             minimum: 0,
-            description: "Maximum hop depth from the seed URL in spider mode (default: 2, hard cap: 5).",
+            description:
+              "Maximum hop depth from the seed URL in spider mode (default: 2, hard cap: 5).",
           },
           sameDomain: {
             type: "boolean",
