@@ -240,6 +240,15 @@ Content of section C wraps up the document.`;
     expect(chunks.length).toBeGreaterThanOrEqual(3);
     // First chunk should not have overlap prefix
     expect(chunks[0]).toContain("Section A");
+
+    // Verify overlap: chunk[1] should begin with text from the end of chunk[0]
+    const noOverlapChunks = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0 });
+    // With overlap enabled, chunk[1] should be longer than the no-overlap version
+    // because it includes a prefix from the previous chunk
+    expect(chunks[1]!.length).toBeGreaterThan(noOverlapChunks[1]!.length);
+    // The overlap text should come from the end of the first chunk's content
+    const overlapPrefix = chunks[1]!.split("\n\n")[0]!;
+    expect(chunks[0]).toContain(overlapPrefix);
   });
 
   it("should produce no overlap when overlapFraction is 0", () => {
