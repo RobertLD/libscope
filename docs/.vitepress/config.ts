@@ -1,4 +1,8 @@
 import { defineConfig } from "vitepress";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../../package.json");
 
 export default defineConfig({
   title: "LibScope",
@@ -23,7 +27,7 @@ export default defineConfig({
       { text: "Guide", link: "/guide/getting-started" },
       { text: "Reference", link: "/reference/cli" },
       {
-        text: "v1.1.0",
+        text: `v${version}`,
         items: [
           {
             text: "Changelog",
@@ -83,7 +87,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: "Released under the MIT License.",
+      message: "Released under the Business Source License 1.1.",
       copyright: "Copyright © 2026 RobertLD",
     },
   },
