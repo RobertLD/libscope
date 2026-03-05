@@ -16,6 +16,7 @@ import Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../../src/providers/embedding.js";
 import { chunkContent } from "../../src/core/indexing.js";
 import { searchDocuments } from "../../src/core/search.js";
+import { createRequire } from "node:module";
 import { runMigrations, createVectorTable } from "../../src/db/schema.js";
 
 const TIMEOUT = 60_000;
@@ -180,7 +181,7 @@ const QUERIES: Array<{ query: string; expectedTopId: string; label: string }> = 
 // Helper: load sqlite-vec
 // ---------------------------------------------------------------------------
 function loadVec(db: Database.Database): void {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const require = createRequire(import.meta.url);
   const sqliteVec = require("sqlite-vec") as { load: (db: Database.Database) => void };
   sqliteVec.load(db);
 }
