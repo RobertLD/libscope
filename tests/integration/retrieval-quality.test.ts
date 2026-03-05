@@ -178,8 +178,22 @@ const QUERIES: Array<{ query: string; expectedTopId: string; label: string }> = 
 ];
 
 // ---------------------------------------------------------------------------
-// Helper: load sqlite-vec
+// Helper: load sqlite-vec (returns false when the extension isn't available)
 // ---------------------------------------------------------------------------
+let vecAvailable: boolean | undefined;
+
+function isVecAvailable(): boolean {
+  if (vecAvailable !== undefined) return vecAvailable;
+  try {
+    const require = createRequire(import.meta.url);
+    require.resolve("sqlite-vec");
+    vecAvailable = true;
+  } catch {
+    vecAvailable = false;
+  }
+  return vecAvailable;
+}
+
 function loadVec(db: Database.Database): void {
   const require = createRequire(import.meta.url);
   const sqliteVec = require("sqlite-vec") as { load: (db: Database.Database) => void };
@@ -225,7 +239,7 @@ async function indexCorpus(db: Database.Database, provider: EmbeddingProvider): 
 // =========================================================================
 // Test suite with TF-IDF provider (always runs, no network needed)
 // =========================================================================
-describe("retrieval quality: TF-IDF embeddings + sqlite-vec", () => {
+describe.runIf(isVecAvailable())("retrieval quality: TF-IDF embeddings + sqlite-vec", () => {
   let db: Database.Database;
   let provider: TfIdfEmbeddingProvider;
 
