@@ -703,9 +703,9 @@ function fts5Search(
 
   sql = appendFilters(sql, params, options, "d");
 
-  // Lazy count
-  const baseSql = sql;
-  const baseParams = [...params];
+  // Lazy count – may be updated if OR fallback is used
+  let baseSql = sql;
+  let baseParams = [...params];
 
   sql += " ORDER BY rank LIMIT ? OFFSET ?";
   params.push(limit);
@@ -752,6 +752,11 @@ function fts5Search(
       WHERE chunks_fts MATCH ?
     `;
     orSql = appendFilters(orSql, orParams, options, "d");
+
+    // Update count base to use OR query
+    baseSql = orSql;
+    baseParams = [...orParams];
+
     orSql += " ORDER BY rank LIMIT ? OFFSET ?";
     orParams.push(limit);
     orParams.push(offset);
