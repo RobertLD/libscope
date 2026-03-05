@@ -79,10 +79,19 @@ function recordFailure(
 }
 
 function rowToWebhook(row: WebhookRow): Webhook {
+  let events: WebhookEvent[] = [];
+  try {
+    events = JSON.parse(row.events) as WebhookEvent[];
+  } catch {
+    getLogger().warn(
+      { webhookId: row.id },
+      "Failed to parse webhook events JSON; defaulting to []",
+    );
+  }
   return {
     id: row.id,
     url: row.url,
-    events: JSON.parse(row.events) as WebhookEvent[],
+    events,
     secret: row.secret,
     active: row.active === 1,
     createdAt: row.created_at,

@@ -372,4 +372,21 @@ describe("webhooks", () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
   });
+
+  describe("rowToWebhook corrupted JSON", () => {
+    it("should default to empty events array when events JSON is corrupted", () => {
+      // Directly insert a row with invalid JSON in the events column
+      db.prepare("INSERT INTO webhooks (id, url, events, secret) VALUES (?, ?, ?, ?)").run(
+        "corrupt-1",
+        "https://example.com/hook",
+        "not valid json{{{",
+        null,
+      );
+
+      const hooks = listWebhooks(db);
+      const corrupt = hooks.find((h) => h.id === "corrupt-1");
+      expect(corrupt).toBeDefined();
+      expect(corrupt!.events).toEqual([]);
+    });
+  });
 });
