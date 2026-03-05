@@ -30,26 +30,57 @@ export interface IndexedDocument {
   chunkCount: number;
 }
 
+export interface ChunkOptions {
+  /** Maximum characters per chunk (default 1500). */
+  maxChunkSize?: number;
+  /** Fraction of the chunk to overlap with the next (0–0.5, default 0.1). */
+  overlapFraction?: number;
+}
+
 /**
- * Split content into chunks by markdown headings.
- * Falls back to paragraph-based splitting for non-markdown content.
+ * Split content into chunks by markdown headings with paragraph-aware
+ * splitting for oversized sections and configurable inter-chunk overlap.
+ * Breadcrumbs use plain text ("Context: …") instead of HTML comments
+ * so the text is meaningful to embedding models.
  */
-export function chunkContent(content: string, maxChunkSize: number = 1500): string[] {
+export function chunkContent(
+  content: string,
+  maxChunkSizeOrOpts: number | ChunkOptions = 1500,
+): string[] {
+  const opts: ChunkOptions =
+    typeof maxChunkSizeOrOpts === "number"
+      ? { maxChunkSize: maxChunkSizeOrOpts }
+      : maxChunkSizeOrOpts;
+  const maxChunkSize = opts.maxChunkSize ?? 1500;
+  const overlapFraction = Math.max(0, Math.min(opts.overlapFraction ?? 0.1, 0.5));
+
   const lines = content.split("\n");
-  const chunks: string[] = [];
+  const rawChunks: string[] = [];
   let currentChunk: string[] = [];
   let currentChunkLen = 0; // Running byte length to avoid O(n²) join-per-line
   const headingStack: Array<{ level: number; text: string }> = [];
+
+  /** Flush currentChunk into rawChunks, splitting at paragraph boundaries if oversized. */
+  const flushChunk = (): void => {
+    const text = currentChunk.join("\n").trim();
+    if (text.length === 0) return;
+
+    if (text.length <= maxChunkSize) {
+      rawChunks.push(text);
+    } else {
+      // Paragraph-boundary splitting for oversized chunks
+      splitAtParagraphs(text, maxChunkSize, rawChunks);
+    }
+    currentChunk = [];
+    currentChunkLen = 0;
+  };
 
   for (const line of lines) {
     const headingMatch = /^(#{1,3}) +(\S.*)$/.exec(line);
 
     // Split on markdown headings (## or higher)
     if (headingMatch && currentChunk.length > 0) {
-      const text = currentChunk.join("\n").trim();
-      if (text.length > 0) {
-        chunks.push(text);
-      }
+      flushChunk();
 
       // Update heading stack
       const level = (headingMatch[1] ?? "").length;
@@ -61,12 +92,12 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
         headingStack.pop();
       }
 
-      // Build breadcrumb from parent headings
+      // Build breadcrumb from parent headings — plain text for embedding quality
       const breadcrumb = headingStack.map((h) => h.text).join(" > ");
       headingStack.push({ level, text: (headingMatch[2] ?? "").trim() });
 
       if (breadcrumb) {
-        const ctx = `<!-- context: ${breadcrumb} -->`;
+        const ctx = `Context: ${breadcrumb}`;
         currentChunk = [ctx, line];
         currentChunkLen = ctx.length + 1 + line.length;
       } else {
@@ -85,22 +116,84 @@ export function chunkContent(content: string, maxChunkSize: number = 1500): stri
 
     // Also split if chunk gets too large (use running counter instead of join)
     if (currentChunkLen > maxChunkSize) {
-      const text = currentChunk.join("\n").trim();
-      if (text.length > 0) {
-        chunks.push(text);
-      }
-      currentChunk = [];
-      currentChunkLen = 0;
+      flushChunk();
     }
   }
 
   // Don't forget the last chunk
-  const remaining = currentChunk.join("\n").trim();
-  if (remaining.length > 0) {
-    chunks.push(remaining);
+  flushChunk();
+
+  // Apply inter-chunk overlap
+  if (overlapFraction > 0 && rawChunks.length > 1) {
+    return addChunkOverlap(rawChunks, overlapFraction);
   }
 
-  return chunks;
+  return rawChunks;
+}
+
+/**
+ * Split oversized text at paragraph boundaries (double-newline).
+ * Falls back to single-newline boundaries, then hard character split.
+ */
+function splitAtParagraphs(text: string, maxSize: number, out: string[]): void {
+  // Try splitting on double newlines (paragraph boundaries) first
+  const paragraphs = text.split(/\n\n+/);
+  let buffer = "";
+
+  for (const para of paragraphs) {
+    const candidate = buffer.length === 0 ? para : buffer + "\n\n" + para;
+    if (candidate.length > maxSize && buffer.length > 0) {
+      out.push(buffer.trim());
+      buffer = para;
+    } else {
+      buffer = candidate;
+    }
+  }
+
+  if (buffer.trim().length > 0) {
+    // If still oversized, do a hard split at maxSize
+    const remaining = buffer.trim();
+    if (remaining.length <= maxSize) {
+      out.push(remaining);
+    } else {
+      for (let i = 0; i < remaining.length; i += maxSize) {
+        const slice = remaining.slice(i, i + maxSize).trim();
+        if (slice.length > 0) out.push(slice);
+      }
+    }
+  }
+}
+
+/**
+ * Add overlap between consecutive chunks by appending trailing text from
+ * the previous chunk to the beginning of the next chunk.
+ */
+function addChunkOverlap(chunks: string[], fraction: number): string[] {
+  const result: string[] = [chunks[0]!];
+
+  for (let i = 1; i < chunks.length; i++) {
+    const prev = chunks[i - 1]!;
+    const overlapChars = Math.floor(prev.length * fraction);
+
+    if (overlapChars > 0) {
+      // Take trailing portion of previous chunk, preferring line boundaries
+      let overlapText = prev.slice(-overlapChars);
+      const newlineIdx = overlapText.indexOf("\n");
+      if (newlineIdx > 0) {
+        overlapText = overlapText.slice(newlineIdx + 1);
+      }
+      overlapText = overlapText.trim();
+      if (overlapText.length > 0) {
+        result.push(overlapText + "\n\n" + chunks[i]!);
+      } else {
+        result.push(chunks[i]!);
+      }
+    } else {
+      result.push(chunks[i]!);
+    }
+  }
+
+  return result;
 }
 
 /** Size threshold above which streaming chunking is used (1MB). */
@@ -161,7 +254,8 @@ export function chunkContentStreaming(
     const window = text.slice(offset, windowEnd);
 
     // Chunk this window using the existing logic
-    const windowChunks = chunkContent(window, maxChunkSize);
+    // Disable overlap inside chunkContent — streaming already handles overlap at the window level
+    const windowChunks = chunkContent(window, { maxChunkSize, overlapFraction: 0 });
     for (const chunk of windowChunks) {
       const normalized = chunk.replace(/\s+/g, " ").trim();
       const hash = createHash("sha256").update(normalized).digest("hex");
@@ -282,8 +376,19 @@ export async function indexDocument(
     "Indexing document",
   );
 
-  // Generate embeddings for all chunks
-  const embeddings = await provider.embedBatch(chunks);
+  // Prepend document metadata to each chunk for richer embeddings.
+  // The stored chunk content stays clean; only the text sent to the embedding
+  // model gets the prefix so that semantic search can leverage title/library/version.
+  const metaParts: string[] = [];
+  if (input.title) metaParts.push(input.title);
+  if (input.library) metaParts.push(`Library: ${input.library}`);
+  if (input.version) metaParts.push(`Version: ${input.version}`);
+  const metaPrefix = metaParts.length > 0 ? metaParts.join(" | ") + "\n\n" : "";
+
+  const textsForEmbedding = chunks.map((c) => metaPrefix + c);
+
+  // Generate embeddings for all chunks (with metadata-enriched text)
+  const embeddings = await provider.embedBatch(textsForEmbedding);
 
   // Store everything in a transaction
   const insertDoc = db.prepare(`

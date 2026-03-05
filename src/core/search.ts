@@ -66,7 +66,7 @@ export interface SearchResponse {
   totalCount: number;
 }
 
-export type SearchMethod = "vector" | "fts5" | "keyword";
+export type SearchMethod = "vector" | "fts5" | "keyword" | "hybrid";
 
 export interface ScoreExplanation {
   method: SearchMethod;
@@ -102,6 +102,95 @@ interface ChunkRow {
   id: string;
   content: string;
   chunk_index: number;
+}
+
+// ---------------------------------------------------------------------------
+// Title boost multiplier: chunks whose document title contains any query word
+// receive this multiplicative boost to their final score.
+// ---------------------------------------------------------------------------
+const TITLE_BOOST_MULTIPLIER = 1.5;
+
+/**
+ * Check whether any query word appears in the document title (case-insensitive).
+ */
+function titleMatchesQuery(title: string, query: string): boolean {
+  const words = query.split(/\s+/).filter((w) => w.length > 0);
+  const lowerTitle = title.toLowerCase();
+  return words.some((w) => lowerTitle.includes(w.toLowerCase()));
+}
+
+// ---------------------------------------------------------------------------
+// Reciprocal Rank Fusion (RRF)
+// ---------------------------------------------------------------------------
+/** Constant k for RRF scoring – standard value from the literature. */
+const RRF_K = 60;
+
+interface RankedItem {
+  result: SearchResult;
+  /** Ranks across contributing lists (1-indexed). */
+  ranks: number[];
+}
+
+/**
+ * Merge two ranked result lists via Reciprocal Rank Fusion.
+ * Returns results sorted by fused score in descending order.
+ */
+function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): SearchResult[] {
+  const map = new Map<string, RankedItem>();
+
+  for (let i = 0; i < listA.length; i++) {
+    const r = listA[i]!;
+    const key = r.chunkId;
+    const existing = map.get(key);
+    if (existing) {
+      existing.ranks.push(i + 1);
+    } else {
+      map.set(key, { result: r, ranks: [i + 1] });
+    }
+  }
+
+  for (let i = 0; i < listB.length; i++) {
+    const r = listB[i]!;
+    const key = r.chunkId;
+    const existing = map.get(key);
+    if (existing) {
+      existing.ranks.push(i + 1);
+      // Prefer result with richer explanation (vector > fts5 > keyword)
+      if (
+        r.scoreExplanation.method === "vector" &&
+        existing.result.scoreExplanation.method !== "vector"
+      ) {
+        existing.result = r;
+      }
+    } else {
+      map.set(key, { result: r, ranks: [i + 1] });
+    }
+  }
+
+  const fused: Array<{ result: SearchResult; score: number }> = [];
+  for (const item of map.values()) {
+    let rrfScore = 0;
+    for (const rank of item.ranks) {
+      rrfScore += 1.0 / (RRF_K + rank);
+    }
+    const boostFactors = [...item.result.scoreExplanation.boostFactors];
+    fused.push({
+      result: {
+        ...item.result,
+        score: rrfScore,
+        scoreExplanation: {
+          method: "hybrid" as SearchMethod,
+          rawScore: rrfScore,
+          boostFactors,
+          details: `Hybrid RRF: ranks=[${item.ranks.join(",")}], score=${rrfScore.toFixed(6)}`,
+        },
+      },
+      score: rrfScore,
+    });
+  }
+
+  fused.sort((a, b) => b.score - a.score);
+  return fused.map((f) => f.result);
 }
 
 /** Fetch neighboring chunks for a given chunk within its document. */
@@ -160,6 +249,106 @@ function attachContext(
   });
 }
 
+/** Apply title boost to search results whose document title matches the query. */
+function applyTitleBoost(results: SearchResult[], query: string): SearchResult[] {
+  return results.map((r) => {
+    if (titleMatchesQuery(r.title, query)) {
+      const boosted = r.score * TITLE_BOOST_MULTIPLIER;
+      return {
+        ...r,
+        score: boosted,
+        scoreExplanation: {
+          ...r.scoreExplanation,
+          boostFactors: [
+            ...r.scoreExplanation.boostFactors,
+            `title_match:x${TITLE_BOOST_MULTIPLIER}`,
+          ],
+          details: r.scoreExplanation.details + ` (title boost x${TITLE_BOOST_MULTIPLIER})`,
+        },
+      };
+    }
+    return r;
+  });
+}
+
+/** Deduplicate results by document, keeping at most N chunks per document. */
+function deduplicateByDocument(results: SearchResult[], maxPerDoc: number): SearchResult[] {
+  const countByDoc = new Map<string, number>();
+  return results.filter((r) => {
+    const count = countByDoc.get(r.documentId) ?? 0;
+    if (count >= maxPerDoc) return false;
+    countByDoc.set(r.documentId, count + 1);
+    return true;
+  });
+}
+
+/** Append standard filter clauses and params to a SQL query. */
+function appendFilters(
+  sql: string,
+  params: unknown[],
+  options: SearchOptions,
+  docAlias: string,
+): string {
+  if (options.library) {
+    sql += ` AND ${docAlias}.library = ?`;
+    params.push(options.library);
+  }
+  if (options.topic) {
+    sql += ` AND ${docAlias}.topic_id = ?`;
+    params.push(options.topic);
+  }
+  if (options.version) {
+    sql += ` AND ${docAlias}.version = ?`;
+    params.push(options.version);
+  }
+  if (options.minRating) {
+    sql += " AND avg_r.avg_rating >= ?";
+    params.push(options.minRating);
+  }
+  if (options.dateFrom) {
+    sql += ` AND ${docAlias}.created_at >= ?`;
+    params.push(options.dateFrom);
+  }
+  if (options.dateTo) {
+    sql += ` AND ${docAlias}.created_at <= ?`;
+    params.push(options.dateTo);
+  }
+  if (options.source) {
+    sql += ` AND ${docAlias}.source_type = ?`;
+    params.push(options.source);
+  }
+
+  const tagFilter = buildTagFilter(options.tags, docAlias);
+  sql += tagFilter.clause;
+  params.push(...tagFilter.params);
+
+  return sql;
+}
+
+/**
+ * Lazy totalCount: only run the expensive COUNT query when pagination is active
+ * (offset > 0 or the caller explicitly needs to know the total).
+ * Returns -1 when skipped so callers can distinguish.
+ */
+function lazyCount(
+  db: Database.Database,
+  baseSql: string,
+  baseParams: unknown[],
+  offset: number,
+  resultLen: number,
+  limit: number,
+  label: string,
+): number {
+  // If offset is 0 and we got fewer results than the limit, we know the total
+  if (offset === 0 && resultLen < limit) {
+    return resultLen;
+  }
+  return validateCountRow(
+    db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
+    label,
+  );
+}
+
 /** Perform semantic search across indexed documents. */
 export async function searchDocuments(
   db: Database.Database,
@@ -179,129 +368,49 @@ export async function searchDocuments(
   const queryEmbedding = await provider.embed(options.query);
   const vecBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
-  // Try vector search first
+  // Try hybrid search: vector + FTS5 merged via RRF
   try {
-    let sql = `
-      SELECT
-        candidates.chunk_id,
-        candidates.distance,
-        c.document_id,
-        c.content AS chunk_content,
-        d.title,
-        d.source_type,
-        d.library,
-        d.version,
-        d.topic_id,
-        d.url,
-        avg_r.avg_rating
-      FROM (
-        SELECT chunk_id, distance
-        FROM chunk_embeddings
-        WHERE embedding MATCH ?
-        ORDER BY distance
-        LIMIT ?
-      ) candidates
-      JOIN chunks c ON c.id = candidates.chunk_id
-      JOIN documents d ON d.id = c.document_id
-      LEFT JOIN (
-        SELECT document_id, AVG(rating) AS avg_rating
-        FROM ratings
-        GROUP BY document_id
-      ) avg_r ON avg_r.document_id = d.id
-      WHERE 1=1
-    `;
+    const vectorResults = vectorSearch(db, options, vecBuffer, limit, offset);
+    let ftsResults: SearchResult[] | null = null;
 
-    const params: unknown[] = [vecBuffer, limit * 3];
-
-    if (options.library) {
-      sql += " AND d.library = ?";
-      params.push(options.library);
-    }
-    if (options.topic) {
-      sql += " AND d.topic_id = ?";
-      params.push(options.topic);
-    }
-    if (options.version) {
-      sql += " AND d.version = ?";
-      params.push(options.version);
-    }
-    if (options.minRating) {
-      sql += " AND avg_r.avg_rating >= ?";
-      params.push(options.minRating);
-    }
-    if (options.dateFrom) {
-      sql += " AND d.created_at >= ?";
-      params.push(options.dateFrom);
-    }
-    if (options.dateTo) {
-      sql += " AND d.created_at <= ?";
-      params.push(options.dateTo);
-    }
-    if (options.source) {
-      sql += " AND d.source_type = ?";
-      params.push(options.source);
+    try {
+      const ftsResponse = fts5Search(db, options, limit, 0);
+      ftsResults = ftsResponse.results;
+    } catch {
+      // FTS5 not available — proceed with vector-only results
     }
 
-    const tagFilterVec = buildTagFilter(options.tags, "d");
-    sql += tagFilterVec.clause;
-    params.push(...tagFilterVec.params);
+    let mergedResults: SearchResult[];
+    let searchMethod: SearchMethod;
 
-    // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
-    const baseSql = sql;
-    const baseParams = [...params];
-    const totalCount = validateCountRow(
-      db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
-      "vector search count",
-    );
+    if (ftsResults && ftsResults.length > 0) {
+      // Hybrid: merge vector + FTS5 via RRF
+      mergedResults = reciprocalRankFusion(vectorResults.results, ftsResults);
+      searchMethod = "hybrid";
+    } else {
+      mergedResults = vectorResults.results;
+      searchMethod = "vector";
+    }
 
-    sql += ` ORDER BY candidates.distance LIMIT ? OFFSET ?`;
-    params.push(limit);
-    params.push(offset);
+    // Apply title boost
+    mergedResults = applyTitleBoost(mergedResults, options.query);
+    // Re-sort after boost
+    mergedResults.sort((a, b) => b.score - a.score);
 
-    const rows = db.prepare(sql).all(...params) as Array<{
-      chunk_id: string;
-      distance: number;
-      document_id: string;
-      chunk_content: string;
-      title: string;
-      source_type: string;
-      library: string | null;
-      version: string | null;
-      topic_id: string | null;
-      url: string | null;
-      avg_rating: number | null;
-    }>;
+    // Apply pagination to merged results
+    const paginatedResults = mergedResults.slice(offset, offset + limit);
+
+    const totalCount = mergedResults.length;
 
     const response: SearchResponse = {
       totalCount,
-      results: rows.map((row) => {
-        const similarity = 1 - row.distance;
-        return {
-          documentId: row.document_id,
-          chunkId: row.chunk_id,
-          title: row.title,
-          content: row.chunk_content,
-          sourceType: row.source_type,
-          library: row.library,
-          version: row.version,
-          topicId: row.topic_id,
-          url: row.url,
-          score: similarity,
-          avgRating: row.avg_rating,
-          scoreExplanation: {
-            method: "vector" as SearchMethod,
-            rawScore: row.distance,
-            boostFactors: [],
-            details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
-          },
-        };
-      }),
+      results: paginatedResults,
     };
 
     if (analyticsEnabled) {
       logSearch(db, {
         query: options.query,
-        searchMethod: "vector",
+        searchMethod,
         resultCount: response.totalCount,
         latencyMs: performance.now() - startTime,
         documentIds: response.results.map((r) => r.documentId),
@@ -310,19 +419,13 @@ export async function searchDocuments(
         query: options.query,
         resultCount: response.results.length,
         topScore: response.results[0]?.score ?? null,
-        searchType: "vector",
+        searchType: searchMethod,
       });
     }
 
     // Deduplicate by document — keep top N chunks per document
     if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
-      const countByDoc = new Map<string, number>();
-      response.results = response.results.filter((r) => {
-        const count = countByDoc.get(r.documentId) ?? 0;
-        if (count >= options.maxChunksPerDocument!) return false;
-        countByDoc.set(r.documentId, count + 1);
-        return true;
-      });
+      response.results = deduplicateByDocument(response.results, options.maxChunksPerDocument);
     }
 
     if (options.contextChunks) {
@@ -336,6 +439,10 @@ export async function searchDocuments(
     }
     log.warn({ err }, "Vector table missing, falling back to keyword search");
     const response = keywordSearch(db, options, limit, offset);
+
+    // Apply title boost to fallback results
+    response.results = applyTitleBoost(response.results, options.query);
+    response.results.sort((a, b) => b.score - a.score);
 
     if (analyticsEnabled) {
       const method = response.results[0]?.scoreExplanation.method ?? "keyword";
@@ -356,13 +463,7 @@ export async function searchDocuments(
 
     // Deduplicate by document — keep top N chunks per document
     if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
-      const countByDoc = new Map<string, number>();
-      response.results = response.results.filter((r) => {
-        const count = countByDoc.get(r.documentId) ?? 0;
-        if (count >= options.maxChunksPerDocument!) return false;
-        countByDoc.set(r.documentId, count + 1);
-        return true;
-      });
+      response.results = deduplicateByDocument(response.results, options.maxChunksPerDocument);
     }
 
     if (options.contextChunks) {
@@ -371,6 +472,90 @@ export async function searchDocuments(
 
     return response;
   }
+}
+
+/** Pure vector search — returns un-paginated results for fusion. */
+function vectorSearch(
+  db: Database.Database,
+  options: SearchOptions,
+  vecBuffer: Buffer,
+  limit: number,
+  _offset: number,
+): SearchResponse {
+  let sql = `
+    SELECT
+      candidates.chunk_id,
+      candidates.distance,
+      c.document_id,
+      c.content AS chunk_content,
+      d.title,
+      d.source_type,
+      d.library,
+      d.version,
+      d.topic_id,
+      d.url,
+      avg_r.avg_rating
+    FROM (
+      SELECT chunk_id, distance
+      FROM chunk_embeddings
+      WHERE embedding MATCH ?
+      ORDER BY distance
+      LIMIT ?
+    ) candidates
+    JOIN chunks c ON c.id = candidates.chunk_id
+    JOIN documents d ON d.id = c.document_id
+    LEFT JOIN (
+      SELECT document_id, AVG(rating) AS avg_rating
+      FROM ratings
+      GROUP BY document_id
+    ) avg_r ON avg_r.document_id = d.id
+    WHERE 1=1
+  `;
+
+  const params: unknown[] = [vecBuffer, limit * 3];
+  sql = appendFilters(sql, params, options, "d");
+
+  sql += ` ORDER BY candidates.distance`;
+  // Fetch enough for RRF fusion (no pagination here, done after merge)
+  const rows = db.prepare(sql).all(...params) as Array<{
+    chunk_id: string;
+    distance: number;
+    document_id: string;
+    chunk_content: string;
+    title: string;
+    source_type: string;
+    library: string | null;
+    version: string | null;
+    topic_id: string | null;
+    url: string | null;
+    avg_rating: number | null;
+  }>;
+
+  return {
+    totalCount: rows.length,
+    results: rows.map((row) => {
+      const similarity = 1 - row.distance;
+      return {
+        documentId: row.document_id,
+        chunkId: row.chunk_id,
+        title: row.title,
+        content: row.chunk_content,
+        sourceType: row.source_type,
+        library: row.library,
+        version: row.version,
+        topicId: row.topic_id,
+        url: row.url,
+        score: similarity,
+        avgRating: row.avg_rating,
+        scoreExplanation: {
+          method: "vector" as SearchMethod,
+          rawScore: row.distance,
+          boostFactors: [],
+          details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
+        },
+      };
+    }),
+  };
 }
 
 /** Fallback keyword search when vector search is unavailable.
@@ -418,46 +603,11 @@ function keywordSearch(
     WHERE (${likeConditions})
   `;
 
-  if (options.library) {
-    sql += " AND d.library = ?";
-    params.push(options.library);
-  }
-  if (options.topic) {
-    sql += " AND d.topic_id = ?";
-    params.push(options.topic);
-  }
-  if (options.version) {
-    sql += " AND d.version = ?";
-    params.push(options.version);
-  }
-  if (options.minRating) {
-    sql += " AND avg_r.avg_rating >= ?";
-    params.push(options.minRating);
-  }
-  if (options.dateFrom) {
-    sql += " AND d.created_at >= ?";
-    params.push(options.dateFrom);
-  }
-  if (options.dateTo) {
-    sql += " AND d.created_at <= ?";
-    params.push(options.dateTo);
-  }
-  if (options.source) {
-    sql += " AND d.source_type = ?";
-    params.push(options.source);
-  }
+  sql = appendFilters(sql, params, options, "d");
 
-  const tagFilterKw = buildTagFilter(options.tags, "d");
-  sql += tagFilterKw.clause;
-  params.push(...tagFilterKw.params);
-
-  // Build count query from base SQL (before adding LIMIT/OFFSET)
+  // Lazy count: avoid expensive COUNT when not needed
   const baseSql = sql;
   const baseParams = [...params];
-  const totalCount = validateCountRow(
-    db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
-    "keyword search count",
-  );
 
   sql += " LIMIT ? OFFSET ?";
   params.push(limit);
@@ -475,6 +625,16 @@ function keywordSearch(
     url: string | null;
     avg_rating: number | null;
   }>;
+
+  const totalCount = lazyCount(
+    db,
+    baseSql,
+    baseParams,
+    offset,
+    rows.length,
+    limit,
+    "keyword search count",
+  );
 
   return {
     totalCount,
@@ -503,18 +663,19 @@ function keywordSearch(
   };
 }
 
-/** FTS5-based full-text search with BM25 ranking. */
+/** FTS5-based full-text search with BM25 ranking. Uses AND logic by default. */
 function fts5Search(
   db: Database.Database,
   options: SearchOptions,
   limit: number,
   offset: number,
 ): SearchResponse {
-  // Escape FTS5 query: wrap each word in quotes for safety
+  // Escape FTS5 query: wrap each word in quotes for safety.
+  // AND-by-default: require all terms to match for better precision.
   const words = options.query.split(/\s+/).filter((w) => w.length > 0);
   if (words.length === 0) return { results: [], totalCount: 0 };
 
-  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" OR ");
+  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
   const params: unknown[] = [ftsQuery];
 
   let sql = `
@@ -540,52 +701,17 @@ function fts5Search(
     WHERE chunks_fts MATCH ?
   `;
 
-  if (options.library) {
-    sql += " AND d.library = ?";
-    params.push(options.library);
-  }
-  if (options.topic) {
-    sql += " AND d.topic_id = ?";
-    params.push(options.topic);
-  }
-  if (options.version) {
-    sql += " AND d.version = ?";
-    params.push(options.version);
-  }
-  if (options.minRating) {
-    sql += " AND avg_r.avg_rating >= ?";
-    params.push(options.minRating);
-  }
-  if (options.dateFrom) {
-    sql += " AND d.created_at >= ?";
-    params.push(options.dateFrom);
-  }
-  if (options.dateTo) {
-    sql += " AND d.created_at <= ?";
-    params.push(options.dateTo);
-  }
-  if (options.source) {
-    sql += " AND d.source_type = ?";
-    params.push(options.source);
-  }
+  sql = appendFilters(sql, params, options, "d");
 
-  const tagFilterFts = buildTagFilter(options.tags, "d");
-  sql += tagFilterFts.clause;
-  params.push(...tagFilterFts.params);
-
-  // Build count query from base SQL (before adding ORDER BY/LIMIT/OFFSET)
+  // Lazy count
   const baseSql = sql;
   const baseParams = [...params];
-  const totalCount = validateCountRow(
-    db.prepare(`SELECT COUNT(*) AS cnt FROM (${baseSql})`).get(...baseParams),
-    "FTS5 search count",
-  );
 
   sql += " ORDER BY rank LIMIT ? OFFSET ?";
   params.push(limit);
   params.push(offset);
 
-  const rows = db.prepare(sql).all(...params) as Array<{
+  let rows: Array<{
     chunk_id: string;
     document_id: string;
     chunk_content: string;
@@ -598,6 +724,61 @@ function fts5Search(
     fts_rank: number;
     avg_rating: number | null;
   }>;
+
+  try {
+    rows = db.prepare(sql).all(...params) as typeof rows;
+  } catch (err) {
+    // If AND query returns no results (e.g. not all terms present), fall back to OR
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("fts5") || rows! === undefined) {
+      throw err;
+    }
+    rows = [];
+  }
+
+  // If AND returned nothing, retry with OR for recall
+  if (rows.length === 0 && words.length > 1) {
+    const orQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" OR ");
+    const orParams: unknown[] = [orQuery];
+    let orSql = `
+      SELECT
+        f.chunk_id,
+        f.document_id,
+        f.content AS chunk_content,
+        d.title,
+        d.source_type,
+        d.library,
+        d.version,
+        d.topic_id,
+        d.url,
+        rank AS fts_rank,
+        avg_r.avg_rating
+      FROM chunks_fts f
+      JOIN documents d ON d.id = f.document_id
+      LEFT JOIN (
+        SELECT document_id, AVG(rating) AS avg_rating
+        FROM ratings
+        GROUP BY document_id
+      ) avg_r ON avg_r.document_id = d.id
+      WHERE chunks_fts MATCH ?
+    `;
+    orSql = appendFilters(orSql, orParams, options, "d");
+    orSql += " ORDER BY rank LIMIT ? OFFSET ?";
+    orParams.push(limit);
+    orParams.push(offset);
+
+    rows = db.prepare(orSql).all(...orParams) as typeof rows;
+  }
+
+  const totalCount = lazyCount(
+    db,
+    baseSql,
+    baseParams,
+    offset,
+    rows.length,
+    limit,
+    "FTS5 search count",
+  );
 
   return {
     totalCount,

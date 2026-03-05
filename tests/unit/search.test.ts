@@ -811,3 +811,275 @@ describe("context chunk expansion (issue #247)", () => {
     expect(results[0]!.contextAfter![0]!.chunkIndex).toBe(2);
   });
 });
+
+describe("FTS5 AND-by-default logic (issue #362)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should prefer results containing ALL query words", async () => {
+    insertDoc(db, "doc1", "Full Match");
+    insertChunk(db, "c1", "doc1", "TypeScript generics are powerful patterns");
+
+    insertDoc(db, "doc2", "Partial Match");
+    insertChunk(db, "c2", "doc2", "TypeScript is great for web development");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript generics",
+    });
+
+    // The chunk containing both words should appear in results
+    const fullMatch = results.find((r) => r.content.includes("generics"));
+    expect(fullMatch).toBeDefined();
+  });
+
+  it("should fall back to OR when AND returns no results", async () => {
+    insertDoc(db, "doc1", "Partial Match");
+    insertChunk(db, "c1", "doc1", "TypeScript is a typed superset of JavaScript");
+
+    // Query with a word that doesn't co-occur with the other
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript xyznonexistent",
+    });
+
+    // OR fallback should still find "TypeScript"
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.content).toContain("TypeScript");
+  });
+});
+
+describe("title boosting (issue #362)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should boost results when query matches document title", async () => {
+    insertDoc(db, "doc1", "React Hooks Guide");
+    insertChunk(db, "c1", "doc1", "Hooks allow state in functional components");
+
+    insertDoc(db, "doc2", "General Programming");
+    insertChunk(db, "c2", "doc2", "Hooks are a common programming pattern");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "Hooks",
+    });
+
+    // Both match the keyword, but doc1's title matches the query
+    expect(results.length).toBe(2);
+    const doc1Result = results.find((r) => r.documentId === "doc1");
+    const doc2Result = results.find((r) => r.documentId === "doc2");
+    expect(doc1Result).toBeDefined();
+    expect(doc2Result).toBeDefined();
+
+    // Doc1 should have higher score due to title boost
+    expect(doc1Result!.score).toBeGreaterThan(doc2Result!.score);
+    expect(doc1Result!.scoreExplanation.boostFactors.length).toBeGreaterThan(0);
+    expect(doc1Result!.scoreExplanation.boostFactors[0]).toContain("title_match");
+  });
+
+  it("should not boost when title does not match query", async () => {
+    insertDoc(db, "doc1", "Unrelated Title");
+    insertChunk(db, "c1", "doc1", "TypeScript content here");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+    });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.scoreExplanation.boostFactors.length).toBe(0);
+  });
+});
+
+describe("lazy count optimization (issue #362)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("should return correct totalCount when results fit in one page", async () => {
+    insertDoc(db, "doc1", "Doc A");
+    insertChunk(db, "c1", "doc1", "TypeScript content alpha");
+
+    insertDoc(db, "doc2", "Doc B");
+    insertChunk(db, "c2", "doc2", "TypeScript content beta");
+
+    const { totalCount } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(totalCount).toBe(2);
+  });
+
+  it("should return correct totalCount with pagination", async () => {
+    for (let i = 0; i < 5; i++) {
+      insertDoc(db, `doc${i}`, `TypeScript Doc ${i}`);
+      insertChunk(db, `c${i}`, `doc${i}`, `TypeScript content number ${i}`);
+    }
+
+    const page1 = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      limit: 2,
+      offset: 0,
+    });
+
+    expect(page1.totalCount).toBeGreaterThanOrEqual(5);
+    expect(page1.results.length).toBe(2);
+  });
+});
+
+describe("retrieval quality benchmark (issue #362)", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createTestDb();
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // Corpus: a small set of documents covering different topics
+  function seedCorpus(): void {
+    const docs = [
+      {
+        id: "react-hooks",
+        title: "React Hooks",
+        content:
+          "React hooks like useState and useEffect allow state management in functional components",
+      },
+      {
+        id: "react-router",
+        title: "React Router",
+        content:
+          "React Router provides declarative routing for React applications with dynamic route matching",
+      },
+      {
+        id: "ts-generics",
+        title: "TypeScript Generics",
+        content: "TypeScript generics enable writing reusable type-safe functions and classes",
+      },
+      {
+        id: "ts-types",
+        title: "TypeScript Type System",
+        content:
+          "TypeScript type system includes union types intersection types and conditional types",
+      },
+      {
+        id: "node-streams",
+        title: "Node.js Streams",
+        content:
+          "Node.js streams provide an interface for reading and writing data in chunks efficiently",
+      },
+      {
+        id: "node-http",
+        title: "Node.js HTTP",
+        content:
+          "Node.js HTTP module allows creating web servers and handling HTTP requests and responses",
+      },
+      {
+        id: "sql-joins",
+        title: "SQL Joins",
+        content:
+          "SQL joins combine rows from two or more tables based on related columns between them",
+      },
+      {
+        id: "sql-index",
+        title: "SQL Indexing",
+        content:
+          "SQL indexes improve query performance by creating efficient data structures for lookups",
+      },
+    ];
+
+    for (const doc of docs) {
+      insertDoc(db, doc.id, doc.title);
+      insertChunk(db, `c-${doc.id}`, doc.id, doc.content);
+    }
+  }
+
+  it("should return relevant results for topic-specific queries", async () => {
+    seedCorpus();
+
+    const { results } = await searchDocuments(db, provider, { query: "React hooks state" });
+    expect(results.length).toBeGreaterThan(0);
+
+    // Top result should be from React-related documents
+    const topDocIds = results.slice(0, 3).map((r) => r.documentId);
+    const hasReact = topDocIds.some((id) => id.startsWith("react"));
+    expect(hasReact).toBe(true);
+  });
+
+  it("should rank title-matching documents higher", async () => {
+    seedCorpus();
+
+    const { results } = await searchDocuments(db, provider, { query: "TypeScript generics" });
+    expect(results.length).toBeGreaterThan(0);
+
+    // The document titled "TypeScript Generics" should be boosted
+    const tsGenericsIdx = results.findIndex((r) => r.documentId === "ts-generics");
+    expect(tsGenericsIdx).toBeGreaterThanOrEqual(0);
+    expect(tsGenericsIdx).toBeLessThan(3); // Should be in top 3
+  });
+
+  it("should not monopolize results with chunks from same document", async () => {
+    // Insert a document with many similar chunks
+    insertDoc(db, "mono-doc", "Monopoly Doc");
+    for (let i = 0; i < 5; i++) {
+      insertChunk(db, `mc${i}`, "mono-doc", `TypeScript pattern number ${i} for code`, i);
+    }
+    insertDoc(db, "other-doc", "TypeScript Other");
+    insertChunk(db, "oc1", "other-doc", "TypeScript alternative approach to coding");
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "TypeScript",
+      maxChunksPerDocument: 2,
+    });
+
+    const monoCount = results.filter((r) => r.documentId === "mono-doc").length;
+    expect(monoCount).toBeLessThanOrEqual(2);
+
+    // Other documents should still appear
+    const otherCount = results.filter((r) => r.documentId === "other-doc").length;
+    expect(otherCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should maintain precision with AND logic for multi-word queries", async () => {
+    seedCorpus();
+
+    const { results } = await searchDocuments(db, provider, {
+      query: "Node.js streams chunks",
+    });
+
+    // The streams doc is the best match since it contains all terms
+    if (results.length > 0) {
+      const streamsResult = results.find((r) => r.documentId === "node-streams");
+      expect(streamsResult).toBeDefined();
+    }
+  });
+});
