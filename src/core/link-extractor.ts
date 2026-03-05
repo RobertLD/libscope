@@ -109,19 +109,6 @@ function resolveUrl(href: string, baseUrl: string): string | null {
   // Skip fragment-only links immediately — they point to the same page
   if (href.startsWith("#")) return null;
 
-  // Skip clearly non-http schemes before URL parsing to avoid errors
-  const lowerHref = href.toLowerCase();
-  if (
-    lowerHref.startsWith("mailto:") ||
-    lowerHref.startsWith("javascript:") ||
-    lowerHref.startsWith("tel:") ||
-    lowerHref.startsWith("data:") ||
-    lowerHref.startsWith("ftp:") ||
-    lowerHref.startsWith("file:")
-  ) {
-    return null;
-  }
-
   let resolved: URL;
   try {
     resolved = new URL(href, baseUrl);
@@ -129,6 +116,9 @@ function resolveUrl(href: string, baseUrl: string): string | null {
     return null;
   }
 
+  // Allowlist: only permit http and https.
+  // This rejects javascript:, vbscript:, data:, mailto:, ftp:, file:, and
+  // any other non-http scheme without needing an enumerated blocklist.
   if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
     return null;
   }

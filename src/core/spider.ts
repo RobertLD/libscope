@@ -188,6 +188,43 @@ function htmlToMarkdown(html: string): string {
   return NodeHtmlMarkdown.translate(html);
 }
 
+/**
+ * Remove all HTML tags from a string using indexOf-based scanning.
+ * Handles tags that span multiple lines and tags with > inside attribute values.
+ * This avoids regex-based tag stripping which can be bypassed by newlines in tags.
+ */
+function stripTags(input: string): string {
+  let result = "";
+  let pos = 0;
+  while (pos < input.length) {
+    const open = input.indexOf("<", pos);
+    if (open === -1) {
+      result += input.slice(pos);
+      break;
+    }
+    result += input.slice(pos, open);
+    // Scan for the closing > of this tag, respecting quoted attribute values
+    let i = open + 1;
+    while (i < input.length) {
+      const ch = input[i];
+      if (ch === ">") {
+        i++;
+        break;
+      }
+      // Skip quoted attribute values so > inside them doesn't end the tag early
+      if (ch === '"' || ch === "'") {
+        const close = input.indexOf(ch, i + 1);
+        i = close === -1 ? input.length : close + 1;
+      } else {
+        i++;
+      }
+    }
+    pos = i;
+  }
+  // Collapse whitespace left behind by removed tags
+  return result.replace(/\s+/g, " ");
+}
+
 function extractTitle(html: string, url: string): string {
   // Try <title> tag
   const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
@@ -195,8 +232,7 @@ function extractTitle(html: string, url: string): string {
   // Try first <h1>
   const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
   if (h1?.[1]) {
-    // Strip inner tags
-    return h1[1].replace(/<[^>]+>/g, "").trim();
+    return stripTags(h1[1]).trim();
   }
   // Fall back to URL path
   try {
