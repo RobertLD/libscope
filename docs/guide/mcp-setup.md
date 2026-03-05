@@ -80,13 +80,38 @@ If you're using [workspaces](/guide/configuration#workspaces), pass the workspac
 
 ## Available Tools
 
-Once connected, your AI assistant gets access to all of LibScope's MCP tools. See the [MCP Tools Reference](/reference/mcp-tools) for the full list.
+Once connected, your AI assistant gets access to all 26 of LibScope's MCP tools. See the [MCP Tools Reference](/reference/mcp-tools) for full parameter details.
 
-The most commonly used ones:
+**Search & Q&A**
+- **`search-docs`** — semantic search with topic/library/version/rating filters
+- **`ask-question`** — RAG Q&A with synthesized answers and source citations
 
-- **`search-docs`** — semantic search across your knowledge base
-- **`ask-question`** — RAG Q&A with synthesized answers
-- **`submit-document`** — index new content (by text or URL)
-- **`list-topics`** — browse what's in the knowledge base
+**Document Management**
+- **`submit-document`** — index new content by text or URL
+- **`update-document`** — update title, content, or metadata
+- **`get-document`** — retrieve a document by ID
+- **`list-documents`** — list docs with filters
+- **`delete-document`** — remove a document
+- **`rate-document`** — rate 1–5 with feedback
+- **`suggest-tags`** — auto-suggest tags based on content
+
+**Organization**
+- **`list-topics`** — browse the topic hierarchy
+- **`link-documents`** — create cross-references between docs
+- **`get-document-links`** — list a document's incoming and outgoing links
+- **`delete-link`** — remove a cross-reference
+
+**Saved Searches**
+- **`save-search`** — save a named query with filters
+- **`list-saved-searches`** — list saved searches
+- **`run-saved-search`** — execute a saved search
+
+**Connectors** — trigger syncs directly from your AI assistant:
+- **`sync-obsidian-vault`**, **`sync-notion`**, **`sync-confluence`**, **`sync-slack`**, **`sync-onenote`**
+
+**Packs & Maintenance**
+- **`install-pack`**, **`list-packs`** — manage knowledge packs
+- **`reindex-documents`** — re-embed after switching providers
+- **`health-check`** — DB status and doc/chunk counts
 
 Your AI assistant will call these tools automatically when it needs information from your docs.

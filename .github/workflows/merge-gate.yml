@@ -8,10 +8,12 @@ jobs:
   enforce-source-branch:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify PR source is development branch
+      - name: Verify PR source is development or release-please branch
         run: |
-          if [ "${{ github.head_ref }}" != "development" ]; then
-            echo "::error::Only the 'development' branch can be merged into main. This PR is from '${{ github.head_ref }}'."
+          HEAD="${{ github.head_ref }}"
+          if [ "$HEAD" = "development" ] || [[ "$HEAD" == release-please--* ]]; then
+            echo "✅ Source branch '$HEAD' — merge allowed."
+          else
+            echo "::error::Only the 'development' branch (or release-please branches) can be merged into main. This PR is from '$HEAD'."
             exit 1
           fi
-          echo "✅ Source branch is 'development' — merge allowed."

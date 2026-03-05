@@ -10,7 +10,7 @@ It also runs as an [MCP server](/guide/mcp-setup), so AI assistants like Claude 
 npm install -g libscope
 ```
 
-Requires Node.js 18 or later.
+Requires Node.js 20 or later.
 
 ## Initialize
 
@@ -67,9 +67,55 @@ libscope serve
 
 This starts a stdio-based MCP server that any compatible AI assistant can connect to. See [MCP Setup](/guide/mcp-setup) for integration instructions.
 
+## Web Dashboard
+
+Run the local web dashboard to browse, search, and manage your knowledge base in a browser:
+
+```bash
+libscope serve --dashboard
+# opens at http://localhost:3377
+```
+
+The dashboard includes full-text search, document browsing, topic navigation, and a knowledge graph visualization at `/graph`.
+
+## Organize and Annotate
+
+Once you have content indexed you can enrich it:
+
+```bash
+# Tag documents
+libscope tag add <doc-id> typescript,api,v2
+
+# Group into topics
+libscope topics create "backend"
+libscope topics create "auth" --parent backend
+
+# Save frequent searches
+libscope search "auth best practices" --save "Auth Docs"
+libscope searches run "Auth Docs"
+
+# Cross-reference documents
+libscope link <source-id> <target-id> --type prerequisite
+
+# Bulk operations
+libscope bulk retag --library react --add-tags deprecated --dry-run
+libscope bulk move --library react --to new-topic-id
+```
+
+## REST API
+
+For programmatic access, start the REST API instead of the MCP server:
+
+```bash
+libscope serve --api --port 3378
+```
+
+The OpenAPI 3.0 spec is served at `GET /openapi.json`. See [REST API Reference](/reference/rest-api) for full documentation.
+
 ## What's Next
 
 - [Configuration](/guide/configuration) — embedding providers, LLM setup, environment variables
 - [MCP Setup](/guide/mcp-setup) — connect LibScope to Claude, Cursor, or VS Code
 - [Connectors](/guide/connectors) — sync from Obsidian, Notion, Confluence, Slack, and more
 - [CLI Reference](/reference/cli) — full list of commands and options
+- [REST API Reference](/reference/rest-api) — full API endpoint documentation
