@@ -121,7 +121,7 @@ program
   .name("libscope")
   .description("AI-powered knowledge base with MCP integration")
   .version(_pkg.version)
-  .option("--verbose", "Enable verbose logging")
+  .option("-v, --verbose", "Enable verbose logging")
   .option("--log-level <level>", "Set log level (debug, info, warn, error, silent)")
   .option("--workspace <name>", "Use a specific workspace");
 
@@ -1618,10 +1618,11 @@ packCmd
   .option("--registry <url>", "Custom registry URL")
   .option("--batch-size <n>", "Number of documents to embed per batch (default: 10)")
   .option("--resume-from <n>", "Skip the first N documents (resume a partial install)")
+  .option("--concurrency <n>", "Number of batches to embed in parallel (default: 4)")
   .action(
     async (
       nameOrPath: string,
-      opts: { registry?: string; batchSize?: string; resumeFrom?: string },
+      opts: { registry?: string; batchSize?: string; resumeFrom?: string; concurrency?: string },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       const globalOpts = program.opts<ProgramOpts>();
@@ -1631,12 +1632,16 @@ packCmd
       const resumeFrom = opts.resumeFrom
         ? parseIntOption(opts.resumeFrom, "--resume-from")
         : undefined;
+      const concurrency = opts.concurrency
+        ? parseIntOption(opts.concurrency, "--concurrency")
+        : undefined;
 
       try {
         const result = await installPack(db, provider, nameOrPath, {
           registryUrl: opts.registry,
           batchSize,
           resumeFrom,
+          concurrency,
           onProgress: (current, total, docTitle) => {
             reporter.progress(current, total, docTitle);
           },

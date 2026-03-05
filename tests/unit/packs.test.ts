@@ -907,4 +907,164 @@ describe("knowledge packs", () => {
       expect(result.errors).toBe(0);
     });
   });
+
+  describe("installPack — concurrency option", () => {
+    it("should install all docs correctly with concurrency=1 (sequential)", async () => {
+      const pack = makeSamplePack({
+        name: "concurrent-1",
+        documents: [
+          { title: "Doc A", content: "# Doc A\n\nContent A.", source: "" },
+          { title: "Doc B", content: "# Doc B\n\nContent B.", source: "" },
+          { title: "Doc C", content: "# Doc C\n\nContent C.", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "concurrent-1.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath, { batchSize: 1, concurrency: 1 });
+
+      expect(result.documentsInstalled).toBe(3);
+      expect(result.errors).toBe(0);
+    });
+
+    it("should install all docs correctly with concurrency=4 (parallel)", async () => {
+      const pack = makeSamplePack({
+        name: "concurrent-4",
+        documents: [
+          { title: "Doc A", content: "# Doc A\n\nContent A.", source: "" },
+          { title: "Doc B", content: "# Doc B\n\nContent B.", source: "" },
+          { title: "Doc C", content: "# Doc C\n\nContent C.", source: "" },
+          { title: "Doc D", content: "# Doc D\n\nContent D.", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "concurrent-4.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, provider, packPath, { batchSize: 1, concurrency: 4 });
+
+      expect(result.documentsInstalled).toBe(4);
+      expect(result.errors).toBe(0);
+
+      // Verify all 4 docs are in the DB
+      const docs = db
+        .prepare("SELECT id FROM documents WHERE pack_name = ?")
+        .all("concurrent-4") as Array<{ id: string }>;
+      expect(docs.length).toBe(4);
+    });
+
+    it("should make multiple embedBatch calls with small batchSize and high concurrency", async () => {
+      const pack = makeSamplePack({
+        name: "multi-batch",
+        documents: [
+          { title: "Doc 1", content: "Content 1", source: "" },
+          { title: "Doc 2", content: "Content 2", source: "" },
+          { title: "Doc 3", content: "Content 3", source: "" },
+          { title: "Doc 4", content: "Content 4", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "multi-batch.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, provider, packPath, { batchSize: 2, concurrency: 2 });
+
+      // 4 docs with batchSize=2 → 2 batches → 2 embedBatch calls
+      expect(provider.embedBatchCallCount).toBe(2);
+    });
+
+    it("should not exceed concurrency limit for embed calls", async () => {
+      // Track the maximum number of concurrent embedBatch calls in flight
+      let maxConcurrent = 0;
+      let activeCalls = 0;
+      let totalCalls = 0;
+
+      const trackingProvider = new MockEmbeddingProvider();
+      trackingProvider.embedBatch = vi.fn().mockImplementation((texts: string[]) => {
+        totalCalls++;
+        activeCalls++;
+        maxConcurrent = Math.max(maxConcurrent, activeCalls);
+        // Simulate slight async delay so concurrent calls can overlap
+        return Promise.resolve().then(() => {
+          activeCalls--;
+          return texts.map(() => [0.1, 0.2, 0.3, 0.4]);
+        });
+      });
+
+      const pack = makeSamplePack({
+        name: "concurrency-limit",
+        documents: Array.from({ length: 8 }, (_, i) => ({
+          title: `Doc ${i}`,
+          content: `Content ${i}`,
+          source: "",
+        })),
+      });
+      const packPath = join(tempDir, "concurrency-limit.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      await installPack(db, trackingProvider, packPath, { batchSize: 1, concurrency: 3 });
+
+      // Should never exceed the concurrency limit of 3
+      expect(maxConcurrent).toBeLessThanOrEqual(3);
+      // Should have made 8 embedBatch calls (8 docs, batchSize=1)
+      expect(totalCalls).toBe(8);
+    });
+
+    it("should report progress after each batch when embedding concurrently", async () => {
+      const pack = makeSamplePack({
+        name: "concurrent-progress",
+        documents: [
+          { title: "Doc A", content: "Content A", source: "" },
+          { title: "Doc B", content: "Content B", source: "" },
+          { title: "Doc C", content: "Content C", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "concurrent-progress.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const calls: Array<{ current: number; total: number }> = [];
+      await installPack(db, provider, packPath, {
+        batchSize: 1,
+        concurrency: 2,
+        onProgress: (current, total) => calls.push({ current, total }),
+      });
+
+      // Should have 3 progress calls (one per batch/doc with batchSize=1)
+      expect(calls).toHaveLength(3);
+      // Final call should report all docs processed
+      expect(calls[calls.length - 1]!.current).toBe(3);
+      expect(calls[calls.length - 1]!.total).toBe(3);
+    });
+
+    it("should count errors correctly when some batches fail during concurrent embedding", async () => {
+      let callCount = 0;
+      const partialFailProvider = new MockEmbeddingProvider();
+      partialFailProvider.embedBatch = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount % 2 === 0) {
+          return Promise.reject(new Error("embed failed"));
+        }
+        return Promise.resolve([[0.1, 0.2, 0.3, 0.4]]);
+      });
+
+      const pack = makeSamplePack({
+        name: "partial-fail",
+        documents: [
+          { title: "Doc 1", content: "Content 1", source: "" },
+          { title: "Doc 2", content: "Content 2", source: "" },
+          { title: "Doc 3", content: "Content 3", source: "" },
+          { title: "Doc 4", content: "Content 4", source: "" },
+        ],
+      });
+      const packPath = join(tempDir, "partial-fail.json");
+      writeFileSync(packPath, JSON.stringify(pack), "utf-8");
+
+      const result = await installPack(db, partialFailProvider, packPath, {
+        batchSize: 1,
+        concurrency: 4,
+      });
+
+      // 4 docs, batchSize=1 → 4 batches; even-numbered calls fail → 2 errors, 2 installed
+      expect(result.errors).toBe(2);
+      expect(result.documentsInstalled).toBe(2);
+    });
+  });
 });

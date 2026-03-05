@@ -66,7 +66,9 @@ export interface InstallOptions {
   batchSize?: number | undefined;
   /** Skip the first N documents (for resuming a partial install). Default: 0. */
   resumeFrom?: number | undefined;
-  /** Called after each document is processed. */
+  /** Maximum number of batches to embed concurrently. Default: 4. */
+  concurrency?: number | undefined;
+  /** Called after each batch of documents is processed. */
   onProgress?: ((current: number, total: number, docTitle: string) => void) | undefined;
 }
 
@@ -316,12 +318,16 @@ export async function installPack(
   }
 
   const batchSize = options?.batchSize ?? 10;
+  const concurrency = options?.concurrency ?? 4;
   const resumeFrom = options?.resumeFrom ?? 0;
   const onProgress = options?.onProgress;
   const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
   const total = pack.documents.length;
 
-  log.info({ pack: pack.name, docCount: total, batchSize, resumeFrom }, "Installing pack");
+  log.info(
+    { pack: pack.name, docCount: total, batchSize, concurrency, resumeFrom },
+    "Installing pack",
+  );
 
   // Insert the pack record first (documents.pack_name has FK to packs.name)
   db.prepare("INSERT INTO packs (name, version, description, doc_count) VALUES (?, ?, ?, 0)").run(
@@ -330,7 +336,7 @@ export async function installPack(
     pack.description,
   );
 
-  // Prepare statements once
+  // Prepare statements once (reused across all batches)
   const insertDoc = db.prepare(`
     INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -344,26 +350,25 @@ export async function installPack(
     VALUES (?, ?)
   `);
 
-  let installed = 0;
-  let errors = 0;
-  let processedCount = resumeFrom;
+  // Phase 1: Pre-chunk ALL documents into batches upfront (synchronous).
+  type DocChunkInfo = {
+    doc: PackDocument;
+    docId: string;
+    contentHash: string;
+    chunks: string[];
+    chunkOffset: number; // offset into allChunks for this batch
+  };
+  type BatchData = {
+    docInfos: DocChunkInfo[];
+    allChunks: string[];
+  };
 
-  // Process documents in batches for efficient embedding
+  const batches: BatchData[] = [];
   for (let batchStart = 0; batchStart < docs.length; batchStart += batchSize) {
-    const batch = docs.slice(batchStart, batchStart + batchSize);
-
-    // Phase 1: chunk all documents in the batch
-    type DocChunkInfo = {
-      doc: PackDocument;
-      docId: string;
-      contentHash: string;
-      chunks: string[];
-      chunkOffset: number; // offset into allChunks
-    };
+    const batchDocs = docs.slice(batchStart, batchStart + batchSize);
     const docInfos: DocChunkInfo[] = [];
     const allChunks: string[] = [];
-
-    for (const doc of batch) {
+    for (const doc of batchDocs) {
       const contentHash = createHash("sha256").update(doc.content).digest("hex");
       const useStreaming = doc.content.length > STREAMING_THRESHOLD;
       const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
@@ -376,69 +381,131 @@ export async function installPack(
       });
       allChunks.push(...chunks);
     }
-
-    // Phase 2: embed all chunks in a single batch call
-    let allEmbeddings: number[][];
-    try {
-      allEmbeddings = allChunks.length > 0 ? await provider.embedBatch(allChunks) : [];
-    } catch (err) {
-      log.warn(
-        { err, pack: pack.name, batchStart },
-        "Failed to embed batch, skipping these documents",
-      );
-      errors += batch.length;
-      processedCount += batch.length;
-      onProgress?.(processedCount, total, batch[batch.length - 1]?.title ?? "");
-      continue;
-    }
-
-    // Phase 3: insert all docs, chunks, and embeddings in a single transaction
-    const insertBatch = db.transaction(() => {
-      for (const info of docInfos) {
-        insertDoc.run(
-          info.docId,
-          "library",
-          info.doc.title,
-          info.doc.content,
-          info.doc.source || null,
-          "manual",
-          info.contentHash,
-          pack.name,
-        );
-
-        for (let i = 0; i < info.chunks.length; i++) {
-          const chunkId = randomUUID();
-          const chunkText = info.chunks[i] ?? "";
-          const embedding = allEmbeddings[info.chunkOffset + i] ?? [];
-          insertChunk.run(chunkId, info.docId, chunkText, i);
-          try {
-            const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-            insertEmbedding.run(chunkId, vecBuffer);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            if (!message.includes("no such table")) {
-              log.warn({ chunkId, err }, "Failed to insert vector embedding");
-            }
-          }
-        }
-        installed++;
-      }
-    });
-
-    try {
-      insertBatch();
-    } catch (err) {
-      log.warn(
-        { err, pack: pack.name, batchStart },
-        "Transaction failed for batch, skipping these documents",
-      );
-      errors += batch.length;
-      installed -= batch.length < installed ? batch.length : installed;
-    }
-
-    processedCount += batch.length;
-    onProgress?.(processedCount, total, batch[batch.length - 1]?.title ?? "");
+    batches.push({ docInfos, allChunks });
   }
+
+  // Phase 2 & 3: Embed batches concurrently (up to `concurrency` at a time),
+  // inserting each batch into the DB in order as embeddings complete.
+  // This maximises provider throughput while keeping inserts serialised (SQLite requirement).
+  let installed = 0;
+  let errors = 0;
+  let processedCount = resumeFrom;
+
+  type EmbedResult = { embeddings: number[][]; success: boolean };
+  const embedResults: Array<EmbedResult | undefined> = Array.from<EmbedResult | undefined>({
+    length: batches.length,
+  });
+  let nextInsertIdx = 0;
+
+  /** Insert completed batches in index order, advancing nextInsertIdx. */
+  function flushInserts(): void {
+    while (nextInsertIdx < batches.length && embedResults[nextInsertIdx] !== undefined) {
+      const i = nextInsertIdx++;
+      const batch = batches[i]!;
+      const result = embedResults[i]!;
+
+      if (!result.success) {
+        errors += batch.docInfos.length;
+      } else {
+        let batchInstalled = 0;
+        const doInsert = db.transaction(() => {
+          batchInstalled = 0;
+          for (const info of batch.docInfos) {
+            insertDoc.run(
+              info.docId,
+              "library",
+              info.doc.title,
+              info.doc.content,
+              info.doc.source || null,
+              "manual",
+              info.contentHash,
+              pack.name,
+            );
+            for (let j = 0; j < info.chunks.length; j++) {
+              const chunkId = randomUUID();
+              const chunkText = info.chunks[j] ?? "";
+              const embedding = result.embeddings[info.chunkOffset + j] ?? [];
+              insertChunk.run(chunkId, info.docId, chunkText, j);
+              try {
+                const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
+                insertEmbedding.run(chunkId, vecBuffer);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                if (!message.includes("no such table")) {
+                  log.warn({ chunkId, err }, "Failed to insert vector embedding");
+                }
+              }
+            }
+            batchInstalled++;
+          }
+        });
+        try {
+          doInsert();
+          installed += batchInstalled;
+        } catch (err) {
+          log.warn(
+            { err, pack: pack.name, batchIndex: i },
+            "Transaction failed for batch, skipping these documents",
+          );
+          errors += batch.docInfos.length;
+        }
+      }
+
+      processedCount += batch.docInfos.length;
+      onProgress?.(
+        processedCount,
+        total,
+        batch.docInfos[batch.docInfos.length - 1]?.doc.title ?? "",
+      );
+    }
+  }
+
+  // Semaphore-based concurrent embedding: up to `concurrency` embedBatch calls in flight at once.
+  await new Promise<void>((resolve) => {
+    if (batches.length === 0) {
+      resolve();
+      return;
+    }
+
+    let activeCount = 0;
+    let scheduleIdx = 0;
+
+    function scheduleNext(): void {
+      while (activeCount < concurrency && scheduleIdx < batches.length) {
+        const i = scheduleIdx++;
+        const batch = batches[i]!;
+        activeCount++;
+
+        const embedPromise =
+          batch.allChunks.length > 0
+            ? provider.embedBatch(batch.allChunks)
+            : Promise.resolve([] as number[][]);
+
+        embedPromise
+          .then((embeddings) => {
+            embedResults[i] = { embeddings, success: true };
+          })
+          .catch((err) => {
+            log.warn(
+              { err, pack: pack.name, batchIndex: i },
+              "Failed to embed batch, skipping these documents",
+            );
+            embedResults[i] = { embeddings: [], success: false };
+          })
+          .finally(() => {
+            activeCount--;
+            flushInserts();
+            if (scheduleIdx < batches.length) {
+              scheduleNext();
+            } else if (activeCount === 0) {
+              resolve();
+            }
+          });
+      }
+    }
+
+    scheduleNext();
+  });
 
   // Update doc count
   db.prepare("UPDATE packs SET doc_count = ? WHERE name = ?").run(installed, pack.name);
