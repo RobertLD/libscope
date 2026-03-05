@@ -24,10 +24,11 @@ Complete reference for all configuration options.
 
 ### LLM (for RAG)
 
-| Key            | Type   | Default | Description          |
-| -------------- | ------ | ------- | -------------------- |
-| `llm.provider` | string | —       | `openai` or `ollama` |
-| `llm.model`    | string | —       | Model name override  |
+| Key               | Type   | Default | Description                                    |
+| ----------------- | ------ | ------- | ---------------------------------------------- |
+| `llm.provider`    | string | —       | `openai`, `ollama`, or `passthrough`           |
+| `llm.model`       | string | —       | Model name override                            |
+| `llm.ollamaUrl`   | string | —       | Ollama server URL (overrides embedding URL)    |
 
 ### Database
 
@@ -69,9 +70,24 @@ Complete reference for all configuration options.
 ## Setting Values
 
 ```bash
-# Via CLI
-libscope config set embedding.provider ollama
-libscope config set llm.provider openai
+# Embedding
+libscope config set embedding.provider ollama      # local | ollama | openai
+libscope config set embedding.ollamaUrl http://localhost:11434
+libscope config set embedding.ollamaModel nomic-embed-text
+libscope config set embedding.openaiModel text-embedding-3-small
+
+# LLM (for RAG)
+libscope config set llm.provider openai            # openai | ollama | passthrough
+libscope config set llm.model gpt-4o-mini
+
+# Database
+libscope config set database.path /custom/path/libscope.db
+
+# Logging
+libscope config set logging.level debug            # debug | info | warn | error | silent
+
+# Network
+libscope config set indexing.allowPrivateUrls true
 libscope config set indexing.allowSelfSignedCerts true
 
 # View current config

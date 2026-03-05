@@ -283,7 +283,7 @@ libscope link <sourceId> <targetId> --type see_also --label "Background context"
 | `libscope config set <key> <value>` | Set a configuration value  |
 | `libscope config show`              | Show current configuration |
 
-Supported config keys for `set`: `embedding.provider`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`.
+Supported config keys for `set`: `embedding.provider`, `embedding.ollamaUrl`, `embedding.ollamaModel`, `embedding.openaiModel`, `llm.provider`, `llm.model`, `database.path`, `logging.level`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`.
 
 ## Global Options
 
