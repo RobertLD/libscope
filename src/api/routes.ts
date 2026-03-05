@@ -53,7 +53,7 @@ import {
 import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
 import { spiderUrl } from "../core/spider.js";
-import type { SpiderOptions } from "../core/spider.js";
+import type { SpiderOptions, SpiderStats } from "../core/spider.js";
 
 function parseUrl(req: IncomingMessage): URL {
   return new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
@@ -371,13 +371,13 @@ export async function handleRequest(
 
         const indexedDocs: Array<{ id: string; title: string; url: string }> = [];
         const errors: Array<{ url: string; error: string }> = [];
-        let stats = { pagesIndexed: 0, pagesCrawled: 0, pagesSkipped: 0, errors: errors, abortReason: undefined as string | undefined };
+        let stats: SpiderStats = { pagesIndexed: 0, pagesCrawled: 0, pagesSkipped: 0, errors };
 
         try {
           const gen = spiderUrl(url, spiderOptions);
           let result = await gen.next();
           while (!result.done) {
-            const page = result.value as import("../core/spider.js").SpiderResult;
+            const page = result.value;
             try {
               const doc = await indexDocument(db, provider, {
                 content: page.content,
@@ -393,9 +393,9 @@ export async function handleRequest(
             }
             result = await gen.next();
           }
-          // result.value is SpiderStats when done
-          if (result.value && typeof result.value === "object") {
-            stats = result.value as typeof stats;
+          // result.value is SpiderStats when done (generator is exhausted)
+          if (result.done && result.value) {
+            stats = result.value;
             stats.errors = errors;
           }
         } catch (err) {

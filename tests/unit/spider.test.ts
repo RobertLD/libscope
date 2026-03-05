@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ── Mock fetchRaw so we don't make real network requests ─────────────────────
 const mockFetchRaw = vi.fn();
 vi.mock("../../src/core/url-fetcher.js", () => ({
-  fetchRaw: (...args: unknown[]) => mockFetchRaw(...args),
+  fetchRaw: (...args: unknown[]): unknown => mockFetchRaw(...args),
   DEFAULT_FETCH_OPTIONS: {
     timeout: 30_000,
     maxRedirects: 5,
@@ -424,10 +424,10 @@ describe("spiderUrl", () => {
       return Promise.resolve(pageResponse(htmlPage("Page", []), url));
     });
 
-    await expect(async () => {
-      const gen = spiderUrl("https://example.com/", { maxDepth: 100, requestDelay: 0 });
-      await collectPages(gen);
-    }).not.toThrow();
+    // Should not throw — maxDepth is capped to hard limit internally
+    const gen = spiderUrl("https://example.com/", { maxDepth: 100, requestDelay: 0 });
+    const { pages } = await collectPages(gen);
+    expect(pages.length).toBeGreaterThanOrEqual(1);
   });
 
   it("maxDepth=0 only fetches the seed page", async () => {

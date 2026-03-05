@@ -383,7 +383,7 @@ async function main(): Promise<void> {
         const gen = spiderUrl(url, spiderOptions);
         let result = await gen.next();
         while (!result.done) {
-          const page = result.value as import("../core/spider.js").SpiderResult;
+          const page = result.value;
           try {
             const doc = await indexDocument(db, provider, {
               title: page.title,
@@ -401,7 +401,7 @@ async function main(): Promise<void> {
           }
           result = await gen.next();
         }
-        const stats = result.value as import("../core/spider.js").SpiderStats;
+        const stats = result.value;
 
         const summary = [
           `Spider complete.`,
