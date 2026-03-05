@@ -1636,6 +1636,13 @@ packCmd
         ? parseIntOption(opts.concurrency, "--concurrency")
         : undefined;
 
+      if (concurrency !== undefined && concurrency < 1) {
+        reporter.log('Error: "--concurrency" must be an integer greater than or equal to 1.');
+        closeDatabase();
+        process.exit(1);
+        return;
+      }
+
       try {
         const result = await installPack(db, provider, nameOrPath, {
           registryUrl: opts.registry,

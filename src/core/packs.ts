@@ -321,8 +321,24 @@ export async function installPack(
   const concurrency = options?.concurrency ?? 4;
   const resumeFrom = options?.resumeFrom ?? 0;
   const onProgress = options?.onProgress;
-  const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
   const total = pack.documents.length;
+
+  if (!Number.isInteger(batchSize) || batchSize <= 0) {
+    throw new ValidationError("batchSize must be a positive integer");
+  }
+  if (!Number.isInteger(concurrency) || concurrency <= 0) {
+    throw new ValidationError("concurrency must be a positive integer");
+  }
+  if (!Number.isInteger(resumeFrom) || resumeFrom < 0) {
+    throw new ValidationError("resumeFrom must be a non-negative integer");
+  }
+  if (resumeFrom > total) {
+    throw new ValidationError(
+      "resumeFrom cannot be greater than the total number of documents in the pack",
+    );
+  }
+
+  const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
 
   log.info(
     { pack: pack.name, docCount: total, batchSize, concurrency, resumeFrom },
@@ -350,7 +366,8 @@ export async function installPack(
     VALUES (?, ?)
   `);
 
-  // Phase 1: Pre-chunk ALL documents into batches upfront (synchronous).
+  // Slice docs into batches by index only — chunks are computed lazily when each
+  // batch is scheduled, so we never hold all chunks in memory simultaneously.
   type DocChunkInfo = {
     doc: PackDocument;
     docId: string;
@@ -359,16 +376,23 @@ export async function installPack(
     chunkOffset: number; // offset into allChunks for this batch
   };
   type BatchData = {
+    batchDocs: PackDocument[];
+  };
+  type ResolvedBatch = {
     docInfos: DocChunkInfo[];
     allChunks: string[];
   };
 
   const batches: BatchData[] = [];
   for (let batchStart = 0; batchStart < docs.length; batchStart += batchSize) {
-    const batchDocs = docs.slice(batchStart, batchStart + batchSize);
+    batches.push({ batchDocs: docs.slice(batchStart, batchStart + batchSize) });
+  }
+
+  /** Chunk a batch's documents on demand, right before embedding. */
+  function resolveBatch(batch: BatchData): ResolvedBatch {
     const docInfos: DocChunkInfo[] = [];
     const allChunks: string[] = [];
-    for (const doc of batchDocs) {
+    for (const doc of batch.batchDocs) {
       const contentHash = createHash("sha256").update(doc.content).digest("hex");
       const useStreaming = doc.content.length > STREAMING_THRESHOLD;
       const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
@@ -381,7 +405,7 @@ export async function installPack(
       });
       allChunks.push(...chunks);
     }
-    batches.push({ docInfos, allChunks });
+    return { docInfos, allChunks };
   }
 
   // Phase 2 & 3: Embed batches concurrently (up to `concurrency` at a time),
@@ -391,7 +415,7 @@ export async function installPack(
   let errors = 0;
   let processedCount = resumeFrom;
 
-  type EmbedResult = { embeddings: number[][]; success: boolean };
+  type EmbedResult = { resolved: ResolvedBatch; embeddings: number[][]; success: boolean };
   const embedResults: Array<EmbedResult | undefined> = Array.from<EmbedResult | undefined>({
     length: batches.length,
   });
@@ -401,8 +425,8 @@ export async function installPack(
   function flushInserts(): void {
     while (nextInsertIdx < batches.length && embedResults[nextInsertIdx] !== undefined) {
       const i = nextInsertIdx++;
-      const batch = batches[i]!;
-      const result = embedResults[i]!;
+      const { resolved: batch, embeddings, success } = embedResults[i]!;
+      const result = { embeddings, success };
 
       if (!result.success) {
         errors += batch.docInfos.length;
@@ -473,24 +497,32 @@ export async function installPack(
     function scheduleNext(): void {
       while (activeCount < concurrency && scheduleIdx < batches.length) {
         const i = scheduleIdx++;
-        const batch = batches[i]!;
+        const resolved = resolveBatch(batches[i]!);
         activeCount++;
 
-        const embedPromise =
-          batch.allChunks.length > 0
-            ? provider.embedBatch(batch.allChunks)
-            : Promise.resolve([] as number[][]);
+        // Wrap in try/catch so synchronous throws from embedBatch don't leave
+        // the surrounding Promise permanently pending.
+        let embedPromise: Promise<number[][]>;
+        if (resolved.allChunks.length > 0) {
+          try {
+            embedPromise = provider.embedBatch(resolved.allChunks);
+          } catch (err) {
+            embedPromise = Promise.reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        } else {
+          embedPromise = Promise.resolve([] as number[][]);
+        }
 
         embedPromise
           .then((embeddings) => {
-            embedResults[i] = { embeddings, success: true };
+            embedResults[i] = { resolved, embeddings, success: true };
           })
           .catch((err) => {
             log.warn(
               { err, pack: pack.name, batchIndex: i },
               "Failed to embed batch, skipping these documents",
             );
-            embedResults[i] = { embeddings: [], success: false };
+            embedResults[i] = { resolved, embeddings: [], success: false };
           })
           .finally(() => {
             activeCount--;
