@@ -23,7 +23,7 @@ export default defineConfig({
       { text: "Guide", link: "/guide/getting-started" },
       { text: "Reference", link: "/reference/cli" },
       {
-        text: "v1.1.0",
+        text: "v1.3.0",
         items: [
           {
             text: "Changelog",
@@ -83,7 +83,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: "Released under the MIT License.",
+      message: "Released under the Business Source License 1.1.",
       copyright: "Copyright © 2026 RobertLD",
     },
   },
