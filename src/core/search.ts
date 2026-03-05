@@ -711,7 +711,7 @@ function fts5Search(
   params.push(limit);
   params.push(offset);
 
-  let rows: Array<{
+  let rows = db.prepare(sql).all(...params) as Array<{
     chunk_id: string;
     document_id: string;
     chunk_content: string;
@@ -724,17 +724,6 @@ function fts5Search(
     fts_rank: number;
     avg_rating: number | null;
   }>;
-
-  try {
-    rows = db.prepare(sql).all(...params) as typeof rows;
-  } catch (err) {
-    // If AND query returns no results (e.g. not all terms present), fall back to OR
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("fts5") || rows! === undefined) {
-      throw err;
-    }
-    rows = [];
-  }
 
   // If AND returned nothing, retry with OR for recall
   if (rows.length === 0 && words.length > 1) {
