@@ -19,9 +19,7 @@ jobs:
         id: release
         with:
           release-type: node
-          # Use a PAT so the created PR triggers CI workflows.
-          # GITHUB_TOKEN cannot trigger other workflows (GitHub security restriction).
-          token: ${{ secrets.GH_TOKEN }}
+          token: ${{ secrets.GH_TOKEN || github.token }}
 
   publish:
     runs-on: ubuntu-latest
