@@ -251,7 +251,11 @@ export function fireWebhooks(
   data: Record<string, unknown>,
 ): void {
   const log = getLogger();
-  const rows = db.prepare("SELECT * FROM webhooks WHERE active = 1").all() as WebhookRow[];
+  const rows = db
+    .prepare(
+      "SELECT id, url, events, secret, active, created_at, last_triggered_at, failure_count FROM webhooks WHERE active = 1",
+    )
+    .all() as WebhookRow[];
 
   const body = buildPayload(event, data);
 

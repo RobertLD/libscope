@@ -39,8 +39,8 @@ export function exportKnowledgeBase(db: Database.Database, outputPath: string): 
       webhooks = (db.prepare("SELECT * FROM webhooks").all() as Record<string, unknown>[]).map(
         (w) => ({ ...w, secret: w.secret != null ? "[REDACTED]" : null }),
       );
-    } catch {
-      // webhooks table may not exist
+    } catch (err) {
+      log.debug({ err }, "Webhooks table not present in export (table may not exist)");
     }
 
     const data: ExportData = {

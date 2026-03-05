@@ -172,8 +172,8 @@ export function recordSearchQuery(db: Database.Database, entry: RecordSearchQuer
     db.prepare(
       "INSERT INTO search_queries (query, result_count, top_score, search_type) VALUES (?, ?, ?, ?)",
     ).run(entry.query, entry.resultCount, entry.topScore, entry.searchType);
-  } catch {
-    // silently ignore if table doesn't exist yet
+  } catch (err) {
+    getLogger().debug({ err }, "search_queries insert skipped (table may not exist yet)");
   }
 }
 

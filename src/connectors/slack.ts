@@ -499,13 +499,19 @@ export function disconnectSlack(db: Database.Database): number {
     for (const row of rows) {
       try {
         deleteChunksFts.run(row.id);
-      } catch {
-        // FTS table may not exist
+      } catch (err) {
+        getLogger().debug(
+          { err, documentId: row.id },
+          "FTS table cleanup skipped (table may not exist)",
+        );
       }
       try {
         deleteEmbeddings.run(row.id);
-      } catch {
-        // chunk_embeddings table may not exist
+      } catch (err) {
+        getLogger().debug(
+          { err, documentId: row.id },
+          "chunk_embeddings cleanup skipped (table may not exist)",
+        );
       }
       deleteChunks.run(row.id);
       deleteDoc.run(row.id);

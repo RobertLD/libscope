@@ -469,8 +469,11 @@ export function removePack(db: Database.Database, packName: string): void {
         db.prepare(
           "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
         ).run(id);
-      } catch {
-        // chunk_embeddings table may not exist
+      } catch (err) {
+        log.debug(
+          { err, documentId: id },
+          "chunk_embeddings cleanup skipped (table may not exist)",
+        );
       }
       db.prepare("DELETE FROM documents WHERE id = ?").run(id);
     }

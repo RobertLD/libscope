@@ -199,6 +199,10 @@ export async function updateDocument(
     ? createHash("sha256").update(newContent).digest("hex")
     : existing.contentHash;
 
+  // Use JS Date so test fake-timers (vi.setSystemTime) can control the timestamp.
+  // SQLite's datetime('now') uses the OS clock and cannot be mocked in unit tests.
+  const updatedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
+
   if (contentChanged) {
     log.info({ docId: documentId }, "Content changed, re-chunking and re-indexing embeddings");
 
@@ -221,7 +225,7 @@ export async function updateDocument(
       db.prepare("DELETE FROM chunks WHERE document_id = ?").run(documentId);
 
       db.prepare(
-        `UPDATE documents SET title = ?, content = ?, library = ?, version = ?, url = ?, topic_id = ?, content_hash = ?, updated_at = datetime('now') WHERE id = ?`,
+        `UPDATE documents SET title = ?, content = ?, library = ?, version = ?, url = ?, topic_id = ?, content_hash = ?, updated_at = ? WHERE id = ?`,
       ).run(
         newTitle,
         newContent,
@@ -230,6 +234,7 @@ export async function updateDocument(
         newUrl,
         newTopicId,
         contentHash,
+        updatedAt,
         documentId,
       );
 
@@ -260,8 +265,8 @@ export async function updateDocument(
       saveVersion(db, documentId);
 
       db.prepare(
-        `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = datetime('now') WHERE id = ?`,
-      ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, documentId);
+        `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = ? WHERE id = ?`,
+      ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, updatedAt, documentId);
     });
 
     transaction();
