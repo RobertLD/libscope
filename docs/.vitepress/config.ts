@@ -1,4 +1,8 @@
 import { defineConfig } from "vitepress";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../../package.json");
 
 export default defineConfig({
   title: "LibScope",
@@ -23,7 +27,7 @@ export default defineConfig({
       { text: "Guide", link: "/guide/getting-started" },
       { text: "Reference", link: "/reference/cli" },
       {
-        text: "v1.1.0",
+        text: `v${version}`,
         items: [
           {
             text: "Changelog",
