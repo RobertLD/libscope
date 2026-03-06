@@ -321,7 +321,7 @@ export function convertConfluenceStorage(html: string): string {
 
   // ri:attachment → [attached: filename] as span
   processed = processed.replace(
-    /<ri:attachment\s+ri:filename="([^"]*)"[^>]*\/?>/gi,
+    /<ri:attachment\s+ri:filename="([^"]*)"[^>]{0,500}\/?>/gi,
     (_match, filename: string) => `<span>[attached: ${filename}]</span>`,
   );
 

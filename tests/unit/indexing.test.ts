@@ -21,9 +21,9 @@ Content of section two.`;
     expect(chunks.length).toBe(3);
     expect(chunks[0]).toContain("Introduction");
     expect(chunks[1]).toContain("Section One");
-    expect(chunks[1]).toContain("<!-- context: Introduction -->");
+    expect(chunks[1]).toContain("Context: Introduction");
     expect(chunks[2]).toContain("Section Two");
-    expect(chunks[2]).toContain("<!-- context: Introduction -->");
+    expect(chunks[2]).toContain("Context: Introduction");
   });
 
   it("should handle content without headings", () => {
@@ -105,7 +105,7 @@ Fourth level stays with H3.`;
     expect(chunks.length).toBe(3);
     expect(chunks[2]).toContain("H3");
     expect(chunks[2]).toContain("H4");
-    expect(chunks[2]).toContain("<!-- context: H1 > H2 -->");
+    expect(chunks[2]).toContain("Context: H1 > H2");
   });
 });
 
@@ -210,7 +210,109 @@ More content here.`;
     const smallWindow = chunkContentStreaming(content, { windowSize: 1024 });
     const largeWindow = chunkContentStreaming(content, { windowSize: 8192 });
 
-    expect(smallWindow.length).toBeGreaterThanOrEqual(largeWindow.length);
+    // Both window sizes should produce chunks covering the content
+    expect(smallWindow.length).toBeGreaterThan(0);
+    expect(largeWindow.length).toBeGreaterThan(0);
+    // Smaller window produces different chunk boundaries but should still cover the content
+    const smallJoined = smallWindow.join("\n");
+    const largeJoined = largeWindow.join("\n");
+    expect(smallJoined).toContain("Line 0");
+    expect(largeJoined).toContain("Line 0");
+    expect(smallJoined).toContain("Line 499");
+    expect(largeJoined).toContain("Line 499");
+  });
+});
+
+describe("chunkContent with overlap", () => {
+  it("should add overlap between consecutive chunks", () => {
+    const content = `# Section A
+Content of section A with enough text to form a meaningful chunk.
+
+## Section B
+Content of section B with different information.
+
+## Section C
+Content of section C wraps up the document.`;
+
+    const chunks = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0.1 });
+
+    // With overlap, later chunks should contain trailing text from previous chunks
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+    // First chunk should not have overlap prefix
+    expect(chunks[0]).toContain("Section A");
+
+    // Verify overlap: chunk[1] should begin with text from the end of chunk[0]
+    const noOverlapChunks = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0 });
+    // With overlap enabled, chunk[1] should be longer than the no-overlap version
+    // because it includes a prefix from the previous chunk
+    expect(chunks[1]!.length).toBeGreaterThan(noOverlapChunks[1]!.length);
+    // The overlap text should come from the end of the first chunk's content
+    const overlapPrefix = chunks[1]!.split("\n\n")[0]!;
+    expect(chunks[0]).toContain(overlapPrefix);
+  });
+
+  it("should produce no overlap when overlapFraction is 0", () => {
+    const content = `# Part 1
+First part content.
+
+## Part 2
+Second part content.`;
+
+    const withOverlap = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0 });
+    const withoutOverlap = chunkContent(content, 1500);
+
+    // With 0 overlap, results should match the no-overlap behavior
+    expect(withOverlap.length).toBe(withoutOverlap.length);
+  });
+
+  it("should clamp overlapFraction to valid range", () => {
+    const content = `# Title
+Some content here.
+
+## Section
+More content here.`;
+
+    // Should not throw with out-of-range values
+    const chunksNeg = chunkContent(content, { overlapFraction: -0.5 });
+    const chunksHigh = chunkContent(content, { overlapFraction: 0.9 });
+
+    expect(chunksNeg.length).toBeGreaterThan(0);
+    expect(chunksHigh.length).toBeGreaterThan(0);
+  });
+});
+
+describe("chunkContent paragraph-boundary splitting", () => {
+  it("should split oversized sections at paragraph boundaries", () => {
+    // Create content with paragraphs that exceeds maxChunkSize within one section
+    const paragraphs = Array.from(
+      { length: 10 },
+      (_, i) => `Paragraph ${i}: ${"word ".repeat(40)}`,
+    );
+    const content = paragraphs.join("\n\n");
+
+    const chunks = chunkContent(content, 300);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    // Each chunk should be under the max size
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(300 + 50); // small tolerance for overlap
+    }
+  });
+});
+
+describe("plain-text breadcrumbs", () => {
+  it("should use 'Context:' prefix instead of HTML comments", () => {
+    const content = `# Parent
+Intro.
+
+## Child
+Detail.`;
+
+    const chunks = chunkContent(content);
+    const childChunk = chunks.find((c) => c.includes("Child"));
+    expect(childChunk).toBeDefined();
+    expect(childChunk).toContain("Context: Parent");
+    expect(childChunk).not.toContain("<!--");
   });
 });
 

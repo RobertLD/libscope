@@ -1,5 +1,10 @@
 export { indexDocument, indexFile, chunkContent } from "./indexing.js";
-export type { IndexDocumentInput, IndexFileOptions, IndexedDocument } from "./indexing.js";
+export type {
+  IndexDocumentInput,
+  IndexFileOptions,
+  IndexedDocument,
+  ChunkOptions,
+} from "./indexing.js";
 
 export { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 export type { DocumentParser } from "./parsers/index.js";
@@ -226,3 +231,12 @@ export type { Webhook, RedactedWebhook, WebhookEvent, WebhookPayload } from "./w
 
 export { ConnectorScheduler, loadScheduleEntries } from "./scheduler.js";
 export type { ScheduleConfig, SchedulerStatus } from "./scheduler.js";
+
+export { searchBatch, BATCH_SEARCH_MAX_REQUESTS } from "./batch-search.js";
+export type { BatchSearchRequest, BatchSearchResponse } from "./batch-search.js";
+
+export { pruneExpiredDocuments } from "./ttl.js";
+export type { PruneResult } from "./ttl.js";
+
+export { LibScope } from "../LibScope.js";
+export type { LibScopeOptions } from "../LibScope.js";

@@ -36,13 +36,15 @@ On first run with the default embedding provider, LibScope downloads the [all-Mi
 
 LibScope supports **Markdown** (`.md`, `.mdx`) and **plain text** natively. Additional formats are available via optional dependencies:
 
-| Format | Extension | Optional Dependency | Node.js Requirement |
-| ------ | --------- | ------------------- | ------------------- |
-| PDF    | `.pdf`    | `pdf-parse` (v2)    | ≥ 20.16 or ≥ 22.3   |
-| Word   | `.docx`   | `mammoth`           | Any                 |
-| CSV    | `.csv`    | Built-in            | Any                 |
+| Format       | Extension | Optional Dependency | Node.js Requirement |
+| ------------ | --------- | ------------------- | ------------------- |
+| PDF          | `.pdf`    | `pdf-parse` (v2)    | ≥ 20.16 or ≥ 22.3   |
+| Word         | `.docx`   | `mammoth`           | Any                 |
+| EPUB         | `.epub`   | `epub2`             | Any                 |
+| PowerPoint   | `.pptx`   | `pizzip`            | Any                 |
+| CSV          | `.csv`    | Built-in            | Any                 |
 
-The `pdf-parse` and `mammoth` packages are listed as `optionalDependencies` and install automatically when the Node.js version is compatible.
+The `pdf-parse`, `mammoth`, `epub2`, and `pizzip` packages are listed as `optionalDependencies` and install automatically when the Node.js version is compatible. Note: binary `.ppt` files are not supported — only `.pptx`.
 
 ## Using with AI Assistants
 
@@ -166,7 +168,22 @@ libscope ask "How do I configure OAuth2?" --library my-lib
 libscope repl
 ```
 
-Search uses sqlite-vec for vector similarity when available, with FTS5 full-text search as a fallback.
+Search uses sqlite-vec for vector similarity when available, with FTS5 full-text search as a fallback. Results automatically get a 1.5× title boost when the document title matches query words. You can also pass `--diversity 0.5` (0–1) for MMR-based diversity reranking.
+
+### Programmatic SDK
+
+LibScope also exports a `LibScope` class for use as a library:
+
+```ts
+import { LibScope } from "libscope";
+
+const scope = LibScope.create();
+await scope.index({ title: "My Doc", content: "..." });
+const results = await scope.search("query");
+scope.close();
+```
+
+See the [Programmatic Usage](/guide/programmatic-usage) guide for details on the SDK, batch search, and document TTL/expiry.
 
 ## Organizing Content
 
@@ -206,6 +223,7 @@ OpenAPI 3.0 spec at `GET /openapi.json`. Key endpoints:
 | Method          | Endpoint                          | Description                        |
 | --------------- | --------------------------------- | ---------------------------------- |
 | `GET`           | `/api/v1/search?q=...`            | Semantic search                    |
+| `POST`          | `/api/v1/batch-search`            | Batch search (up to 20 queries)    |
 | `POST`          | `/api/v1/ask`                     | RAG question-answering             |
 | `GET/POST`      | `/api/v1/documents`               | List or create documents           |
 | `GET/PATCH/DELETE` | `/api/v1/documents/:id`        | Get, update, or delete a document  |
@@ -254,7 +272,7 @@ export LIBSCOPE_OPENAI_API_KEY=sk-...
 The `ask` command and `ask-question` MCP tool need an LLM. Configure one with:
 
 ```bash
-export LIBSCOPE_LLM_PROVIDER=openai   # or ollama
+export LIBSCOPE_LLM_PROVIDER=openai   # or ollama, anthropic
 export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
 ```
 
@@ -266,8 +284,9 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
 | `LIBSCOPE_EMBEDDING_PROVIDER`      | `local`, `ollama`, or `openai`           | `local`                  |
 | `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key                           | —                        |
 | `LIBSCOPE_OLLAMA_URL`              | Ollama server URL                        | `http://localhost:11434` |
-| `LIBSCOPE_LLM_PROVIDER`            | LLM for RAG (`openai` / `ollama`)        | —                        |
+| `LIBSCOPE_LLM_PROVIDER`            | LLM for RAG (`openai` / `ollama` / `anthropic`) | —                |
 | `LIBSCOPE_LLM_MODEL`               | LLM model override                       | —                        |
+| `LIBSCOPE_ANTHROPIC_API_KEY`       | Anthropic API key (for Claude models)    | —                        |
 | `LIBSCOPE_ALLOW_PRIVATE_URLS`      | Allow fetching from private/internal IPs | `false`                  |
 | `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates      | `false`                  |
 | `ONENOTE_CLIENT_ID`                | Microsoft app registration client ID     | —                        |
@@ -292,7 +311,8 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
   },
   "llm": {
     "provider": "openai",
-    "model": "gpt-4o-mini"
+    "model": "gpt-4o-mini",
+    "anthropicApiKey": "sk-ant-..."
   },
   "database": {
     "path": "~/.libscope/libscope.db"

@@ -1,4 +1,11 @@
-import { randomUUID, createHmac } from "node:crypto";
+import {
+  randomUUID,
+  createHmac,
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  scryptSync,
+} from "node:crypto";
 import { promises as dns, lookup as dnsLookup } from "node:dns";
 import { promisify } from "node:util";
 import type Database from "better-sqlite3";
@@ -7,6 +14,34 @@ import { getLogger } from "../logger.js";
 import { isPrivateIP } from "./url-fetcher.js";
 
 const lookupAsync = promisify(dnsLookup);
+
+const SECRET_KEY_ENV = "LIBSCOPE_SECRET_KEY";
+
+/** Encrypt a webhook secret using AES-256-GCM if LIBSCOPE_SECRET_KEY is set. */
+function encryptSecret(plaintext: string): string {
+  const key = process.env[SECRET_KEY_ENV];
+  if (!key) return plaintext;
+  const keyBuf = scryptSync(key, "libscope-webhook-salt", 32);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", keyBuf, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
+}
+
+/** Decrypt a webhook secret encrypted by encryptSecret. */
+function decryptSecret(stored: string): string {
+  if (!stored.startsWith("enc:")) return stored;
+  const key = process.env[SECRET_KEY_ENV];
+  if (!key) return stored;
+  const parts = stored.split(":");
+  if (parts.length !== 4) return stored;
+  const [, ivHex, tagHex, encHex] = parts;
+  const keyBuf = scryptSync(key, "libscope-webhook-salt", 32);
+  const decipher = createDecipheriv("aes-256-gcm", keyBuf, Buffer.from(ivHex!, "hex"));
+  decipher.setAuthTag(Buffer.from(tagHex!, "hex"));
+  return decipher.update(Buffer.from(encHex!, "hex")).toString("utf8") + decipher.final("utf8");
+}
 
 export const WEBHOOK_EVENTS = [
   "document.created",
@@ -166,14 +201,21 @@ export async function createWebhook(
   validateEvents(events);
   await validateWebhookUrlSsrf(url);
 
+  if (!process.env[SECRET_KEY_ENV]) {
+    getLogger().warn(
+      "LIBSCOPE_SECRET_KEY is not set — webhook secrets stored in plaintext. Set this env var to enable at-rest encryption.",
+    );
+  }
+
   const id = randomUUID();
   const eventsJson = JSON.stringify(events);
+  const encryptedSecret = secret ? encryptSecret(secret) : null;
 
   db.prepare("INSERT INTO webhooks (id, url, events, secret) VALUES (?, ?, ?, ?)").run(
     id,
     url,
     eventsJson,
-    secret ?? null,
+    encryptedSecret,
   );
 
   const row = db.prepare("SELECT * FROM webhooks WHERE id = ?").get(id) as WebhookRow;
@@ -221,7 +263,12 @@ export async function updateWebhook(
 
   const url = updates.url ?? existing.url;
   const events = updates.events ?? existing.events;
-  const secret = "secret" in updates ? updates.secret : existing.secret;
+  const secret =
+    "secret" in updates
+      ? updates.secret
+        ? encryptSecret(updates.secret)
+        : updates.secret
+      : existing.secret;
   const active = "active" in updates ? (updates.active ? 1 : 0) : existing.active ? 1 : 0;
 
   db.prepare("UPDATE webhooks SET url = ?, events = ?, secret = ?, active = ? WHERE id = ?").run(
@@ -278,7 +325,7 @@ export function fireWebhooks(
       "Content-Type": "application/json",
     };
     if (webhook.secret) {
-      headers["X-LibScope-Signature"] = signPayload(body, webhook.secret);
+      headers["X-LibScope-Signature"] = signPayload(body, decryptSecret(webhook.secret));
     }
 
     // SSRF check before firing

@@ -15,6 +15,7 @@ The OpenAPI 3.0 spec is available at `GET /openapi.json`.
 | Method | Endpoint                  | Description                           |
 | ------ | ------------------------- | ------------------------------------- |
 | `GET`  | `/api/v1/search?q=...`    | Semantic search                       |
+| `POST` | `/api/v1/batch-search`    | Run up to 20 search queries at once   |
 | `POST` | `/api/v1/ask`             | RAG question-answering                |
 
 ### Documents
@@ -107,6 +108,21 @@ curl "http://localhost:3378/api/v1/search?q=authentication&limit=5"
 
 ```bash
 curl "http://localhost:3378/api/v1/search?q=deploy&library=my-lib&topic=backend&limit=10"
+```
+
+### Batch search
+
+Run multiple search queries concurrently (up to 20). Results are keyed by query string.
+
+```bash
+curl -X POST http://localhost:3378/api/v1/batch-search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requests": [
+      { "query": "authentication" },
+      { "query": "deployment", "options": { "library": "my-lib", "limit": 5 } }
+    ]
+  }'
 ```
 
 ### Ask a question

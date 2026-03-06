@@ -26,9 +26,10 @@ Complete reference for all configuration options.
 
 | Key               | Type   | Default | Description                                    |
 | ----------------- | ------ | ------- | ---------------------------------------------- |
-| `llm.provider`    | string | —       | `openai`, `ollama`, or `passthrough`           |
-| `llm.model`       | string | —       | Model name override                            |
-| `llm.ollamaUrl`   | string | —       | Ollama server URL (overrides embedding URL)    |
+| `llm.provider`        | string | —       | `openai`, `ollama`, `anthropic`, or `passthrough` |
+| `llm.model`           | string | —       | Model name override                               |
+| `llm.ollamaUrl`       | string | —       | Ollama server URL (overrides embedding URL)       |
+| `llm.anthropicApiKey` | string | —       | Anthropic API key (or use `LIBSCOPE_ANTHROPIC_API_KEY` env var) |
 
 ### Database
 
@@ -58,6 +59,7 @@ Complete reference for all configuration options.
 | `LIBSCOPE_OLLAMA_URL`              | `embedding.ollamaUrl`           | `http://localhost:11434` |
 | `LIBSCOPE_LLM_PROVIDER`            | `llm.provider`                  | —                        |
 | `LIBSCOPE_LLM_MODEL`               | `llm.model`                     | —                        |
+| `LIBSCOPE_ANTHROPIC_API_KEY`       | `llm.anthropicApiKey`           | —                        |
 | `LIBSCOPE_ALLOW_PRIVATE_URLS`      | `indexing.allowPrivateUrls`     | `false`                  |
 | `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | `indexing.allowSelfSignedCerts` | `false`                  |
 | `ONENOTE_CLIENT_ID`                | OneNote app client ID           | —                        |
