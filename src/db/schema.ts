@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 17;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -256,6 +256,18 @@ const MIGRATIONS: Record<number, string> = {
     );
 
     INSERT INTO schema_version (version) VALUES (15);
+  `,
+  16: `
+    CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_chunks_doc_idx ON chunks(document_id, chunk_index);
+
+    INSERT INTO schema_version (version) VALUES (16);
+  `,
+  17: `
+    ALTER TABLE documents ADD COLUMN expires_at TEXT;
+    CREATE INDEX IF NOT EXISTS idx_documents_expires_at ON documents(expires_at) WHERE expires_at IS NOT NULL;
+
+    INSERT INTO schema_version (version) VALUES (17);
   `,
 };
 

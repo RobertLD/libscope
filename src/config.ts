@@ -13,10 +13,11 @@ export interface LibScopeConfig {
     openaiModel?: string;
   };
   llm?: {
-    provider?: "openai" | "ollama" | "passthrough";
+    provider?: "openai" | "ollama" | "anthropic" | "passthrough";
     model?: string;
     ollamaUrl?: string;
     openaiApiKey?: string;
+    anthropicApiKey?: string;
   };
   database: {
     path: string;
@@ -115,14 +116,20 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
   if (
     llmProvider === "openai" ||
     llmProvider === "ollama" ||
+    llmProvider === "anthropic" ||
     llmProvider === "passthrough" ||
     llmModel
   ) {
+    const anthropicKey = process.env["LIBSCOPE_ANTHROPIC_API_KEY"];
     overrides.llm = {
-      ...(llmProvider === "openai" || llmProvider === "ollama" || llmProvider === "passthrough"
+      ...(llmProvider === "openai" ||
+      llmProvider === "ollama" ||
+      llmProvider === "anthropic" ||
+      llmProvider === "passthrough"
         ? { provider: llmProvider }
         : {}),
       ...(llmModel ? { model: llmModel } : {}),
+      ...(anthropicKey ? { anthropicApiKey: anthropicKey } : {}),
     };
   }
 

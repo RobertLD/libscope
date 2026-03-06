@@ -59,6 +59,8 @@ export interface SearchOptions {
   maxChunksPerDocument?: number | undefined;
   contextChunks?: number | undefined;
   analyticsEnabled?: boolean | undefined;
+  /** MMR diversity factor 0–1. 0 = pure relevance, 1 = maximum diversity. */
+  diversity?: number | undefined;
 }
 
 export interface SearchResponse {
@@ -158,6 +160,77 @@ function attachContext(
     const { before, after } = fetchContextChunks(db, r.chunkId, r.documentId, capped);
     return { ...r, contextBefore: before, contextAfter: after };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Title boost
+// ---------------------------------------------------------------------------
+const TITLE_BOOST_MULTIPLIER = 1.5;
+
+function titleMatchesQuery(title: string, query: string): boolean {
+  const words = query.split(/\s+/).filter((w) => w.length > 0);
+  const lowerTitle = title.toLowerCase();
+  return words.some((w) => lowerTitle.includes(w.toLowerCase()));
+}
+
+function applyTitleBoost(results: SearchResult[], query: string): SearchResult[] {
+  return results.map((r) => {
+    if (!titleMatchesQuery(r.title, query)) return r;
+    const boosted = r.score * TITLE_BOOST_MULTIPLIER;
+    return {
+      ...r,
+      score: boosted,
+      scoreExplanation: {
+        ...r.scoreExplanation,
+        boostFactors: [
+          ...r.scoreExplanation.boostFactors,
+          `title_match:x${TITLE_BOOST_MULTIPLIER}`,
+        ],
+        details: r.scoreExplanation.details + ` (title boost x${TITLE_BOOST_MULTIPLIER})`,
+      },
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Maximal Marginal Relevance (MMR)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rerank results using Maximal Marginal Relevance for diversity.
+ * @param results - Pre-sorted results (highest score first)
+ * @param diversity - 0–1 where 1 = maximum diversity
+ */
+function applyMMR(results: SearchResult[], diversity: number): SearchResult[] {
+  if (results.length <= 1) return results;
+  const lambda = 1 - Math.max(0, Math.min(diversity, 1));
+  const selected: SearchResult[] = [];
+  const remaining = [...results];
+
+  selected.push(remaining.shift()!);
+
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmrScore = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i]!;
+      let maxSim = 0;
+      for (const sel of selected) {
+        const sim = 1 - Math.abs(candidate.score - sel.score);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const mmrScore = lambda * candidate.score - (1 - lambda) * maxSim;
+      if (mmrScore > bestMmrScore) {
+        bestMmrScore = mmrScore;
+        bestIdx = i;
+      }
+    }
+
+    selected.push(remaining.splice(bestIdx, 1)[0]!);
+  }
+
+  return selected;
 }
 
 /** Perform semantic search across indexed documents. */
@@ -314,6 +387,15 @@ export async function searchDocuments(
       });
     }
 
+    // Apply title boost
+    response.results = applyTitleBoost(response.results, options.query);
+    response.results.sort((a, b) => b.score - a.score);
+
+    // Apply MMR diversity reranking if requested
+    if (options.diversity !== undefined && options.diversity > 0) {
+      response.results = applyMMR(response.results, options.diversity);
+    }
+
     // Deduplicate by document — keep top N chunks per document
     if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
       const countByDoc = new Map<string, number>();
@@ -336,6 +418,13 @@ export async function searchDocuments(
     }
     log.warn({ err }, "Vector table missing, falling back to keyword search");
     const response = keywordSearch(db, options, limit, offset);
+
+    // Apply title boost and MMR to fallback results
+    response.results = applyTitleBoost(response.results, options.query);
+    response.results.sort((a, b) => b.score - a.score);
+    if (options.diversity !== undefined && options.diversity > 0) {
+      response.results = applyMMR(response.results, options.diversity);
+    }
 
     if (analyticsEnabled) {
       const method = response.results[0]?.scoreExplanation.method ?? "keyword";
