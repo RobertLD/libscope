@@ -136,32 +136,33 @@ export function chunkContent(
  * Falls back to hard character split when a paragraph exceeds maxSize.
  */
 function splitAtParagraphs(text: string, maxSize: number, out: string[]): void {
-  // Try splitting on double newlines (paragraph boundaries) first
+  const emit = (buf: string): void => {
+    const trimmed = buf.trim();
+    if (trimmed.length === 0) return;
+    if (trimmed.length <= maxSize) {
+      out.push(trimmed);
+    } else {
+      for (let i = 0; i < trimmed.length; i += maxSize) {
+        const slice = trimmed.slice(i, i + maxSize).trim();
+        if (slice.length > 0) out.push(slice);
+      }
+    }
+  };
+
   const paragraphs = text.split(/\n\n+/);
   let buffer = "";
 
   for (const para of paragraphs) {
     const candidate = buffer.length === 0 ? para : buffer + "\n\n" + para;
     if (candidate.length > maxSize && buffer.length > 0) {
-      out.push(buffer.trim());
+      emit(buffer);
       buffer = para;
     } else {
       buffer = candidate;
     }
   }
 
-  if (buffer.trim().length > 0) {
-    // If still oversized, do a hard split at maxSize
-    const remaining = buffer.trim();
-    if (remaining.length <= maxSize) {
-      out.push(remaining);
-    } else {
-      for (let i = 0; i < remaining.length; i += maxSize) {
-        const slice = remaining.slice(i, i + maxSize).trim();
-        if (slice.length > 0) out.push(slice);
-      }
-    }
-  }
+  emit(buffer);
 }
 
 /**

@@ -369,10 +369,12 @@ export async function searchDocuments(
   const vecBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
   // Try hybrid search: vector + FTS5 merged via RRF
-  // Over-fetch from each source by 2x to compensate for overlap between
-  // vector and FTS5 lists — RRF deduplicates shared chunks, so the fused
-  // unique set is often smaller than the sum of both lists.
-  const candidateLimit = (offset + limit) * 2;
+  // Over-fetch from each source by 3x (capped) to compensate for overlap
+  // between vector and FTS5 lists — RRF deduplicates shared chunks, so the
+  // fused unique set is often smaller than the sum of both lists.
+  const overfetchFactor = 3;
+  const maxCandidateLimit = 5000;
+  const candidateLimit = Math.min((offset + limit) * overfetchFactor, maxCandidateLimit);
   try {
     const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit, 0);
     let ftsResults: SearchResult[] | null = null;

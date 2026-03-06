@@ -277,10 +277,12 @@ describe.runIf(isVecAvailable())("retrieval quality: TF-IDF embeddings + sqlite-
       const rank = results.findIndex((r) => r.documentId === expectedTopId);
       const topResult = results[0]!;
 
-      console.log(
-        `  [${label}] top=${topResult.documentId} (${topResult.score.toFixed(4)}), ` +
-          `expected=${expectedTopId} at rank ${rank + 1}, method=${topResult.scoreExplanation.method}`,
-      );
+      if (process.env.DEBUG) {
+        console.log(
+          `  [${label}] top=${topResult.documentId} (${topResult.score.toFixed(4)}), ` +
+            `expected=${expectedTopId} at rank ${rank + 1}, method=${topResult.scoreExplanation.method}`,
+        );
+      }
 
       expect(rank).toBeGreaterThanOrEqual(0);
       expect(rank).toBeLessThan(3);
@@ -297,7 +299,7 @@ describe.runIf(isVecAvailable())("retrieval quality: TF-IDF embeddings + sqlite-
     expect(results.length).toBeGreaterThan(0);
     const methods = new Set(results.map((r) => r.scoreExplanation.method));
 
-    console.log(`  search methods used: ${[...methods].join(", ")}`);
+    if (process.env.DEBUG) console.log(`  search methods used: ${[...methods].join(", ")}`);
 
     // With both vector + FTS5, we should get hybrid results
     expect(methods.has("hybrid")).toBe(true);
@@ -316,10 +318,12 @@ describe.runIf(isVecAvailable())("retrieval quality: TF-IDF embeddings + sqlite-
       true,
     );
 
-    console.log(
-      `  title boost: ts-generics rank=${results.findIndex((r) => r.documentId === "ts-generics") + 1}, ` +
-        `score=${tsGenerics!.score.toFixed(4)}, factors=${tsGenerics!.scoreExplanation.boostFactors.join(",")}`,
-    );
+    if (process.env.DEBUG) {
+      console.log(
+        `  title boost: ts-generics rank=${results.findIndex((r) => r.documentId === "ts-generics") + 1}, ` +
+          `score=${tsGenerics!.score.toFixed(4)}, factors=${tsGenerics!.scoreExplanation.boostFactors.join(",")}`,
+      );
+    }
 
     // Should be rank 1
     expect(results[0]!.documentId).toBe("ts-generics");
@@ -340,7 +344,8 @@ describe.runIf(isVecAvailable())("retrieval quality: TF-IDF embeddings + sqlite-
 
     // It should be ranked high
     const rank = results.findIndex((r) => r.documentId === "ts-generics");
-    console.log(`  AND logic: ts-generics rank=${rank + 1} for "TypeScript generics reusable"`);
+    if (process.env.DEBUG)
+      console.log(`  AND logic: ts-generics rank=${rank + 1} for "TypeScript generics reusable"`);
     expect(rank).toBeLessThan(3);
   });
 
@@ -355,10 +360,12 @@ describe.runIf(isVecAvailable())("retrieval quality: TF-IDF embeddings + sqlite-
       });
       const rank = results.findIndex((r) => r.documentId === expectedTopId);
       if (rank >= 0 && rank < 3) hits++;
-      else console.log(`  miss: "${label}" expected=${expectedTopId} actual rank=${rank + 1}`);
+      else if (process.env.DEBUG)
+        console.log(`  miss: "${label}" expected=${expectedTopId} actual rank=${rank + 1}`);
     }
 
-    console.log(`\n  ★ Overall precision: ${hits}/${QUERIES.length} in top-3\n`);
+    if (process.env.DEBUG)
+      console.log(`\n  ★ Overall precision: ${hits}/${QUERIES.length} in top-3\n`);
     expect(hits).toBeGreaterThanOrEqual(5);
   });
 });
