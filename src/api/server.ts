@@ -9,6 +9,7 @@ import { ConnectorScheduler, loadScheduleEntries } from "../core/scheduler.js";
 export interface ApiServerOptions {
   port?: number | undefined;
   host?: string | undefined;
+  /** Allowed CORS origins. Defaults to ["http://localhost", "http://localhost:3000"]. */
   corsOrigins?: string[] | undefined;
   enableScheduler?: boolean | undefined;
 }
@@ -25,7 +26,7 @@ export async function startApiServer(
   const log = getLogger();
   const port = options?.port ?? 3378;
   const host = options?.host ?? "localhost";
-  const corsOrigins = options?.corsOrigins ?? ["*"];
+  const corsOrigins = options?.corsOrigins ?? ["http://localhost", "http://localhost:3000"];
 
   const server = createServer((req, res) => {
     // Rate limiting

@@ -73,12 +73,23 @@ export function logSearch(db: Database.Database, entry: SearchLogEntry): string 
 
 /** Return overview stats for the knowledge base. */
 export function getStats(db: Database.Database, dbPath?: string): OverviewStats {
-  const docs = db.prepare("SELECT COUNT(*) AS cnt FROM documents").get() as { cnt: number };
-  const chunks = db.prepare("SELECT COUNT(*) AS cnt FROM chunks").get() as { cnt: number };
-  const topics = db.prepare("SELECT COUNT(*) AS cnt FROM topics").get() as { cnt: number };
-  const searches = db.prepare("SELECT COUNT(*) AS cnt FROM search_log").get() as { cnt: number };
-  const latency = db.prepare("SELECT AVG(latency_ms) AS avg FROM search_log").get() as {
-    avg: number | null;
+  const row = db
+    .prepare(
+      `
+    SELECT
+      (SELECT COUNT(*) FROM documents) AS doc_count,
+      (SELECT COUNT(*) FROM chunks) AS chunk_count,
+      (SELECT COUNT(*) FROM topics) AS topic_count,
+      (SELECT COUNT(*) FROM search_log) AS search_count,
+      (SELECT AVG(latency_ms) FROM search_log) AS avg_latency
+  `,
+    )
+    .get() as {
+    doc_count: number;
+    chunk_count: number;
+    topic_count: number;
+    search_count: number;
+    avg_latency: number | null;
   };
 
   let databaseSizeBytes = 0;
@@ -91,12 +102,12 @@ export function getStats(db: Database.Database, dbPath?: string): OverviewStats 
   }
 
   return {
-    totalDocuments: docs.cnt,
-    totalChunks: chunks.cnt,
-    totalTopics: topics.cnt,
+    totalDocuments: row.doc_count,
+    totalChunks: row.chunk_count,
+    totalTopics: row.topic_count,
     databaseSizeBytes,
-    totalSearches: searches.cnt,
-    avgLatencyMs: Math.round(latency.avg ?? 0),
+    totalSearches: row.search_count,
+    avgLatencyMs: Math.round(row.avg_latency ?? 0),
   };
 }
 

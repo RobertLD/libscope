@@ -42,6 +42,9 @@ export function getDatabase(dbPath?: string): Database.Database {
     db = new Database(resolvedPath);
     cachedPath = resolvedPath;
     db.pragma("journal_mode = WAL");
+    db.pragma("synchronous = NORMAL"); // safe with WAL, 2-3x faster writes
+    db.pragma("cache_size = -32000"); // 32 MB page cache
+    db.pragma("temp_store = MEMORY"); // keep temp tables in memory
     db.pragma("foreign_keys = ON");
 
     // Load sqlite-vec extension
@@ -90,6 +93,9 @@ export function createDatabase(dbPath: string): Database.Database {
     }
     const newDb = new Database(dbPath);
     newDb.pragma("journal_mode = WAL");
+    newDb.pragma("synchronous = NORMAL");
+    newDb.pragma("cache_size = -32000");
+    newDb.pragma("temp_store = MEMORY");
     newDb.pragma("foreign_keys = ON");
     try {
       const sqliteVec = require("sqlite-vec") as { load: (db: Database.Database) => void };
