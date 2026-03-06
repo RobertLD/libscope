@@ -35,6 +35,8 @@ libscope add https://docs.example.com/guide
 libscope import ./docs/ --library my-lib --extensions .md,.mdx
 ```
 
+LibScope supports **Markdown** (`.md`, `.mdx`) and **plain text** natively. Additional formats — **PDF** (`.pdf`), **Word** (`.docx`), **EPUB** (`.epub`), and **PowerPoint** (`.pptx`) — are available via optional dependencies that install automatically. See the [README](/) for the full format table.
+
 Each document gets chunked by heading, embedded into vectors, and stored in the database.
 
 ## Search
@@ -51,7 +53,7 @@ Results are ranked by vector similarity, with optional FTS5 boosting for keyword
 
 ## Ask Questions
 
-If you have an LLM provider configured (OpenAI or Ollama), you can ask questions and get synthesized answers with source citations:
+If you have an LLM provider configured (OpenAI, Ollama, or Anthropic), you can ask questions and get synthesized answers with source citations:
 
 ```bash
 libscope ask "What is the recommended auth flow?"
@@ -119,3 +121,4 @@ The OpenAPI 3.0 spec is served at `GET /openapi.json`. See [REST API Reference](
 - [Connectors](/guide/connectors) — sync from Obsidian, Notion, Confluence, Slack, and more
 - [CLI Reference](/reference/cli) — full list of commands and options
 - [REST API Reference](/reference/rest-api) — full API endpoint documentation
+- [Programmatic Usage](/guide/programmatic-usage) — use LibScope as a Node.js library

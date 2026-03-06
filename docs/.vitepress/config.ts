@@ -52,6 +52,10 @@ export default defineConfig({
             { text: "MCP Setup", link: "/guide/mcp-setup" },
             { text: "Connectors", link: "/guide/connectors" },
             { text: "Knowledge Packs", link: "/guide/knowledge-packs" },
+            {
+              text: "Programmatic Usage",
+              link: "/guide/programmatic-usage",
+            },
           ],
         },
         {

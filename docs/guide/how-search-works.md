@@ -25,7 +25,21 @@ where `k = 60` (standard constant). Chunks that rank well in *both* vector and F
 ### 5. Title Boost
 Chunks whose document title contains any query word receive a 1.5× score multiplier, lifting exact-title matches to the top.
 
-### 6. Pagination & Deduplication
+### 6. MMR Diversity Reranking
+
+When you set the `diversity` option (0–1), results are reranked using **Maximal Marginal Relevance (MMR)**. This penalizes results that are too similar to already-selected results, pushing diverse content higher in the list.
+
+- `diversity: 0` — pure relevance (no reranking)
+- `diversity: 0.5` — balanced relevance and diversity
+- `diversity: 1` — maximum diversity
+
+MMR is applied after title boost and score sorting. It's useful when you want to cover different aspects of a topic rather than getting multiple chunks from the same document.
+
+```bash
+libscope search "authentication" --diversity 0.5
+```
+
+### 7. Pagination & Deduplication
 Results are optionally deduplicated by document (`maxChunksPerDocument`) and paginated. Use `offset` and `limit` in your search options for pagination.
 
 ## Search Methods
@@ -60,5 +74,6 @@ Every search result includes a `scoreExplanation` object:
 | `offset` | 0 | Pagination offset |
 | `maxChunksPerDocument` | unlimited | Max chunks returned per document |
 | `contextChunks` | 0 | Adjacent chunks to include for context (max 2) |
+| `diversity` | 0 | MMR diversity factor (0 = relevance only, 1 = max diversity) |
 | `minRating` | none | Filter by minimum avg document rating |
 | `tags` | none | Filter by document tags (AND logic) |
