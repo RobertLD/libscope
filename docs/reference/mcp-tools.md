@@ -83,6 +83,20 @@ Update an existing document's title, content, or metadata. Changing content trig
 | `url`        | string |          | New source URL (pass `null` to clear)   |
 | `topicId`    | string |          | New topic ID (pass `null` to clear)     |
 
+## update-document
+
+Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding.
+
+| Parameter    | Type   | Required | Description                             |
+| ------------ | ------ | -------- | --------------------------------------- |
+| `documentId` | string | ✅       | The document ID to update               |
+| `title`      | string |          | New title                               |
+| `content`    | string |          | New content (triggers re-chunking)      |
+| `library`    | string |          | New library name (pass `null` to clear) |
+| `version`    | string |          | New version (pass `null` to clear)      |
+| `url`        | string |          | New source URL (pass `null` to clear)   |
+| `topicId`    | string |          | New topic ID (pass `null` to clear)     |
+
 ## rate-document
 
 Rate a document and optionally suggest corrections.
