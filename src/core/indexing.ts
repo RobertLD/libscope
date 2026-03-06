@@ -23,6 +23,8 @@ export interface IndexDocumentInput {
   dedup?: "skip" | "warn" | "force" | undefined;
   /** Options for duplicate detection (threshold, strategy). */
   dedupOptions?: DedupOptions | undefined;
+  /** ISO 8601 expiry timestamp. Document will be pruned by pruneExpiredDocuments() after this time. */
+  expiresAt?: string | undefined;
 }
 
 export interface IndexedDocument {
@@ -393,8 +395,8 @@ export async function indexDocument(
 
   // Store everything in a transaction
   const insertDoc = db.prepare(`
-    INSERT INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, content_hash)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, content_hash, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertChunk = db.prepare(`
@@ -438,6 +440,7 @@ export async function indexDocument(
       input.url ?? null,
       input.submittedBy ?? "manual",
       contentHash,
+      input.expiresAt ?? null,
     );
 
     for (let i = 0; i < chunks.length; i++) {

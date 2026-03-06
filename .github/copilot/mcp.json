@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "libscope": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/mcp/server.js"]
+    }
+  }
+}
