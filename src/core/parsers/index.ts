@@ -7,6 +7,8 @@ import { CsvParser } from "./csv.js";
 import { PdfParser } from "./pdf.js";
 import { WordParser } from "./word.js";
 import { HtmlParser } from "./html.js";
+import { EpubParser } from "./epub.js";
+import { PptxParser } from "./pptx.js";
 
 /** Interface for document format parsers. */
 export interface DocumentParser {
@@ -25,6 +27,8 @@ const parsers: DocumentParser[] = [
   new PdfParser(),
   new WordParser(),
   new HtmlParser(),
+  new EpubParser(),
+  new PptxParser(),
 ];
 
 const extensionMap = new Map<string, DocumentParser>();

@@ -76,7 +76,16 @@ export LIBSCOPE_LLM_PROVIDER=openai
 export LIBSCOPE_LLM_MODEL=gpt-4o-mini
 ```
 
-Supported providers: `openai`, `ollama`, `passthrough`.
+Supported providers: `openai`, `ollama`, `anthropic`, `passthrough`.
+
+The `anthropic` provider uses Anthropic's Claude models. Set the API key via config or environment variable:
+
+```bash
+export LIBSCOPE_LLM_PROVIDER=anthropic
+export LIBSCOPE_ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Or in your config file, set `llm.provider` to `"anthropic"` and `llm.anthropicApiKey` to your key. You can optionally set `llm.model` to choose a specific Claude model.
 
 The `passthrough` provider is for advanced integrations where you supply your own LLM responses externally. When set, the `ask` command emits an event stream that your application handles rather than calling an LLM directly.
 
@@ -87,8 +96,9 @@ The `passthrough` provider is for advanced integrations where you supply your ow
 | `LIBSCOPE_EMBEDDING_PROVIDER`      | Embedding provider (`local` / `ollama` / `openai`) | `local`                  |
 | `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key                                     | —                        |
 | `LIBSCOPE_OLLAMA_URL`              | Ollama server URL                                  | `http://localhost:11434` |
-| `LIBSCOPE_LLM_PROVIDER`            | LLM provider for RAG (`openai` / `ollama`)         | —                        |
+| `LIBSCOPE_LLM_PROVIDER`            | LLM provider for RAG (`openai` / `ollama` / `anthropic`) | —                  |
 | `LIBSCOPE_LLM_MODEL`               | LLM model override                                 | —                        |
+| `LIBSCOPE_ANTHROPIC_API_KEY`       | Anthropic API key (for Claude models)              | —                        |
 | `LIBSCOPE_ALLOW_PRIVATE_URLS`      | Allow fetching from private/internal IPs           | `false`                  |
 | `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates                | `false`                  |
 | `ONENOTE_CLIENT_ID`                | Microsoft app registration client ID               | —                        |

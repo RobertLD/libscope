@@ -67,10 +67,11 @@ export function extractSources(results: SearchResult[]): RagSource[] {
 }
 
 interface LlmConfig {
-  provider?: "openai" | "ollama" | "passthrough";
+  provider?: "openai" | "ollama" | "anthropic" | "passthrough";
   model?: string;
   ollamaUrl?: string;
   openaiApiKey?: string;
+  anthropicApiKey?: string;
 }
 
 /** Returns true if the config is set to passthrough mode (delegate synthesis to the calling LLM). */
@@ -89,9 +90,12 @@ export function createLlmProvider(config: LibScopeConfig): LlmProvider {
   if (providerType === "ollama") {
     return createOllamaProvider(config.embedding, llmConfig);
   }
+  if (providerType === "anthropic") {
+    return createAnthropicProvider(llmConfig);
+  }
 
   throw new ConfigError(
-    "No LLM provider configured. Set llm.provider to 'openai', 'ollama', or 'passthrough' in your config, " +
+    "No LLM provider configured. Set llm.provider to 'openai', 'ollama', 'anthropic', or 'passthrough' in your config, " +
       "or set LIBSCOPE_LLM_PROVIDER environment variable.",
   );
 }
@@ -266,6 +270,44 @@ function createOllamaProvider(
           : undefined;
 
       return { text: data.response, tokensUsed };
+    },
+  };
+}
+
+function createAnthropicProvider(llmConfig: LlmConfig | undefined): LlmProvider {
+  const apiKey = llmConfig?.anthropicApiKey ?? process.env["ANTHROPIC_API_KEY"];
+  if (!apiKey) {
+    throw new ConfigError(
+      "Anthropic API key is required. Set llm.anthropicApiKey in config or ANTHROPIC_API_KEY env var.",
+    );
+  }
+
+  const model = llmConfig?.model ?? "claude-3-5-haiku-20241022";
+
+  return {
+    model,
+    async complete(
+      prompt: string,
+      systemPrompt?: string,
+    ): Promise<{ text: string; tokensUsed?: number | undefined }> {
+      const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      const client = new Anthropic({ apiKey });
+
+      const message = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        ...(systemPrompt ? { system: systemPrompt } : {}),
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const text = message.content
+        .filter((block) => block.type === "text")
+        .map((block) => ("text" in block ? block.text : ""))
+        .join("");
+
+      const tokensUsed = message.usage.input_tokens + message.usage.output_tokens;
+
+      return { text, tokensUsed };
     },
   };
 }
