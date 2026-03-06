@@ -413,7 +413,12 @@ export async function searchDocuments(
     }
 
     // Apply pagination to merged (and possibly deduped) results
-    const paginatedResults = mergedResults.slice(offset, offset + limit);
+    let paginatedResults = mergedResults.slice(offset, offset + limit);
+
+    // Attach ratings post-pagination (deferred from search queries for perf)
+    if (options.minRating === undefined) {
+      paginatedResults = attachRatings(db, paginatedResults);
+    }
 
     // totalCount: the fused unique set is the best lower bound we have.
     // For hybrid searches, the true match count is at least as large as
@@ -456,6 +461,11 @@ export async function searchDocuments(
     }
     log.warn({ err }, "Vector table missing, falling back to keyword search");
     const response = keywordSearch(db, options, limit, offset);
+
+    // Attach ratings post-query when minRating filter is not active
+    if (options.minRating === undefined) {
+      response.results = attachRatings(db, response.results);
+    }
 
     // Apply title boost to fallback results
     response.results = applyTitleBoost(response.results, options.query);
@@ -500,8 +510,10 @@ function vectorSearch(
   limit: number,
   _offset: number,
 ): SearchResponse {
-  // Over-fetch from the ANN index so post-filter still yields enough rows.
-  const annCandidateLimit = limit * 3;
+  // The caller already over-fetches; use the limit directly.
+  const annCandidateLimit = limit;
+
+  const needsRatingJoin = options.minRating !== undefined;
 
   let sql = `
     SELECT
@@ -514,8 +526,7 @@ function vectorSearch(
       d.library,
       d.version,
       d.topic_id,
-      d.url,
-      avg_r.avg_rating
+      d.url${needsRatingJoin ? ",\n      avg_r.avg_rating" : ""}
     FROM (
       SELECT chunk_id, distance
       FROM chunk_embeddings
@@ -524,12 +535,16 @@ function vectorSearch(
       LIMIT ?
     ) candidates
     JOIN chunks c ON c.id = candidates.chunk_id
-    JOIN documents d ON d.id = c.document_id
+    JOIN documents d ON d.id = c.document_id${
+      needsRatingJoin
+        ? `
     LEFT JOIN (
       SELECT document_id, AVG(rating) AS avg_rating
       FROM ratings
       GROUP BY document_id
-    ) avg_r ON avg_r.document_id = d.id
+    ) avg_r ON avg_r.document_id = d.id`
+        : ""
+    }
     WHERE 1=1
   `;
 
@@ -573,7 +588,7 @@ function vectorSearch(
         topicId: row.topic_id,
         url: row.url,
         score: similarity,
-        avgRating: row.avg_rating,
+        avgRating: needsRatingJoin ? row.avg_rating : null,
         scoreExplanation: {
           method: "vector" as SearchMethod,
           rawScore: row.distance,
@@ -605,6 +620,8 @@ function keywordSearch(
   const words = options.query.split(/\s+/).filter((w) => w.length > 0);
   if (words.length === 0) return { results: [], totalCount: 0 };
 
+  const needsRatingJoin = options.minRating !== undefined;
+
   const likeConditions = words.map(() => "c.content LIKE ? ESCAPE '\\'").join(" OR ");
   const params: unknown[] = words.map((w) => `%${escapeLikePattern(w)}%`);
 
@@ -618,15 +635,18 @@ function keywordSearch(
       d.library,
       d.version,
       d.topic_id,
-      d.url,
-      avg_r.avg_rating
+      d.url${needsRatingJoin ? ",\n      avg_r.avg_rating" : ""}
     FROM chunks c
-    JOIN documents d ON d.id = c.document_id
+    JOIN documents d ON d.id = c.document_id${
+      needsRatingJoin
+        ? `
     LEFT JOIN (
       SELECT document_id, AVG(rating) AS avg_rating
       FROM ratings
       GROUP BY document_id
-    ) avg_r ON avg_r.document_id = d.id
+    ) avg_r ON avg_r.document_id = d.id`
+        : ""
+    }
     WHERE (${likeConditions})
   `;
 
@@ -678,7 +698,7 @@ function keywordSearch(
         topicId: row.topic_id,
         url: row.url,
         score: rankScore,
-        avgRating: row.avg_rating,
+        avgRating: needsRatingJoin ? row.avg_rating : null,
         scoreExplanation: {
           method: "keyword" as SearchMethod,
           rawScore: rankScore,
@@ -690,6 +710,39 @@ function keywordSearch(
   };
 }
 
+/** Strip FTS5 special syntax from a single query word before quoting. */
+function sanitizeFtsWord(word: string): string {
+  // Strip column-filter syntax (e.g. "chunk_id:foo" → "foo")
+  const colonIdx = word.indexOf(":");
+  if (colonIdx !== -1) {
+    word = word.slice(colonIdx + 1);
+  }
+  // Strip prefix/suffix wildcards
+  word = word.replace(/^\*+|\*+$/g, "");
+  // If the remaining word is a standalone FTS5 operator, return empty
+  if (/^(NEAR|AND|OR|NOT)$/i.test(word)) {
+    return "";
+  }
+  return word;
+}
+
+/** Fetch avg ratings for a small set of documents and attach to results. */
+function attachRatings(db: Database.Database, results: SearchResult[]): SearchResult[] {
+  if (results.length === 0) return results;
+  const ids = [...new Set(results.map((r) => r.documentId))];
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT document_id, AVG(rating) AS avg_rating
+       FROM ratings
+       WHERE document_id IN (${placeholders})
+       GROUP BY document_id`,
+    )
+    .all(...ids) as Array<{ document_id: string; avg_rating: number | null }>;
+  const ratingMap = new Map(rows.map((r) => [r.document_id, r.avg_rating]));
+  return results.map((r) => ({ ...r, avgRating: ratingMap.get(r.documentId) ?? null }));
+}
+
 /** FTS5-based full-text search with BM25 ranking. Uses AND logic by default. */
 function fts5Search(
   db: Database.Database,
@@ -697,10 +750,15 @@ function fts5Search(
   limit: number,
   offset: number,
 ): SearchResponse {
-  // Escape FTS5 query: wrap each word in quotes for safety.
+  // Sanitize and escape FTS5 query: strip dangerous syntax, wrap each word in quotes.
   // AND-by-default: require all terms to match for better precision.
-  const words = options.query.split(/\s+/).filter((w) => w.length > 0);
+  const words = options.query
+    .split(/\s+/)
+    .map((w) => sanitizeFtsWord(w))
+    .filter((w) => w.length > 0);
   if (words.length === 0) return { results: [], totalCount: 0 };
+
+  const needsRatingJoin = options.minRating !== undefined;
 
   const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
   const params: unknown[] = [ftsQuery];
@@ -716,15 +774,18 @@ function fts5Search(
       d.version,
       d.topic_id,
       d.url,
-      rank AS fts_rank,
-      avg_r.avg_rating
+      rank AS fts_rank${needsRatingJoin ? ",\n      avg_r.avg_rating" : ""}
     FROM chunks_fts f
-    JOIN documents d ON d.id = f.document_id
+    JOIN documents d ON d.id = f.document_id${
+      needsRatingJoin
+        ? `
     LEFT JOIN (
       SELECT document_id, AVG(rating) AS avg_rating
       FROM ratings
       GROUP BY document_id
-    ) avg_r ON avg_r.document_id = d.id
+    ) avg_r ON avg_r.document_id = d.id`
+        : ""
+    }
     WHERE chunks_fts MATCH ?
   `;
 
@@ -767,15 +828,18 @@ function fts5Search(
         d.version,
         d.topic_id,
         d.url,
-        rank AS fts_rank,
-        avg_r.avg_rating
+        rank AS fts_rank${needsRatingJoin ? ",\n        avg_r.avg_rating" : ""}
       FROM chunks_fts f
-      JOIN documents d ON d.id = f.document_id
+      JOIN documents d ON d.id = f.document_id${
+        needsRatingJoin
+          ? `
       LEFT JOIN (
         SELECT document_id, AVG(rating) AS avg_rating
         FROM ratings
         GROUP BY document_id
-      ) avg_r ON avg_r.document_id = d.id
+      ) avg_r ON avg_r.document_id = d.id`
+          : ""
+      }
       WHERE chunks_fts MATCH ?
     `;
     orSql = appendFilters(orSql, orParams, options, "d");
@@ -816,7 +880,7 @@ function fts5Search(
         topicId: row.topic_id,
         url: row.url,
         score: bm25Score,
-        avgRating: row.avg_rating,
+        avgRating: needsRatingJoin ? row.avg_rating : null,
         scoreExplanation: {
           method: "fts5" as SearchMethod,
           rawScore: row.fts_rank,

@@ -16,6 +16,17 @@ Semantic search across your knowledge base.
 | `limit`     | number |          | Max results (default: 10)    |
 | `offset`    | number |          | Pagination offset            |
 
+**Search results** include a `scoreExplanation` object on each result:
+
+```typescript
+{
+  method: "hybrid" | "vector" | "fts5" | "keyword",
+  rawScore: number,       // raw score before boosts
+  boostFactors: string[], // e.g. ["title_match:x1.5"]
+  details: string         // human-readable scoring breakdown
+}
+```
+
 ## get-document
 
 Retrieve a document by its ID, including ratings and metadata.
@@ -45,6 +56,18 @@ Index a new document. You can provide content directly, or a URL to fetch automa
 | `version`    | string |          | Library version                                      |
 | `topic`      | string |          | Topic to categorize under                            |
 | `sourceType` | string |          | `library`, `topic`, `manual`, or `model-generated`   |
+| `dedup`      | string |          | Duplicate detection behaviour (see below)             |
+| `dedupOptions` | object |        | Fine-tune duplicate detection (see below)             |
+
+**`dedup`** *(optional)*: Controls duplicate detection behaviour.
+- `"skip"` — If a duplicate is detected, return the existing document without re-indexing
+- `"warn"` — Log a warning about the duplicate but index anyway
+- `"force"` — Skip duplicate checking entirely and always index
+- *(omitted)* — Default behaviour: reject exact duplicates by title+content-length, allow similar content
+
+**`dedupOptions`** *(optional)*: Fine-tune duplicate detection.
+- `threshold` *(number, 0–1)*: Similarity threshold for semantic dedup (default 0.95)
+- `strategy` *(string)*: `"exact"` (hash-based) or `"semantic"` (embedding-based)
 
 ## update-document
 

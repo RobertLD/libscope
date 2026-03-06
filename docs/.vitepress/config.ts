@@ -54,6 +54,13 @@ export default defineConfig({
             { text: "Knowledge Packs", link: "/guide/knowledge-packs" },
           ],
         },
+        {
+          text: "Deep Dives",
+          items: [
+            { text: "How Search Works", link: "/guide/how-search-works" },
+            { text: "Troubleshooting", link: "/guide/troubleshooting" },
+          ],
+        },
       ],
       "/reference/": [
         {
@@ -83,7 +90,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: "Released under the MIT License.",
+      message: "Released under the Business Source License 1.1.",
       copyright: "Copyright © 2026 RobertLD",
     },
   },
