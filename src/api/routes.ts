@@ -32,8 +32,9 @@ import {
   bulkDelete,
   bulkRetag,
   bulkMove,
+  searchBatch,
 } from "../core/index.js";
-import type { LinkType, BulkSelector } from "../core/index.js";
+import type { LinkType, BulkSelector, BatchSearchRequest } from "../core/index.js";
 import { loadConfig } from "../config.js";
 import { DocumentNotFoundError, FetchError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -269,6 +270,24 @@ export async function handleRequest(
         offset,
         maxChunksPerDocument,
       });
+      const took = Math.round(performance.now() - start);
+      sendJson(res, 200, result, took);
+      return;
+    }
+
+    // Batch search
+    if (pathname === "/api/v1/batch-search" && method === "POST") {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object") {
+        sendError(res, 400, "VALIDATION_ERROR", "Request body must be a JSON object");
+        return;
+      }
+      const b = body as Record<string, unknown>;
+      if (!Array.isArray(b["requests"])) {
+        sendError(res, 400, "VALIDATION_ERROR", "Field 'requests' must be an array");
+        return;
+      }
+      const result = await searchBatch(db, provider, b["requests"] as BatchSearchRequest[]);
       const took = Math.round(performance.now() - start);
       sendJson(res, 200, result, took);
       return;
