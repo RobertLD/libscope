@@ -59,6 +59,8 @@ export interface SearchOptions {
   maxChunksPerDocument?: number | undefined;
   contextChunks?: number | undefined;
   analyticsEnabled?: boolean | undefined;
+  /** MMR diversity factor 0–1. 0 = pure relevance, 1 = maximum diversity. */
+  diversity?: number | undefined;
 }
 
 export interface SearchResponse {
@@ -271,6 +273,43 @@ function applyTitleBoost(results: SearchResult[], query: string): SearchResult[]
   });
 }
 
+/**
+ * Rerank results using Maximal Marginal Relevance for diversity.
+ * @param results - Pre-sorted results (highest score first)
+ * @param diversity - 0–1 where 1 = maximum diversity
+ */
+function applyMMR(results: SearchResult[], diversity: number): SearchResult[] {
+  if (results.length <= 1) return results;
+  const lambda = 1 - Math.max(0, Math.min(diversity, 1));
+  const selected: SearchResult[] = [];
+  const remaining = [...results];
+
+  selected.push(remaining.shift()!);
+
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmrScore = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i]!;
+      let maxSim = 0;
+      for (const sel of selected) {
+        const sim = 1 - Math.abs(candidate.score - sel.score);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const mmrScore = lambda * candidate.score - (1 - lambda) * maxSim;
+      if (mmrScore > bestMmrScore) {
+        bestMmrScore = mmrScore;
+        bestIdx = i;
+      }
+    }
+
+    selected.push(remaining.splice(bestIdx, 1)[0]!);
+  }
+
+  return selected;
+}
+
 /** Deduplicate results by document, keeping at most N chunks per document. */
 function deduplicateByDocument(results: SearchResult[], maxPerDoc: number): SearchResult[] {
   const countByDoc = new Map<string, number>();
@@ -405,6 +444,11 @@ export async function searchDocuments(
     // Re-sort after boost
     mergedResults.sort((a, b) => b.score - a.score);
 
+    // Apply MMR diversity reranking if requested
+    if (options.diversity !== undefined && options.diversity > 0) {
+      mergedResults = applyMMR(mergedResults, options.diversity);
+    }
+
     // Apply per-document deduplication on the full ranked list BEFORE
     // pagination so that page sizes stay stable and later pages aren't
     // short-changed by dedup removing items from within the page.
@@ -470,6 +514,11 @@ export async function searchDocuments(
     // Apply title boost to fallback results
     response.results = applyTitleBoost(response.results, options.query);
     response.results.sort((a, b) => b.score - a.score);
+
+    // Apply MMR diversity reranking if requested
+    if (options.diversity !== undefined && options.diversity > 0) {
+      response.results = applyMMR(response.results, options.diversity);
+    }
 
     if (analyticsEnabled) {
       const method = response.results[0]?.scoreExplanation.method ?? "keyword";
