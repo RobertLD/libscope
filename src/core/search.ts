@@ -717,8 +717,12 @@ function sanitizeFtsWord(word: string): string {
   if (colonIdx !== -1) {
     word = word.slice(colonIdx + 1);
   }
-  // Strip prefix/suffix wildcards
-  word = word.replace(/^\*+|\*+$/g, "");
+  // Strip prefix/suffix wildcards using index scan to avoid ReDoS
+  let start = 0;
+  while (start < word.length && word[start] === "*") start++;
+  let end = word.length;
+  while (end > start && word[end - 1] === "*") end--;
+  word = word.slice(start, end);
   // If the remaining word is a standalone FTS5 operator, return empty
   if (/^(NEAR|AND|OR|NOT)$/i.test(word)) {
     return "";
