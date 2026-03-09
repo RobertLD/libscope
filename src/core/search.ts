@@ -1,7 +1,9 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
+import { z } from "zod";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 import { validateCountRow } from "../utils/db-validation.js";
+import { validateRow, validateRows } from "../db/validate.js";
 import { logSearch, recordSearchQuery } from "./analytics.js";
 import { performance } from "node:perf_hooks";
 
@@ -100,12 +102,6 @@ export interface SearchResult {
   contextAfter?: ContextChunk[] | undefined;
 }
 
-interface ChunkRow {
-  id: string;
-  content: string;
-  chunk_index: number;
-}
-
 // ---------------------------------------------------------------------------
 // Title boost multiplier: chunks whose document title contains any query word
 // receive this multiplicative boost to their final score.
@@ -141,7 +137,8 @@ function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): Sea
   const map = new Map<string, RankedItem>();
 
   for (let i = 0; i < listA.length; i++) {
-    const r = listA[i]!;
+    const r = listA[i];
+    if (r === undefined) continue;
     const key = r.chunkId;
     const existing = map.get(key);
     if (existing) {
@@ -152,7 +149,8 @@ function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): Sea
   }
 
   for (let i = 0; i < listB.length; i++) {
-    const r = listB[i]!;
+    const r = listB[i];
+    if (r === undefined) continue;
     const key = r.chunkId;
     const existing = map.get(key);
     if (existing) {
@@ -202,29 +200,43 @@ function fetchContextChunks(
   documentId: string,
   contextSize: number,
 ): { before: ContextChunk[]; after: ContextChunk[] } {
-  const currentRow = db
-    .prepare(`SELECT chunk_index FROM chunks WHERE id = ? AND document_id = ?`)
-    .get(chunkId, documentId) as { chunk_index: number } | undefined;
+  const CurrentRowSchema = z.object({ chunk_index: z.number() }).optional();
+  const currentRow = validateRow(
+    CurrentRowSchema,
+    db
+      .prepare(`SELECT chunk_index FROM chunks WHERE id = ? AND document_id = ?`)
+      .get(chunkId, documentId),
+    "fetchContextChunks.currentRow",
+  );
 
   if (!currentRow) return { before: [], after: [] };
 
   const idx = currentRow.chunk_index;
 
-  const beforeRows = db
-    .prepare(
-      `SELECT id, content, chunk_index FROM chunks
+  const ChunkRowSchema = z.object({ id: z.string(), content: z.string(), chunk_index: z.number() });
+  const beforeRows = validateRows(
+    ChunkRowSchema,
+    db
+      .prepare(
+        `SELECT id, content, chunk_index FROM chunks
        WHERE document_id = ? AND chunk_index >= ? AND chunk_index < ?
        ORDER BY chunk_index ASC`,
-    )
-    .all(documentId, Math.max(0, idx - contextSize), idx) as ChunkRow[];
+      )
+      .all(documentId, Math.max(0, idx - contextSize), idx),
+    "fetchContextChunks.beforeRows",
+  );
 
-  const afterRows = db
-    .prepare(
-      `SELECT id, content, chunk_index FROM chunks
+  const afterRows = validateRows(
+    ChunkRowSchema,
+    db
+      .prepare(
+        `SELECT id, content, chunk_index FROM chunks
        WHERE document_id = ? AND chunk_index > ? AND chunk_index <= ?
        ORDER BY chunk_index ASC`,
-    )
-    .all(documentId, idx, idx + contextSize) as ChunkRow[];
+      )
+      .all(documentId, idx, idx + contextSize),
+    "fetchContextChunks.afterRows",
+  );
 
   return {
     before: beforeRows.map((r) => ({
@@ -284,14 +296,17 @@ function applyMMR(results: SearchResult[], diversity: number): SearchResult[] {
   const selected: SearchResult[] = [];
   const remaining = [...results];
 
-  selected.push(remaining.shift()!);
+  const first = remaining.shift();
+  if (!first) return selected;
+  selected.push(first);
 
   while (remaining.length > 0) {
     let bestIdx = 0;
     let bestMmrScore = -Infinity;
 
     for (let i = 0; i < remaining.length; i++) {
-      const candidate = remaining[i]!;
+      const candidate = remaining[i];
+      if (candidate === undefined) continue;
       let maxSim = 0;
       for (const sel of selected) {
         const sim = 1 - Math.abs(candidate.score - sel.score);
@@ -304,7 +319,9 @@ function applyMMR(results: SearchResult[], diversity: number): SearchResult[] {
       }
     }
 
-    selected.push(remaining.splice(bestIdx, 1)[0]!);
+    const picked = remaining.splice(bestIdx, 1)[0];
+    if (picked === undefined) break;
+    selected.push(picked);
   }
 
   return selected;
@@ -602,19 +619,20 @@ function vectorSearch(
 
   sql += ` ORDER BY candidates.distance`;
 
-  const rows = db.prepare(sql).all(...params) as Array<{
-    chunk_id: string;
-    distance: number;
-    document_id: string;
-    chunk_content: string;
-    title: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    url: string | null;
-    avg_rating: number | null;
-  }>;
+  const VectorRowSchema = z.object({
+    chunk_id: z.string(),
+    distance: z.number(),
+    document_id: z.string(),
+    chunk_content: z.string(),
+    title: z.string(),
+    source_type: z.string(),
+    library: z.string().nullable(),
+    version: z.string().nullable(),
+    topic_id: z.string().nullable(),
+    url: z.string().nullable(),
+    avg_rating: z.number().nullable().optional(),
+  });
+  const rows = validateRows(VectorRowSchema, db.prepare(sql).all(...params), "vectorSearch.rows");
 
   // totalCount: if we got fewer rows than the ANN candidate limit, we know
   // the true total (all candidates survived filtering). Otherwise the real
@@ -709,18 +727,19 @@ function keywordSearch(
   params.push(limit);
   params.push(offset);
 
-  const rows = db.prepare(sql).all(...params) as Array<{
-    chunk_id: string;
-    document_id: string;
-    chunk_content: string;
-    title: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    url: string | null;
-    avg_rating: number | null;
-  }>;
+  const KeywordRowSchema = z.object({
+    chunk_id: z.string(),
+    document_id: z.string(),
+    chunk_content: z.string(),
+    title: z.string(),
+    source_type: z.string(),
+    library: z.string().nullable(),
+    version: z.string().nullable(),
+    topic_id: z.string().nullable(),
+    url: z.string().nullable(),
+    avg_rating: z.number().nullable().optional(),
+  });
+  const rows = validateRows(KeywordRowSchema, db.prepare(sql).all(...params), "keywordSearch.rows");
 
   const totalCount = lazyCount(
     db,
@@ -784,14 +803,19 @@ function attachRatings(db: Database.Database, results: SearchResult[]): SearchRe
   if (results.length === 0) return results;
   const ids = [...new Set(results.map((r) => r.documentId))];
   const placeholders = ids.map(() => "?").join(", ");
-  const rows = db
-    .prepare(
-      `SELECT document_id, AVG(rating) AS avg_rating
+  const RatingRowSchema = z.object({ document_id: z.string(), avg_rating: z.number().nullable() });
+  const rows = validateRows(
+    RatingRowSchema,
+    db
+      .prepare(
+        `SELECT document_id, AVG(rating) AS avg_rating
        FROM ratings
        WHERE document_id IN (${placeholders})
        GROUP BY document_id`,
-    )
-    .all(...ids) as Array<{ document_id: string; avg_rating: number | null }>;
+      )
+      .all(...ids),
+    "attachRatings.rows",
+  );
   const ratingMap = new Map(rows.map((r) => [r.document_id, r.avg_rating]));
   return results.map((r) => ({ ...r, avgRating: ratingMap.get(r.documentId) ?? null }));
 }
@@ -852,19 +876,20 @@ function fts5Search(
   params.push(limit);
   params.push(offset);
 
-  let rows = db.prepare(sql).all(...params) as Array<{
-    chunk_id: string;
-    document_id: string;
-    chunk_content: string;
-    title: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    url: string | null;
-    fts_rank: number;
-    avg_rating: number | null;
-  }>;
+  const Fts5RowSchema = z.object({
+    chunk_id: z.string(),
+    document_id: z.string(),
+    chunk_content: z.string(),
+    title: z.string(),
+    source_type: z.string(),
+    library: z.string().nullable(),
+    version: z.string().nullable(),
+    topic_id: z.string().nullable(),
+    url: z.string().nullable(),
+    fts_rank: z.number(),
+    avg_rating: z.number().nullable().optional(),
+  });
+  let rows = validateRows(Fts5RowSchema, db.prepare(sql).all(...params), "fts5Search.rows");
 
   // If AND returned nothing, retry with OR for recall
   if (rows.length === 0 && words.length > 1) {
@@ -905,7 +930,7 @@ function fts5Search(
     orParams.push(limit);
     orParams.push(offset);
 
-    rows = db.prepare(orSql).all(...orParams) as typeof rows;
+    rows = validateRows(Fts5RowSchema, db.prepare(orSql).all(...orParams), "fts5Search.orRows");
   }
 
   const totalCount = lazyCount(
