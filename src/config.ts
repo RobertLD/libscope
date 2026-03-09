@@ -156,11 +156,15 @@ export function loadConfig(): LibScopeConfig {
   const projectConfig = loadJsonFile(getProjectConfigPath());
   const envOverrides = getEnvOverrides();
 
-  if (userConfig.embedding?.openaiApiKey || userConfig.llm?.openaiApiKey || userConfig.llm?.anthropicApiKey) {
+  if (
+    userConfig.embedding?.openaiApiKey ||
+    userConfig.llm?.openaiApiKey ||
+    userConfig.llm?.anthropicApiKey
+  ) {
     getLogger().warn(
       "API keys found in config file (~/.libscope/config.json). " +
-      "This is deprecated — please use environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY) instead. " +
-      "Keys in the config file will no longer be written back after the next save."
+        "This is deprecated — please use environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY) instead. " +
+        "Keys in the config file will no longer be written back after the next save.",
     );
   }
 
