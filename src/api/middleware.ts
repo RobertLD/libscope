@@ -130,7 +130,7 @@ export function checkApiKey(req: IncomingMessage, res: ServerResponse): boolean 
   const keyBuf = Buffer.alloc(COMPARE_LEN);
   Buffer.from(token).copy(tokenBuf);
   Buffer.from(apiKey).copy(keyBuf);
-  if (token.length !== apiKey.length || !timingSafeEqual(tokenBuf, keyBuf)) {
+  if (!timingSafeEqual(tokenBuf, keyBuf)) {
     sendError(res, 401, "UNAUTHORIZED", "Invalid API key");
     return false;
   }
