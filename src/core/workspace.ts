@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ValidationError } from "../errors.js";
+import { getLogger } from "../logger.js";
 
 export interface Workspace {
   name: string;
@@ -110,7 +111,11 @@ export function listWorkspaces(): Workspace[] {
         createdAt =
           (typeof metaObj.createdAt === "string" ? metaObj.createdAt : undefined) ??
           statSync(wsPath).birthtime.toISOString();
-      } catch {
+      } catch (err) {
+        getLogger().warn(
+          { err, path: metaPath },
+          "Failed to parse workspace file — using defaults",
+        );
         createdAt = statSync(wsPath).birthtime.toISOString();
       }
     } else {
@@ -144,8 +149,11 @@ export function getActiveWorkspace(): string {
     try {
       const config = JSON.parse(readFileSync(projectConfig, "utf-8")) as { workspace?: string };
       if (config.workspace) return config.workspace;
-    } catch {
-      // ignore parse errors
+    } catch (err) {
+      getLogger().warn(
+        { err, path: projectConfig },
+        "Failed to parse workspace file — using defaults",
+      );
     }
   }
 
@@ -154,8 +162,11 @@ export function getActiveWorkspace(): string {
     try {
       const active = readFileSync(activeFile, "utf-8").trim();
       if (active) return active;
-    } catch {
-      // ignore read errors
+    } catch (err) {
+      getLogger().warn(
+        { err, path: activeFile },
+        "Failed to read active workspace file — using defaults",
+      );
     }
   }
 
