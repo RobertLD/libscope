@@ -350,7 +350,11 @@ export function getDocumentsByTag(
   `;
 
   const params = [...normalized, normalized.length, limit, offset];
-  const rows = validateRows(DocumentRowSchema, db.prepare(sql).all(...params), "getDocumentsByTag");
+  const rows = validateRows(
+    DocumentRowSchema,
+    db.prepare(sql).all(...params),
+    "getDocumentsByTag",
+  );
 
   log.info({ tagNames: normalized, resultCount: rows.length }, "Documents retrieved by tags");
 
@@ -448,11 +452,7 @@ export function suggestTags(
 
   // Get all known tags in the system for boosting
   const knownTags = new Set(
-    validateRows(
-      NameRowSchema,
-      db.prepare("SELECT name FROM tags").all(),
-      "suggestTags.knownTags",
-    ).map((r) => r.name),
+    validateRows(NameRowSchema, db.prepare("SELECT name FROM tags").all(), "suggestTags.knownTags").map((r) => r.name),
   );
 
   // Score each term: TF normalized + boost for known tags
@@ -462,7 +462,7 @@ export function suggestTags(
   for (const [term, count] of tf) {
     if (existingTags.has(term)) continue;
     const normalizedTf = count / maxTf;
-    const knownBoost = knownTags.has(term) ? 2 : 1;
+    const knownBoost = knownTags.has(term) ? 2.0 : 1.0;
     scored.push({ term, score: normalizedTf * knownBoost });
   }
 
