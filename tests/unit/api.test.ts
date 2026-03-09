@@ -727,20 +727,25 @@ describe("API routes", () => {
 
   describe("Webhooks API", () => {
     it("should create a webhook via POST /api/v1/webhooks", async () => {
-      const req = createMockReq("POST", "/api/v1/webhooks", {
-        url: "https://example.com/hook",
-        events: ["document.created"],
-        secret: "my-secret",
-      });
-      const { res, getStatus, getBody } = createMockRes();
+      process.env.LIBSCOPE_SECRET_KEY = "test-key";
+      try {
+        const req = createMockReq("POST", "/api/v1/webhooks", {
+          url: "https://example.com/hook",
+          events: ["document.created"],
+          secret: "my-secret",
+        });
+        const { res, getStatus, getBody } = createMockRes();
 
-      await handleRequest(req, res, db, provider);
+        await handleRequest(req, res, db, provider);
 
-      expect(getStatus()).toBe(201);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.url).toBe("https://example.com/hook");
-      expect(parsed.data.hasSecret).toBe(true);
-      expect(parsed.data.secret).toBeUndefined();
+        expect(getStatus()).toBe(201);
+        const parsed = parseResponse(getBody());
+        expect(parsed.data.url).toBe("https://example.com/hook");
+        expect(parsed.data.hasSecret).toBe(true);
+        expect(parsed.data.secret).toBeUndefined();
+      } finally {
+        delete process.env.LIBSCOPE_SECRET_KEY;
+      }
     });
 
     it("should list webhooks via GET /api/v1/webhooks", async () => {
@@ -897,6 +902,17 @@ describe("middleware — API key authentication", () => {
     req.headers.authorization = "Bearer test-key";
     const { res } = createMockRes();
     expect(checkApiKey(req, res)).toBe(true);
+  });
+
+  it("should reject a token of different length than the API key", () => {
+    process.env.LIBSCOPE_API_KEY = "test-key";
+    const req = createMockReq("GET", "/api/v1/health");
+    req.headers.authorization = "Bearer short";
+    const { res, getStatus, getBody } = createMockRes();
+    expect(checkApiKey(req, res)).toBe(false);
+    expect(getStatus()).toBe(401);
+    const parsed = parseResponse(getBody());
+    expect(parsed.error.code).toBe("UNAUTHORIZED");
   });
 
   it("should reject non-Bearer authorization schemes", () => {
