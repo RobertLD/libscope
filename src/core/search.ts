@@ -39,12 +39,11 @@ function isVectorTableError(err: unknown): boolean {
 
 /** Escape LIKE special characters so user input is treated literally. */
 export function escapeLikePattern(input: string): string {
-  // prettier-ignore
   return input
-    .replaceAll("\\", String.raw`\\`)
-    .replaceAll("%", String.raw`\%`)
-    .replaceAll("_", String.raw`\_`)
-    .replaceAll("[", String.raw`\[`);
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[");
 }
 
 export interface SearchOptions {
@@ -103,27 +102,6 @@ export interface SearchResult {
   contextAfter?: ContextChunk[] | undefined;
 }
 
-export interface RelatedChunksOptions {
-  chunkId: string;
-  limit?: number; // default 10
-  excludeDocumentId?: string; // exclude the source document (default: auto-detected from chunkId)
-  topic?: string;
-  library?: string;
-  tags?: string[];
-  minScore?: number; // default 0.0
-  includeLinkedDocuments?: boolean; // blend in explicit document_links (default false)
-}
-
-export interface RelatedChunksResult {
-  chunks: SearchResult[];
-  sourceChunk: {
-    id: string;
-    documentId: string;
-    content: string;
-    chunkIndex: number;
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Title boost multiplier: chunks whose document title contains any query word
 // receive this multiplicative boost to their final score.
@@ -151,39 +129,49 @@ interface RankedItem {
   ranks: number[];
 }
 
-/** Add ranked results from a single list into the RRF accumulator map. */
-function addRankedList(
-  list: SearchResult[],
-  map: Map<string, RankedItem>,
-  preferVector: boolean,
-): void {
-  for (let i = 0; i < list.length; i++) {
-    const r = list[i];
+/**
+ * Merge two ranked result lists via Reciprocal Rank Fusion.
+ * Returns results sorted by fused score in descending order.
+ */
+function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): SearchResult[] {
+  const map = new Map<string, RankedItem>();
+
+  for (let i = 0; i < listA.length; i++) {
+    const r = listA[i];
     if (r === undefined) continue;
-    const existing = map.get(r.chunkId);
-    if (!existing) {
-      map.set(r.chunkId, { result: r, ranks: [i + 1] });
-      continue;
-    }
-    existing.ranks.push(i + 1);
-    // Prefer result with richer explanation (vector > fts5 > keyword)
-    if (
-      preferVector &&
-      r.scoreExplanation.method === "vector" &&
-      existing.result.scoreExplanation.method !== "vector"
-    ) {
-      existing.result = r;
+    const key = r.chunkId;
+    const existing = map.get(key);
+    if (existing) {
+      existing.ranks.push(i + 1);
+    } else {
+      map.set(key, { result: r, ranks: [i + 1] });
     }
   }
-}
 
-/** Compute final RRF scores from the accumulated rank map. */
-function computeRrfScores(map: Map<string, RankedItem>): SearchResult[] {
+  for (let i = 0; i < listB.length; i++) {
+    const r = listB[i];
+    if (r === undefined) continue;
+    const key = r.chunkId;
+    const existing = map.get(key);
+    if (existing) {
+      existing.ranks.push(i + 1);
+      // Prefer result with richer explanation (vector > fts5 > keyword)
+      if (
+        r.scoreExplanation.method === "vector" &&
+        existing.result.scoreExplanation.method !== "vector"
+      ) {
+        existing.result = r;
+      }
+    } else {
+      map.set(key, { result: r, ranks: [i + 1] });
+    }
+  }
+
   const fused: Array<{ result: SearchResult; score: number }> = [];
   for (const item of map.values()) {
     let rrfScore = 0;
     for (const rank of item.ranks) {
-      rrfScore += 1 / (RRF_K + rank);
+      rrfScore += 1.0 / (RRF_K + rank);
     }
     const boostFactors = [...item.result.scoreExplanation.boostFactors];
     fused.push({
@@ -200,19 +188,9 @@ function computeRrfScores(map: Map<string, RankedItem>): SearchResult[] {
       score: rrfScore,
     });
   }
+
   fused.sort((a, b) => b.score - a.score);
   return fused.map((f) => f.result);
-}
-
-/**
- * Merge two ranked result lists via Reciprocal Rank Fusion.
- * Returns results sorted by fused score in descending order.
- */
-function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): SearchResult[] {
-  const map = new Map<string, RankedItem>();
-  addRankedList(listA, map, false);
-  addRankedList(listB, map, true);
-  return computeRrfScores(map);
 }
 
 /** Fetch neighboring chunks for a given chunk within its document. */
@@ -307,39 +285,6 @@ function applyTitleBoost(results: SearchResult[], query: string): SearchResult[]
   });
 }
 
-/** Compute the maximum similarity between a candidate and the already-selected set. */
-function maxSimilarityToSelected(candidate: SearchResult, selected: SearchResult[]): number {
-  let maxSim = 0;
-  for (const sel of selected) {
-    const sim = 1 - Math.abs(candidate.score - sel.score);
-    if (sim > maxSim) maxSim = sim;
-  }
-  return maxSim;
-}
-
-/** Find the index of the candidate with the best MMR score. */
-function findBestMMRCandidate(
-  remaining: SearchResult[],
-  selected: SearchResult[],
-  lambda: number,
-): number {
-  let bestIdx = 0;
-  let bestMmrScore = -Infinity;
-
-  for (let i = 0; i < remaining.length; i++) {
-    const candidate = remaining[i];
-    if (candidate === undefined) continue;
-    const maxSim = maxSimilarityToSelected(candidate, selected);
-    const mmrScore = lambda * candidate.score - (1 - lambda) * maxSim;
-    if (mmrScore > bestMmrScore) {
-      bestMmrScore = mmrScore;
-      bestIdx = i;
-    }
-  }
-
-  return bestIdx;
-}
-
 /**
  * Rerank results using Maximal Marginal Relevance for diversity.
  * @param results - Pre-sorted results (highest score first)
@@ -356,7 +301,24 @@ function applyMMR(results: SearchResult[], diversity: number): SearchResult[] {
   selected.push(first);
 
   while (remaining.length > 0) {
-    const bestIdx = findBestMMRCandidate(remaining, selected, lambda);
+    let bestIdx = 0;
+    let bestMmrScore = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      if (candidate === undefined) continue;
+      let maxSim = 0;
+      for (const sel of selected) {
+        const sim = 1 - Math.abs(candidate.score - sel.score);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const mmrScore = lambda * candidate.score - (1 - lambda) * maxSim;
+      if (mmrScore > bestMmrScore) {
+        bestMmrScore = mmrScore;
+        bestIdx = i;
+      }
+    }
+
     const picked = remaining.splice(bestIdx, 1)[0];
     if (picked === undefined) break;
     selected.push(picked);
@@ -443,62 +405,6 @@ function lazyCount(
   );
 }
 
-/** Apply common post-processing: title boost, re-sort, MMR, dedup. */
-function postProcessResults(results: SearchResult[], options: SearchOptions): SearchResult[] {
-  let processed = applyTitleBoost(results, options.query);
-  processed.sort((a, b) => b.score - a.score);
-
-  if (options.diversity !== undefined && options.diversity > 0) {
-    processed = applyMMR(processed, options.diversity);
-  }
-
-  if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
-    processed = deduplicateByDocument(processed, options.maxChunksPerDocument);
-  }
-
-  return processed;
-}
-
-/** Record search analytics if enabled. */
-function recordAnalytics(
-  db: Database.Database,
-  options: SearchOptions,
-  response: SearchResponse,
-  method: SearchMethod,
-  startTime: number,
-  analyticsEnabled: boolean,
-): void {
-  if (!analyticsEnabled) return;
-  logSearch(db, {
-    query: options.query,
-    searchMethod: method,
-    resultCount: response.totalCount,
-    latencyMs: performance.now() - startTime,
-    documentIds: response.results.map((r) => r.documentId),
-  });
-  recordSearchQuery(db, {
-    query: options.query,
-    resultCount: response.results.length,
-    topScore: response.results[0]?.score ?? null,
-    searchType: method,
-  });
-}
-
-/** Finalize a response: attach ratings (if no min filter) and context chunks. */
-function finalizeResponse(
-  db: Database.Database,
-  response: SearchResponse,
-  options: SearchOptions,
-): SearchResponse {
-  if (options.minRating === undefined) {
-    response.results = attachRatings(db, response.results);
-  }
-  if (options.contextChunks) {
-    response.results = attachContext(db, response.results, options.contextChunks);
-  }
-  return response;
-}
-
 /** Perform semantic search across indexed documents. */
 export async function searchDocuments(
   db: Database.Database,
@@ -508,18 +414,23 @@ export async function searchDocuments(
   const log = withCorrelationId({ operation: "searchDocuments" });
   const limit = Math.max(1, Math.min(options.limit ?? 10, 1000));
   const offset = Math.max(0, options.offset ?? 0);
+
   const analyticsEnabled = options.analyticsEnabled ?? true;
   const startTime = performance.now();
 
   log.info({ query: options.query, limit, offset }, "Searching documents");
 
+  // Generate query embedding
   const queryEmbedding = await provider.embed(options.query);
   const vecBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
+  // Try hybrid search: vector + FTS5 merged via RRF
+  // Over-fetch from each source by 3x (capped) to compensate for overlap
+  // between vector and FTS5 lists — RRF deduplicates shared chunks, so the
+  // fused unique set is often smaller than the sum of both lists.
   const overfetchFactor = 3;
   const maxCandidateLimit = 5000;
   const candidateLimit = Math.min((offset + limit) * overfetchFactor, maxCandidateLimit);
-
   try {
     const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit, 0);
     let ftsResults: SearchResult[] | null = null;
@@ -530,35 +441,129 @@ export async function searchDocuments(
       ftsResults = ftsResponse.results;
       ftsTotalCount = ftsResponse.totalCount;
     } catch {
-      // FTS5 not available
+      // FTS5 not available — proceed with vector-only results
     }
 
-    const isHybrid = ftsResults !== null && ftsResults.length > 0;
-    const mergedResults = isHybrid
-      ? reciprocalRankFusion(vectorResults.results, ftsResults!)
-      : vectorResults.results;
-    const searchMethod: SearchMethod = isHybrid ? "hybrid" : "vector";
+    let mergedResults: SearchResult[];
+    let searchMethod: SearchMethod;
 
-    const processed = postProcessResults(mergedResults, options);
-    const paginatedResults = processed.slice(offset, offset + limit);
+    if (ftsResults && ftsResults.length > 0) {
+      // Hybrid: merge vector + FTS5 via RRF
+      mergedResults = reciprocalRankFusion(vectorResults.results, ftsResults);
+      searchMethod = "hybrid";
+    } else {
+      mergedResults = vectorResults.results;
+      searchMethod = "vector";
+    }
 
-    const totalCount = isHybrid
-      ? Math.max(processed.length, vectorResults.totalCount, ftsTotalCount)
-      : vectorResults.totalCount;
+    // Apply title boost
+    mergedResults = applyTitleBoost(mergedResults, options.query);
+    // Re-sort after boost
+    mergedResults.sort((a, b) => b.score - a.score);
 
-    const response: SearchResponse = { totalCount, results: paginatedResults };
-    recordAnalytics(db, options, response, searchMethod, startTime, analyticsEnabled);
-    return finalizeResponse(db, response, options);
+    // Apply MMR diversity reranking if requested
+    if (options.diversity !== undefined && options.diversity > 0) {
+      mergedResults = applyMMR(mergedResults, options.diversity);
+    }
+
+    // Apply per-document deduplication on the full ranked list BEFORE
+    // pagination so that page sizes stay stable and later pages aren't
+    // short-changed by dedup removing items from within the page.
+    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
+      mergedResults = deduplicateByDocument(mergedResults, options.maxChunksPerDocument);
+    }
+
+    // Apply pagination to merged (and possibly deduped) results
+    let paginatedResults = mergedResults.slice(offset, offset + limit);
+
+    // Attach ratings post-pagination (deferred from search queries for perf)
+    if (options.minRating === undefined) {
+      paginatedResults = attachRatings(db, paginatedResults);
+    }
+
+    // totalCount: the fused unique set is the best lower bound we have.
+    // For hybrid searches, the true match count is at least as large as
+    // the unique items after fusion; use the max of that and each source's
+    // reported count so we never under-report.
+    const totalCount =
+      searchMethod === "hybrid"
+        ? Math.max(mergedResults.length, vectorResults.totalCount, ftsTotalCount)
+        : vectorResults.totalCount;
+
+    const response: SearchResponse = {
+      totalCount,
+      results: paginatedResults,
+    };
+
+    if (analyticsEnabled) {
+      logSearch(db, {
+        query: options.query,
+        searchMethod,
+        resultCount: response.totalCount,
+        latencyMs: performance.now() - startTime,
+        documentIds: response.results.map((r) => r.documentId),
+      });
+      recordSearchQuery(db, {
+        query: options.query,
+        resultCount: response.results.length,
+        topScore: response.results[0]?.score ?? null,
+        searchType: searchMethod,
+      });
+    }
+
+    if (options.contextChunks) {
+      response.results = attachContext(db, response.results, options.contextChunks);
+    }
+
+    return response;
   } catch (err) {
-    if (!isVectorTableError(err)) throw err;
-
+    if (!isVectorTableError(err)) {
+      throw err;
+    }
     log.warn({ err }, "Vector table missing, falling back to keyword search");
     const response = keywordSearch(db, options, limit, offset);
-    response.results = postProcessResults(response.results, options);
 
-    const method = response.results[0]?.scoreExplanation.method ?? "keyword";
-    recordAnalytics(db, options, response, method, startTime, analyticsEnabled);
-    return finalizeResponse(db, response, options);
+    // Attach ratings post-query when minRating filter is not active
+    if (options.minRating === undefined) {
+      response.results = attachRatings(db, response.results);
+    }
+
+    // Apply title boost to fallback results
+    response.results = applyTitleBoost(response.results, options.query);
+    response.results.sort((a, b) => b.score - a.score);
+
+    // Apply MMR diversity reranking if requested
+    if (options.diversity !== undefined && options.diversity > 0) {
+      response.results = applyMMR(response.results, options.diversity);
+    }
+
+    if (analyticsEnabled) {
+      const method = response.results[0]?.scoreExplanation.method ?? "keyword";
+      logSearch(db, {
+        query: options.query,
+        searchMethod: method,
+        resultCount: response.totalCount,
+        latencyMs: performance.now() - startTime,
+        documentIds: response.results.map((r) => r.documentId),
+      });
+      recordSearchQuery(db, {
+        query: options.query,
+        resultCount: response.results.length,
+        topScore: response.results[0]?.score ?? null,
+        searchType: method,
+      });
+    }
+
+    // Deduplicate by document — keep top N chunks per document
+    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
+      response.results = deduplicateByDocument(response.results, options.maxChunksPerDocument);
+    }
+
+    if (options.contextChunks) {
+      response.results = attachContext(db, response.results, options.contextChunks);
+    }
+
+    return response;
   }
 }
 
@@ -650,7 +655,7 @@ function vectorSearch(
         topicId: row.topic_id,
         url: row.url,
         score: similarity,
-        avgRating: row.avg_rating ?? null,
+        avgRating: needsRatingJoin ? row.avg_rating : null,
         scoreExplanation: {
           method: "vector" as SearchMethod,
           rawScore: row.distance,
@@ -719,7 +724,8 @@ function keywordSearch(
   const baseParams = [...params];
 
   sql += " LIMIT ? OFFSET ?";
-  params.push(limit, offset);
+  params.push(limit);
+  params.push(offset);
 
   const KeywordRowSchema = z.object({
     chunk_id: z.string(),
@@ -760,7 +766,7 @@ function keywordSearch(
         topicId: row.topic_id,
         url: row.url,
         score: rankScore,
-        avgRating: row.avg_rating ?? null,
+        avgRating: needsRatingJoin ? row.avg_rating : null,
         scoreExplanation: {
           method: "keyword" as SearchMethod,
           rawScore: rankScore,
@@ -814,225 +820,6 @@ function attachRatings(db: Database.Database, results: SearchResult[]): SearchRe
   return results.map((r) => ({ ...r, avgRating: ratingMap.get(r.documentId) ?? null }));
 }
 
-/**
- * Find chunks related to a given chunk by vector similarity.
- * Looks up the source chunk's embedding, then searches for similar chunks
- * excluding the source document (by default). Returns synchronously.
- */
-export function getRelatedChunks(
-  db: Database.Database,
-  options: RelatedChunksOptions,
-): RelatedChunksResult {
-  const { chunkId } = options;
-  const limit = Math.max(1, Math.min(options.limit ?? 10, 1000));
-  const minScore = options.minScore ?? 0;
-
-  // Look up the source chunk
-  const SourceChunkSchema = z.object({
-    id: z.string(),
-    document_id: z.string(),
-    content: z.string(),
-    chunk_index: z.number(),
-  });
-  const sourceChunkRow = validateRow(
-    SourceChunkSchema.optional(),
-    db
-      .prepare(`SELECT id, document_id, content, chunk_index FROM chunks WHERE id = ?`)
-      .get(chunkId),
-    "getRelatedChunks.sourceChunk",
-  );
-  if (!sourceChunkRow) {
-    throw new Error(`Chunk not found: ${chunkId}`);
-  }
-
-  const sourceChunk = {
-    id: sourceChunkRow.id,
-    documentId: sourceChunkRow.document_id,
-    content: sourceChunkRow.content,
-    chunkIndex: sourceChunkRow.chunk_index,
-  };
-
-  const excludeDocumentId = options.excludeDocumentId ?? sourceChunkRow.document_id;
-
-  // Fetch the embedding for the source chunk
-  const EmbeddingRowSchema = z.object({ embedding: z.instanceof(Buffer) });
-  const embeddingRow = validateRow(
-    EmbeddingRowSchema.optional(),
-    db.prepare(`SELECT embedding FROM chunk_embeddings WHERE chunk_id = ?`).get(chunkId),
-    "getRelatedChunks.embedding",
-  );
-  if (!embeddingRow) {
-    throw new Error(`No embedding found for chunk: ${chunkId}`);
-  }
-
-  const vecBuffer = embeddingRow.embedding;
-
-  // Build SQL: vector ANN search excluding the source document
-  const tagFilter = buildTagFilter(options.tags, "d");
-
-  let sql = `
-    SELECT
-      candidates.chunk_id,
-      candidates.distance,
-      c.document_id,
-      c.content AS chunk_content,
-      d.title,
-      d.source_type,
-      d.library,
-      d.version,
-      d.topic_id,
-      d.url
-    FROM (
-      SELECT chunk_id, distance
-      FROM chunk_embeddings
-      WHERE embedding MATCH ?
-      ORDER BY distance
-      LIMIT ?
-    ) candidates
-    JOIN chunks c ON c.id = candidates.chunk_id
-    JOIN documents d ON d.id = c.document_id
-    WHERE c.document_id != ?
-  `;
-
-  const params: unknown[] = [vecBuffer, limit * 10, excludeDocumentId];
-
-  if (options.library) {
-    sql += ` AND d.library = ?`;
-    params.push(options.library);
-  }
-  if (options.topic) {
-    sql += ` AND d.topic_id = ?`;
-    params.push(options.topic);
-  }
-  sql += tagFilter.clause;
-  params.push(...tagFilter.params);
-
-  sql += ` ORDER BY candidates.distance LIMIT ?`;
-  params.push(limit * 2); // over-fetch to allow minScore filtering
-
-  const RelatedRowSchema = z.object({
-    chunk_id: z.string(),
-    distance: z.number(),
-    document_id: z.string(),
-    chunk_content: z.string(),
-    title: z.string(),
-    source_type: z.string(),
-    library: z.string().nullable(),
-    version: z.string().nullable(),
-    topic_id: z.string().nullable(),
-    url: z.string().nullable(),
-  });
-
-  const rows = validateRows(
-    RelatedRowSchema,
-    db.prepare(sql).all(...params),
-    "getRelatedChunks.rows",
-  );
-
-  let results: SearchResult[] = rows.map((row) => {
-    const similarity = 1 - row.distance;
-    return {
-      documentId: row.document_id,
-      chunkId: row.chunk_id,
-      title: row.title,
-      content: row.chunk_content,
-      sourceType: row.source_type,
-      library: row.library,
-      version: row.version,
-      topicId: row.topic_id,
-      url: row.url,
-      score: similarity,
-      avgRating: null,
-      scoreExplanation: {
-        method: "vector" as SearchMethod,
-        rawScore: row.distance,
-        boostFactors: [],
-        details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
-      },
-    };
-  });
-
-  // Apply minScore filter
-  if (minScore > 0) {
-    results = results.filter((r) => r.score >= minScore);
-  }
-
-  // Optional: blend in explicitly linked documents
-  if (options.includeLinkedDocuments) {
-    const linkedDocs = db
-      .prepare(
-        `SELECT DISTINCT
-          CASE WHEN source_id = ? THEN target_id ELSE source_id END AS linked_doc_id
-        FROM document_links
-        WHERE source_id = ? OR target_id = ?`,
-      )
-      .all(sourceChunk.documentId, sourceChunk.documentId, sourceChunk.documentId) as {
-      linked_doc_id: string;
-    }[];
-
-    const LinkedChunkSchema = z.object({
-      id: z.string(),
-      document_id: z.string(),
-      content: z.string(),
-      chunk_index: z.number(),
-      title: z.string(),
-      source_type: z.string(),
-      library: z.string().nullable(),
-      version: z.string().nullable(),
-      topic_id: z.string().nullable(),
-      url: z.string().nullable(),
-    });
-
-    const presentDocIds = new Set(results.map((r) => r.documentId));
-    for (const { linked_doc_id } of linkedDocs) {
-      if (!presentDocIds.has(linked_doc_id)) {
-        const linkedChunk = validateRow(
-          LinkedChunkSchema.optional(),
-          db
-            .prepare(
-              `SELECT c.id, c.document_id, c.content, c.chunk_index,
-                      d.title, d.source_type, d.library, d.version, d.topic_id, d.url
-               FROM chunks c
-               JOIN documents d ON d.id = c.document_id
-               WHERE c.document_id = ?
-               ORDER BY c.chunk_index ASC
-               LIMIT 1`,
-            )
-            .get(linked_doc_id),
-          "getRelatedChunks.linkedChunk",
-        );
-        if (linkedChunk) {
-          results.push({
-            documentId: linkedChunk.document_id,
-            chunkId: linkedChunk.id,
-            title: linkedChunk.title,
-            content: linkedChunk.content,
-            sourceType: linkedChunk.source_type,
-            library: linkedChunk.library,
-            version: linkedChunk.version,
-            topicId: linkedChunk.topic_id,
-            url: linkedChunk.url,
-            score: 0.6,
-            avgRating: null,
-            scoreExplanation: {
-              method: "vector" as SearchMethod,
-              rawScore: 0.6,
-              boostFactors: ["linked_document"],
-              details: "Explicitly linked document",
-            },
-          });
-        }
-      }
-    }
-    results.sort((a, b) => b.score - a.score);
-  }
-
-  // Trim to requested limit
-  results = results.slice(0, limit);
-
-  return { chunks: results, sourceChunk };
-}
-
 /** FTS5-based full-text search with BM25 ranking. Uses AND logic by default. */
 function fts5Search(
   db: Database.Database,
@@ -1050,7 +837,7 @@ function fts5Search(
 
   const needsRatingJoin = options.minRating !== undefined;
 
-  const ftsQuery = words.map((w) => `"${w.replaceAll('"', '""')}"`).join(" AND ");
+  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
   const params: unknown[] = [ftsQuery];
 
   let sql = `
@@ -1086,7 +873,8 @@ function fts5Search(
   let baseParams = [...params];
 
   sql += " ORDER BY rank LIMIT ? OFFSET ?";
-  params.push(limit, offset);
+  params.push(limit);
+  params.push(offset);
 
   const Fts5RowSchema = z.object({
     chunk_id: z.string(),
@@ -1139,7 +927,8 @@ function fts5Search(
     baseParams = [...orParams];
 
     orSql += " ORDER BY rank LIMIT ? OFFSET ?";
-    orParams.push(limit, offset);
+    orParams.push(limit);
+    orParams.push(offset);
 
     rows = validateRows(Fts5RowSchema, db.prepare(orSql).all(...orParams), "fts5Search.orRows");
   }
@@ -1169,7 +958,7 @@ function fts5Search(
         topicId: row.topic_id,
         url: row.url,
         score: bm25Score,
-        avgRating: row.avg_rating ?? null,
+        avgRating: needsRatingJoin ? row.avg_rating : null,
         scoreExplanation: {
           method: "fts5" as SearchMethod,
           rawScore: row.fts_rank,
