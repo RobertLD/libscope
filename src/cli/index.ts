@@ -59,7 +59,7 @@ import {
   createPackFromSource,
 } from "../core/packs.js";
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
@@ -2290,17 +2290,29 @@ program
     console.log(`Current version: ${currentVersion}`);
 
     try {
-      const latest = execSync("npm view libscope version", { encoding: "utf-8" }).trim();
+      const versionResult = spawnSync("npm", ["view", "libscope", "version"], {
+        encoding: "utf-8",
+      });
+      if (versionResult.error || versionResult.status !== 0) {
+        throw new Error(versionResult.stderr?.trim() || "Failed to check latest version");
+      }
+      const latest = versionResult.stdout.trim();
       if (latest === currentVersion) {
         console.log("✓ Already up to date.");
         return;
       }
       console.log(`Latest version:  ${latest}`);
       console.log("Updating...");
-      execSync("npm install -g libscope@latest", { stdio: "inherit" });
+      const installResult = spawnSync("npm", ["install", "-g", "libscope@latest"], {
+        stdio: "inherit",
+      });
+      if (installResult.error || installResult.status !== 0) {
+        throw new Error("npm install failed");
+      }
       console.log(`✓ Updated to ${latest}`);
-    } catch {
+    } catch (err) {
       console.error("Failed to update. Try manually: npm install -g libscope@latest");
+      if (err instanceof Error) console.error(err.message);
       process.exit(1);
     }
   });

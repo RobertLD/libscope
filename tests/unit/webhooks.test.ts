@@ -52,13 +52,28 @@ describe("webhooks", () => {
     });
 
     it("should create a webhook with a secret", async () => {
-      const webhook = await createWebhook(
-        db,
-        "https://example.com/hook",
-        ["document.created"],
-        "my-secret",
-      );
-      expect(webhook.secret).toBe("my-secret");
+      process.env.LIBSCOPE_SECRET_KEY = "test-key";
+      try {
+        const webhook = await createWebhook(
+          db,
+          "https://example.com/hook",
+          ["document.created"],
+          "my-secret",
+        );
+        expect(webhook.secret).toBeTruthy();
+      } finally {
+        delete process.env.LIBSCOPE_SECRET_KEY;
+      }
+    });
+
+    it("should throw ValidationError when secret is provided but LIBSCOPE_SECRET_KEY is not set", async () => {
+      delete process.env.LIBSCOPE_SECRET_KEY;
+      await expect(
+        createWebhook(db, "https://example.com/hook", ["document.created"], "my-secret"),
+      ).rejects.toThrow(ValidationError);
+      await expect(
+        createWebhook(db, "https://example.com/hook", ["document.created"], "my-secret"),
+      ).rejects.toThrow(/LIBSCOPE_SECRET_KEY/);
     });
 
     it("should create a webhook with multiple events", async () => {
@@ -166,8 +181,24 @@ describe("webhooks", () => {
 
     it("should update webhook secret", async () => {
       const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
-      const updated = await updateWebhook(db, webhook.id, { secret: "new-secret" });
-      expect(updated.secret).toBe("new-secret");
+      process.env.LIBSCOPE_SECRET_KEY = "test-key";
+      try {
+        const updated = await updateWebhook(db, webhook.id, { secret: "new-secret" });
+        expect(updated.secret).toBeTruthy();
+      } finally {
+        delete process.env.LIBSCOPE_SECRET_KEY;
+      }
+    });
+
+    it("should throw ValidationError when updating secret without LIBSCOPE_SECRET_KEY", async () => {
+      delete process.env.LIBSCOPE_SECRET_KEY;
+      const webhook = await createWebhook(db, "https://example.com/hook", ["document.created"]);
+      await expect(updateWebhook(db, webhook.id, { secret: "new-secret" })).rejects.toThrow(
+        ValidationError,
+      );
+      await expect(updateWebhook(db, webhook.id, { secret: "new-secret" })).rejects.toThrow(
+        /LIBSCOPE_SECRET_KEY/,
+      );
     });
 
     it("should reject invalid URL on update", async () => {
@@ -287,7 +318,9 @@ describe("webhooks", () => {
       const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
       vi.stubGlobal("fetch", mockFetch);
 
+      process.env.LIBSCOPE_SECRET_KEY = "test-key";
       await createWebhook(db, "https://example.com/hook", ["document.created"], "my-secret");
+      delete process.env.LIBSCOPE_SECRET_KEY;
       fireWebhooks(db, "document.created", { docId: "123" });
 
       await vi.waitFor(() => {

@@ -156,6 +156,18 @@ export function loadConfig(): LibScopeConfig {
   const projectConfig = loadJsonFile(getProjectConfigPath());
   const envOverrides = getEnvOverrides();
 
+  if (
+    userConfig.embedding?.openaiApiKey ||
+    userConfig.llm?.openaiApiKey ||
+    userConfig.llm?.anthropicApiKey
+  ) {
+    getLogger().warn(
+      "API keys found in config file (~/.libscope/config.json). " +
+        "This is deprecated — please use environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY) instead. " +
+        "Keys in the config file will no longer be written back after the next save.",
+    );
+  }
+
   const config: LibScopeConfig = {
     embedding: {
       ...DEFAULT_CONFIG.embedding,
@@ -286,6 +298,15 @@ export function saveUserConfig(config: Partial<LibScopeConfig>): void {
       ...config.logging,
     },
   };
+
+  // Security: never persist API keys to disk — use environment variables instead.
+  // Keys are read from env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY) at runtime.
+  delete merged.embedding.openaiApiKey;
+  if (merged.llm) {
+    delete merged.llm.openaiApiKey;
+    delete merged.llm.anthropicApiKey;
+  }
+
   writeFileSync(getUserConfigPath(), JSON.stringify(merged, null, 2), "utf-8");
   invalidateConfigCache();
 }

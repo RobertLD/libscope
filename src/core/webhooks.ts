@@ -201,9 +201,10 @@ export async function createWebhook(
   validateEvents(events);
   await validateWebhookUrlSsrf(url);
 
-  if (!process.env[SECRET_KEY_ENV]) {
-    getLogger().warn(
-      "LIBSCOPE_SECRET_KEY is not set — webhook secrets stored in plaintext. Set this env var to enable at-rest encryption.",
+  if (secret && !process.env[SECRET_KEY_ENV]) {
+    throw new ValidationError(
+      "Cannot store webhook secret: LIBSCOPE_SECRET_KEY environment variable is not set. " +
+        "Set it to enable at-rest encryption, or register the webhook without a secret.",
     );
   }
 
@@ -259,6 +260,13 @@ export async function updateWebhook(
   }
   if (updates.events !== undefined) {
     validateEvents(updates.events);
+  }
+
+  if (updates.secret && !process.env[SECRET_KEY_ENV]) {
+    throw new ValidationError(
+      "Cannot store webhook secret: LIBSCOPE_SECRET_KEY environment variable is not set. " +
+        "Set it to enable at-rest encryption, or update the webhook without a secret.",
+    );
   }
 
   const url = updates.url ?? existing.url;
