@@ -23,10 +23,8 @@ export function getDatabase(dbPath?: string): Database.Database {
 
   if (db) {
     if (cachedPath && cachedPath !== resolvedPath) {
-      const log = getLogger();
-      log.warn(
-        { existingPath: cachedPath, requestedPath: resolvedPath },
-        "getDatabase() called with a different path than the existing connection; returning cached connection. Call closeDatabase() first to connect to a different database.",
+      throw new DatabaseError(
+        `getDatabase() called with path "${resolvedPath}" but a connection to "${cachedPath}" is already open. Call closeDatabase() first to switch databases.`,
       );
     }
     return db;
