@@ -630,7 +630,7 @@ function vectorSearch(
     version: z.string().nullable(),
     topic_id: z.string().nullable(),
     url: z.string().nullable(),
-    avg_rating: z.number().nullable(),
+    avg_rating: z.number().nullable().optional(),
   });
   const rows = validateRows(VectorRowSchema, db.prepare(sql).all(...params), "vectorSearch.rows");
 
@@ -655,7 +655,7 @@ function vectorSearch(
         topicId: row.topic_id,
         url: row.url,
         score: similarity,
-        avgRating: needsRatingJoin ? row.avg_rating : null,
+        avgRating: row.avg_rating ?? null,
         scoreExplanation: {
           method: "vector" as SearchMethod,
           rawScore: row.distance,
@@ -737,7 +737,7 @@ function keywordSearch(
     version: z.string().nullable(),
     topic_id: z.string().nullable(),
     url: z.string().nullable(),
-    avg_rating: z.number().nullable(),
+    avg_rating: z.number().nullable().optional(),
   });
   const rows = validateRows(KeywordRowSchema, db.prepare(sql).all(...params), "keywordSearch.rows");
 
@@ -766,7 +766,7 @@ function keywordSearch(
         topicId: row.topic_id,
         url: row.url,
         score: rankScore,
-        avgRating: needsRatingJoin ? row.avg_rating : null,
+        avgRating: row.avg_rating ?? null,
         scoreExplanation: {
           method: "keyword" as SearchMethod,
           rawScore: rankScore,
@@ -887,7 +887,7 @@ function fts5Search(
     topic_id: z.string().nullable(),
     url: z.string().nullable(),
     fts_rank: z.number(),
-    avg_rating: z.number().nullable(),
+    avg_rating: z.number().nullable().optional(),
   });
   let rows = validateRows(Fts5RowSchema, db.prepare(sql).all(...params), "fts5Search.rows");
 
@@ -958,7 +958,7 @@ function fts5Search(
         topicId: row.topic_id,
         url: row.url,
         score: bm25Score,
-        avgRating: needsRatingJoin ? row.avg_rating : null,
+        avgRating: row.avg_rating ?? null,
         scoreExplanation: {
           method: "fts5" as SearchMethod,
           rawScore: row.fts_rank,
