@@ -1,7 +1,9 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
+import { z } from "zod";
 import { getLogger } from "../logger.js";
+import { validateRow, validateRows } from "../db/validate.js";
 
 export interface SearchLogEntry {
   query: string;
@@ -73,9 +75,18 @@ export function logSearch(db: Database.Database, entry: SearchLogEntry): string 
 
 /** Return overview stats for the knowledge base. */
 export function getStats(db: Database.Database, dbPath?: string): OverviewStats {
-  const row = db
-    .prepare(
-      `
+  const StatsRowSchema = z.object({
+    doc_count: z.number(),
+    chunk_count: z.number(),
+    topic_count: z.number(),
+    search_count: z.number(),
+    avg_latency: z.number().nullable(),
+  });
+  const row = validateRow(
+    StatsRowSchema,
+    db
+      .prepare(
+        `
     SELECT
       (SELECT COUNT(*) FROM documents) AS doc_count,
       (SELECT COUNT(*) FROM chunks) AS chunk_count,
@@ -83,14 +94,10 @@ export function getStats(db: Database.Database, dbPath?: string): OverviewStats 
       (SELECT COUNT(*) FROM search_log) AS search_count,
       (SELECT AVG(latency_ms) FROM search_log) AS avg_latency
   `,
-    )
-    .get() as {
-    doc_count: number;
-    chunk_count: number;
-    topic_count: number;
-    search_count: number;
-    avg_latency: number | null;
-  };
+      )
+      .get(),
+    "getStats.row",
+  );
 
   let databaseSizeBytes = 0;
   if (dbPath) {
@@ -113,23 +120,40 @@ export function getStats(db: Database.Database, dbPath?: string): OverviewStats 
 
 /** Return the most frequently returned documents in search results. */
 export function getPopularDocuments(db: Database.Database, limit = 10): PopularDocument[] {
-  return db
-    .prepare(
-      `SELECT dh.document_id AS documentId, d.title, COUNT(*) AS hitCount
+  const PopularDocSchema = z.object({
+    documentId: z.string(),
+    title: z.string(),
+    hitCount: z.number(),
+  });
+  return validateRows(
+    PopularDocSchema,
+    db
+      .prepare(
+        `SELECT dh.document_id AS documentId, d.title, COUNT(*) AS hitCount
        FROM document_hits dh
        JOIN documents d ON d.id = dh.document_id
        GROUP BY dh.document_id
        ORDER BY hitCount DESC
        LIMIT ?`,
-    )
-    .all(limit) as PopularDocument[];
+      )
+      .all(limit),
+    "getPopularDocuments.rows",
+  );
 }
 
 /** Return documents that have never appeared in search results within the last N days. */
 export function getStaleDocuments(db: Database.Database, days = 90): StaleDocument[] {
-  return db
-    .prepare(
-      `SELECT d.id AS documentId, d.title, d.created_at AS createdAt, d.updated_at AS updatedAt
+  const StaleDocSchema = z.object({
+    documentId: z.string(),
+    title: z.string(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  });
+  return validateRows(
+    StaleDocSchema,
+    db
+      .prepare(
+        `SELECT d.id AS documentId, d.title, d.created_at AS createdAt, d.updated_at AS updatedAt
        FROM documents d
        WHERE d.id NOT IN (
          SELECT DISTINCT dh.document_id
@@ -138,34 +162,50 @@ export function getStaleDocuments(db: Database.Database, days = 90): StaleDocume
          WHERE sl.created_at >= datetime('now', ?)
        )
        ORDER BY d.updated_at ASC`,
-    )
-    .all(`-${days} days`) as StaleDocument[];
+      )
+      .all(`-${days} days`),
+    "getStaleDocuments.rows",
+  );
 }
 
 /** Return the most frequent search queries. */
 export function getTopQueries(db: Database.Database, limit = 10): TopQuery[] {
-  return db
-    .prepare(
-      `SELECT query, COUNT(*) AS count, ROUND(AVG(latency_ms)) AS avgLatencyMs
+  const TopQuerySchema = z.object({
+    query: z.string(),
+    count: z.number(),
+    avgLatencyMs: z.number(),
+  });
+  return validateRows(
+    TopQuerySchema,
+    db
+      .prepare(
+        `SELECT query, COUNT(*) AS count, ROUND(AVG(latency_ms)) AS avgLatencyMs
        FROM search_log
        GROUP BY query
        ORDER BY count DESC
        LIMIT ?`,
-    )
-    .all(limit) as TopQuery[];
+      )
+      .all(limit),
+    "getTopQueries.rows",
+  );
 }
 
 /** Return search counts per day for the last N days. */
 export function getSearchTrends(db: Database.Database, days = 30): SearchTrend[] {
-  return db
-    .prepare(
-      `SELECT DATE(created_at) AS date, COUNT(*) AS count
+  const SearchTrendSchema = z.object({ date: z.string(), count: z.number() });
+  return validateRows(
+    SearchTrendSchema,
+    db
+      .prepare(
+        `SELECT DATE(created_at) AS date, COUNT(*) AS count
        FROM search_log
        WHERE created_at >= datetime('now', ?)
        GROUP BY DATE(created_at)
        ORDER BY date ASC`,
-    )
-    .all(`-${days} days`) as SearchTrend[];
+      )
+      .all(`-${days} days`),
+    "getSearchTrends.rows",
+  );
 }
 
 // --- Search-query analytics (search_queries table, migration v11) ---
@@ -200,36 +240,55 @@ export interface SearchAnalytics {
 export function getSearchAnalytics(db: Database.Database, days = 30): SearchAnalytics {
   const since = `-${days} days`;
 
-  const totals = db
-    .prepare(
-      `SELECT COUNT(*) AS total, AVG(result_count) AS avg_results
+  const TotalsSchema = z.object({ total: z.number(), avg_results: z.number().nullable() });
+  const totals = validateRow(
+    TotalsSchema,
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total, AVG(result_count) AS avg_results
        FROM search_queries WHERE created_at >= datetime('now', ?)`,
-    )
-    .get(since) as { total: number; avg_results: number | null };
+      )
+      .get(since),
+    "getSearchAnalytics.totals",
+  );
 
-  const topQueries = db
-    .prepare(
-      `SELECT query, COUNT(*) AS count FROM search_queries
+  const QueryCountSchema = z.object({ query: z.string(), count: z.number() });
+  const topQueries = validateRows(
+    QueryCountSchema,
+    db
+      .prepare(
+        `SELECT query, COUNT(*) AS count FROM search_queries
        WHERE created_at >= datetime('now', ?)
        GROUP BY query ORDER BY count DESC LIMIT 10`,
-    )
-    .all(since) as Array<{ query: string; count: number }>;
+      )
+      .all(since),
+    "getSearchAnalytics.topQueries",
+  );
 
-  const zeroResultQueries = db
-    .prepare(
-      `SELECT query, COUNT(*) AS count FROM search_queries
+  const zeroResultQueries = validateRows(
+    QueryCountSchema,
+    db
+      .prepare(
+        `SELECT query, COUNT(*) AS count FROM search_queries
        WHERE result_count = 0 AND created_at >= datetime('now', ?)
        GROUP BY query ORDER BY count DESC LIMIT 10`,
-    )
-    .all(since) as Array<{ query: string; count: number }>;
+      )
+      .all(since),
+    "getSearchAnalytics.zeroResultQueries",
+  );
 
-  const queriesPerDay = db
-    .prepare(
-      `SELECT DATE(created_at) AS date, COUNT(*) AS count FROM search_queries
+  const DateCountSchema = z.object({ date: z.string(), count: z.number() });
+  const queriesPerDay = validateRows(
+    DateCountSchema,
+    db
+      .prepare(
+        `SELECT DATE(created_at) AS date, COUNT(*) AS count FROM search_queries
        WHERE created_at >= datetime('now', ?)
        GROUP BY DATE(created_at) ORDER BY date ASC`,
-    )
-    .all(since) as Array<{ date: string; count: number }>;
+      )
+      .all(since),
+    "getSearchAnalytics.queriesPerDay",
+  );
 
   return {
     totalSearches: totals.total,
@@ -248,14 +307,23 @@ export interface KnowledgeGap {
 
 /** Identify knowledge gaps: queries that consistently return zero results. */
 export function getKnowledgeGaps(db: Database.Database, days = 30): KnowledgeGap[] {
-  return db
-    .prepare(
-      `SELECT query, COUNT(*) AS count, MAX(created_at) AS lastSearched
+  const KnowledgeGapSchema = z.object({
+    query: z.string(),
+    count: z.number(),
+    lastSearched: z.string(),
+  });
+  return validateRows(
+    KnowledgeGapSchema,
+    db
+      .prepare(
+        `SELECT query, COUNT(*) AS count, MAX(created_at) AS lastSearched
        FROM search_queries
        WHERE result_count = 0 AND created_at >= datetime('now', ?)
        GROUP BY query
        ORDER BY count DESC
        LIMIT 20`,
-    )
-    .all(`-${days} days`) as KnowledgeGap[];
+      )
+      .all(`-${days} days`),
+    "getKnowledgeGaps.rows",
+  );
 }

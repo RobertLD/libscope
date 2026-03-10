@@ -1,6 +1,25 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { ValidationError, DocumentNotFoundError } from "../errors.js";
+import { validateRow, validateRows } from "../db/validate.js";
+
+const RatingSummaryRowSchema = z.object({
+  avg_rating: z.number().nullable(),
+  total: z.number(),
+  corrections: z.number(),
+});
+
+const RatingRowSchema = z.object({
+  id: z.string(),
+  document_id: z.string(),
+  chunk_id: z.string().nullable(),
+  rating: z.number(),
+  feedback: z.string().nullable(),
+  suggested_correction: z.string().nullable(),
+  rated_by: z.string(),
+  created_at: z.string(),
+});
 
 export interface RateDocumentInput {
   documentId: string;
@@ -36,9 +55,7 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
   }
 
   // Verify document exists
-  const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get(input.documentId) as
-    | { id: string }
-    | undefined;
+  const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get(input.documentId);
   if (!doc) {
     throw new DocumentNotFoundError(input.documentId);
   }
@@ -47,7 +64,7 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
   if (input.chunkId) {
     const chunk = db
       .prepare("SELECT id FROM chunks WHERE id = ? AND document_id = ?")
-      .get(input.chunkId, input.documentId) as { id: string } | undefined;
+      .get(input.chunkId, input.documentId);
     if (!chunk) {
       throw new ValidationError(
         `Chunk '${input.chunkId}' not found for document '${input.documentId}'`,
@@ -87,16 +104,16 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
 
 /** Get rating summary for a document. */
 export function getDocumentRatings(db: Database.Database, documentId: string): RatingSummary {
-  const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get(documentId) as
-    | { id: string }
-    | undefined;
+  const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get(documentId);
   if (!doc) {
     throw new DocumentNotFoundError(documentId);
   }
 
-  const summary = db
-    .prepare(
-      `
+  const summary = validateRow(
+    RatingSummaryRowSchema,
+    db
+      .prepare(
+        `
     SELECT
       AVG(rating) AS avg_rating,
       COUNT(*) AS total,
@@ -104,8 +121,10 @@ export function getDocumentRatings(db: Database.Database, documentId: string): R
     FROM ratings
     WHERE document_id = ?
   `,
-    )
-    .get(documentId) as { avg_rating: number | null; total: number; corrections: number };
+      )
+      .get(documentId),
+    "getDocumentRatings",
+  );
 
   return {
     documentId,
@@ -117,25 +136,20 @@ export function getDocumentRatings(db: Database.Database, documentId: string): R
 
 /** Get all ratings for a document. */
 export function listRatings(db: Database.Database, documentId: string): Rating[] {
-  const rows = db
-    .prepare(
-      `
+  const rows = validateRows(
+    RatingRowSchema,
+    db
+      .prepare(
+        `
     SELECT id, document_id, chunk_id, rating, feedback, suggested_correction, rated_by, created_at
     FROM ratings
     WHERE document_id = ?
     ORDER BY created_at DESC
   `,
-    )
-    .all(documentId) as Array<{
-    id: string;
-    document_id: string;
-    chunk_id: string | null;
-    rating: number;
-    feedback: string | null;
-    suggested_correction: string | null;
-    rated_by: string;
-    created_at: string;
-  }>;
+      )
+      .all(documentId),
+    "listRatings",
+  );
 
   return rows.map((r) => ({
     id: r.id,

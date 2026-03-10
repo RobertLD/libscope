@@ -1,11 +1,47 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DocumentNotFoundError } from "../errors.js";
 import { getDocument, updateDocument } from "./documents.js";
 import { getLogger } from "../logger.js";
+import { validateRow, validateRows } from "../db/validate.js";
 
 export const MAX_VERSIONS_DEFAULT = 10;
+
+export interface VersionMetadata {
+  library: string | null;
+  version: string | null;
+  url: string | null;
+  topicId: string | null;
+  sourceType: string;
+}
+
+export const VersionMetadataSchema = z.object({
+  library: z.string().nullable(),
+  version: z.string().nullable(),
+  url: z.string().nullable(),
+  topicId: z.string().nullable(),
+  sourceType: z.string(),
+});
+
+const MaxVersionRowSchema = z.object({
+  max_version: z.number().nullable(),
+});
+
+const VersionRowSchema = z.object({
+  id: z.string(),
+  document_id: z.string(),
+  version: z.number(),
+  title: z.string(),
+  content: z.string(),
+  metadata: z.string().nullable(),
+  created_at: z.string(),
+});
+
+const CountRowSchema = z.object({
+  cnt: z.number(),
+});
 
 export interface DocumentVersion {
   id: string;
@@ -13,7 +49,7 @@ export interface DocumentVersion {
   version: number;
   title: string;
   content: string;
-  metadata: Record<string, unknown> | null;
+  metadata: VersionMetadata | null;
   createdAt: string;
 }
 
@@ -23,12 +59,15 @@ export function saveVersion(db: Database.Database, documentId: string): Document
 
   const row = db
     .prepare("SELECT MAX(version) as max_version FROM document_versions WHERE document_id = ?")
-    .get(documentId) as { max_version: number | null } | undefined;
+    .get(documentId);
 
-  const nextVersion = (row?.max_version ?? 0) + 1;
+  const maxVersion = row
+    ? (validateRow(MaxVersionRowSchema, row, "saveVersion.maxVersion").max_version ?? 0)
+    : 0;
+  const nextVersion = maxVersion + 1;
   const id = randomUUID();
 
-  const metadata: Record<string, unknown> = {
+  const metadata: VersionMetadata = {
     library: doc.library,
     version: doc.version,
     url: doc.url,
@@ -57,20 +96,16 @@ export function getVersionHistory(db: Database.Database, documentId: string): Do
   // Verify document exists
   getDocument(db, documentId);
 
-  const rows = db
-    .prepare(
-      `SELECT id, document_id, version, title, content, metadata, created_at
+  const rows = validateRows(
+    VersionRowSchema,
+    db
+      .prepare(
+        `SELECT id, document_id, version, title, content, metadata, created_at
        FROM document_versions WHERE document_id = ? ORDER BY version DESC`,
-    )
-    .all(documentId) as Array<{
-    id: string;
-    document_id: string;
-    version: number;
-    title: string;
-    content: string;
-    metadata: string | null;
-    created_at: string;
-  }>;
+      )
+      .all(documentId),
+    "getVersionHistory",
+  );
 
   return rows.map(mapRow);
 }
@@ -81,27 +116,18 @@ export function getVersion(
   documentId: string,
   version: number,
 ): DocumentVersion {
-  const row = db
+  const raw = db
     .prepare(
       `SELECT id, document_id, version, title, content, metadata, created_at
        FROM document_versions WHERE document_id = ? AND version = ?`,
     )
-    .get(documentId, version) as
-    | {
-        id: string;
-        document_id: string;
-        version: number;
-        title: string;
-        content: string;
-        metadata: string | null;
-        created_at: string;
-      }
-    | undefined;
+    .get(documentId, version);
 
-  if (!row) {
+  if (!raw) {
     throw new DocumentNotFoundError(`Version ${version} of document ${documentId}`);
   }
 
+  const row = validateRow(VersionRowSchema, raw, "getVersion");
   return mapRow(row);
 }
 
@@ -117,7 +143,7 @@ export async function rollbackToVersion(
   // Save current state as a new version before rollback
   saveVersion(db, documentId);
 
-  const metadata = target.metadata as Record<string, string | null | undefined> | null;
+  const metadata = target.metadata;
 
   // Restore the document to the target version's state
   await updateDocument(db, provider, documentId, {
@@ -141,11 +167,16 @@ export function pruneVersions(
   documentId: string,
   maxVersions: number = MAX_VERSIONS_DEFAULT,
 ): number {
-  const countResult = db
+  const raw = db
     .prepare(`SELECT COUNT(*) AS cnt FROM document_versions WHERE document_id = ?`)
-    .get(documentId) as { cnt: number } | undefined;
+    .get(documentId);
 
-  if (!countResult || countResult.cnt <= maxVersions) {
+  if (!raw) {
+    return 0;
+  }
+  const countResult = validateRow(CountRowSchema, raw, "pruneVersions.count");
+
+  if (countResult.cnt <= maxVersions) {
     return 0;
   }
 
@@ -162,19 +193,12 @@ export function pruneVersions(
   return result.changes;
 }
 
-function mapRow(row: {
-  id: string;
-  document_id: string;
-  version: number;
-  title: string;
-  content: string;
-  metadata: string | null;
-  created_at: string;
-}): DocumentVersion {
-  let metadata: Record<string, unknown> | null = null;
+function mapRow(row: z.infer<typeof VersionRowSchema>): DocumentVersion {
+  let metadata: VersionMetadata | null = null;
   if (row.metadata) {
     try {
-      metadata = JSON.parse(row.metadata) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(row.metadata);
+      metadata = validateRow(VersionMetadataSchema, parsed, "document_versions.metadata");
     } catch (err) {
       getLogger().warn(
         { err, versionId: row.id },
