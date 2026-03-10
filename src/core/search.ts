@@ -630,7 +630,7 @@ function vectorSearch(
     version: z.string().nullable(),
     topic_id: z.string().nullable(),
     url: z.string().nullable(),
-    avg_rating: z.number().nullable().optional(),
+    avg_rating: z.number().nullable(),
   });
   const rows = validateRows(VectorRowSchema, db.prepare(sql).all(...params), "vectorSearch.rows");
 
@@ -737,7 +737,7 @@ function keywordSearch(
     version: z.string().nullable(),
     topic_id: z.string().nullable(),
     url: z.string().nullable(),
-    avg_rating: z.number().nullable().optional(),
+    avg_rating: z.number().nullable(),
   });
   const rows = validateRows(KeywordRowSchema, db.prepare(sql).all(...params), "keywordSearch.rows");
 
@@ -887,7 +887,7 @@ function fts5Search(
     topic_id: z.string().nullable(),
     url: z.string().nullable(),
     fts_rank: z.number(),
-    avg_rating: z.number().nullable().optional(),
+    avg_rating: z.number().nullable(),
   });
   let rows = validateRows(Fts5RowSchema, db.prepare(sql).all(...params), "fts5Search.rows");
 
