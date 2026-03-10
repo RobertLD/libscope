@@ -64,6 +64,19 @@ export interface Webhook {
   failureCount: number;
 }
 
+/**
+ * Payload sent to webhook subscribers.
+ *
+ * The `data` field shape varies by event type:
+ *  - "document.created" / "document.updated" / "document.deleted":
+ *      { documentId: string; title: string; library?: string; version?: string }
+ *  - "document.rated":
+ *      { documentId: string; rating: number; feedback?: string }
+ *  - "search.executed":
+ *      { query: string; resultCount: number; topicId?: string }
+ *
+ * Kept as Record<string, unknown> to avoid a breaking change to the public API.
+ */
 export interface WebhookPayload {
   event: WebhookEvent;
   timestamp: string;

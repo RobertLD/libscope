@@ -1,8 +1,52 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { DocumentNotFoundError, ValidationError } from "../errors.js";
+import { validateRow, validateRows } from "../db/validate.js";
 import { createChildLogger } from "../logger.js";
 import type { Document } from "./documents.js";
+
+const TagRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  created_at: z.string(),
+});
+
+const TagWithCountRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  created_at: z.string(),
+  document_count: z.number(),
+});
+
+const DocTagRowSchema = z.object({
+  document_id: z.string(),
+  id: z.string(),
+  name: z.string(),
+  created_at: z.string(),
+});
+
+const DocumentRowSchema = z.object({
+  id: z.string(),
+  source_type: z.string(),
+  library: z.string().nullable(),
+  version: z.string().nullable(),
+  topic_id: z.string().nullable(),
+  title: z.string(),
+  content: z.string(),
+  url: z.string().nullable(),
+  content_hash: z.string().nullable(),
+  submitted_by: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const NameRowSchema = z.object({ name: z.string() });
+
+const TitleContentRowSchema = z.object({
+  title: z.string(),
+  content: z.string(),
+});
 
 const STOPWORDS = new Set([
   "the",
@@ -138,13 +182,11 @@ export function createTag(db: Database.Database, name: string): Tag {
     return { id, name: trimmed, createdAt: new Date().toISOString() };
   }
 
-  const existing = db
-    .prepare("SELECT id, name, created_at FROM tags WHERE name = ?")
-    .get(trimmed) as {
-    id: string;
-    name: string;
-    created_at: string;
-  };
+  const existing = validateRow(
+    TagRowSchema,
+    db.prepare("SELECT id, name, created_at FROM tags WHERE name = ?").get(trimmed),
+    "createTag.existing",
+  );
 
   log.info({ name: trimmed }, "Tag already exists, returning existing");
   return { id: existing.id, name: existing.name, createdAt: existing.created_at };
@@ -159,20 +201,19 @@ export function deleteTag(db: Database.Database, tagId: string): void {
 
 /** List all tags with their document counts. */
 export function listTags(db: Database.Database): TagWithCount[] {
-  const rows = db
-    .prepare(
-      `SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
+  const rows = validateRows(
+    TagWithCountRowSchema,
+    db
+      .prepare(
+        `SELECT t.id, t.name, t.created_at, COUNT(dt.document_id) AS document_count
        FROM tags t
        LEFT JOIN document_tags dt ON dt.tag_id = t.id
        GROUP BY t.id
        ORDER BY t.name`,
-    )
-    .all() as Array<{
-    id: string;
-    name: string;
-    created_at: string;
-    document_count: number;
-  }>;
+      )
+      .all(),
+    "listTags",
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -229,20 +270,19 @@ export function getDocumentTagsBatch(
 ): Map<string, Tag[]> {
   if (documentIds.length === 0) return new Map();
   const placeholders = documentIds.map(() => "?").join(", ");
-  const rows = db
-    .prepare(
-      `SELECT dt.document_id, t.id, t.name, t.created_at
+  const rows = validateRows(
+    DocTagRowSchema,
+    db
+      .prepare(
+        `SELECT dt.document_id, t.id, t.name, t.created_at
        FROM tags t
        JOIN document_tags dt ON dt.tag_id = t.id
        WHERE dt.document_id IN (${placeholders})
        ORDER BY t.name`,
-    )
-    .all(...documentIds) as Array<{
-    document_id: string;
-    id: string;
-    name: string;
-    created_at: string;
-  }>;
+      )
+      .all(...documentIds),
+    "getDocumentTagsBatch",
+  );
 
   const result = new Map<string, Tag[]>();
   for (const row of rows) {
@@ -255,19 +295,19 @@ export function getDocumentTagsBatch(
 
 /** Get all tags for a specific document. */
 export function getDocumentTags(db: Database.Database, documentId: string): Tag[] {
-  const rows = db
-    .prepare(
-      `SELECT t.id, t.name, t.created_at
+  const rows = validateRows(
+    TagRowSchema,
+    db
+      .prepare(
+        `SELECT t.id, t.name, t.created_at
        FROM tags t
        JOIN document_tags dt ON dt.tag_id = t.id
        WHERE dt.document_id = ?
        ORDER BY t.name`,
-    )
-    .all(documentId) as Array<{
-    id: string;
-    name: string;
-    created_at: string;
-  }>;
+      )
+      .all(documentId),
+    "getDocumentTags",
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -310,20 +350,7 @@ export function getDocumentsByTag(
   `;
 
   const params = [...normalized, normalized.length, limit, offset];
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    title: string;
-    content: string;
-    url: string | null;
-    content_hash: string | null;
-    submitted_by: string;
-    created_at: string;
-    updated_at: string;
-  }>;
+  const rows = validateRows(DocumentRowSchema, db.prepare(sql).all(...params), "getDocumentsByTag");
 
   log.info({ tagNames: normalized, resultCount: rows.length }, "Documents retrieved by tags");
 
@@ -385,13 +412,12 @@ export function suggestTags(
   const log = createChildLogger({ operation: "suggestTags" });
   const limit = maxSuggestions ?? 5;
 
-  const row = db.prepare("SELECT title, content FROM documents WHERE id = ?").get(documentId) as
-    | { title: string; content: string }
-    | undefined;
+  const raw = db.prepare("SELECT title, content FROM documents WHERE id = ?").get(documentId);
 
-  if (!row) {
+  if (!raw) {
     throw new DocumentNotFoundError(documentId);
   }
+  const row = validateRow(TitleContentRowSchema, raw, "suggestTags.document");
 
   const fullText = `${row.title} ${row.content}`;
   const tokens = tokenize(fullText);
@@ -407,20 +433,26 @@ export function suggestTags(
 
   // Get existing tags already on this document (to exclude them)
   const existingTags = new Set(
-    (
+    validateRows(
+      NameRowSchema,
       db
         .prepare(
           `SELECT t.name FROM tags t
            JOIN document_tags dt ON dt.tag_id = t.id
            WHERE dt.document_id = ?`,
         )
-        .all(documentId) as Array<{ name: string }>
+        .all(documentId),
+      "suggestTags.existingTags",
     ).map((r) => r.name),
   );
 
   // Get all known tags in the system for boosting
   const knownTags = new Set(
-    (db.prepare("SELECT name FROM tags").all() as Array<{ name: string }>).map((r) => r.name),
+    validateRows(
+      NameRowSchema,
+      db.prepare("SELECT name FROM tags").all(),
+      "suggestTags.knownTags",
+    ).map((r) => r.name),
   );
 
   // Score each term: TF normalized + boost for known tags
