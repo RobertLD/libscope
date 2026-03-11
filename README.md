@@ -398,6 +398,33 @@ libscope pack create --name "react-docs" --topic react
 libscope pack install ./react-docs.json
 ```
 
+### Pack Registries
+
+Share and discover knowledge packs through git-based registries. A registry is a git repo with a defined folder structure managed by libscope.
+
+```bash
+# Add a registry
+libscope registry add https://github.com/org/libscope-registry.git --name official
+
+# Search for packs across all registries
+libscope registry search "react"
+
+# Install a pack by name (resolves from registries)
+libscope pack install react-docs
+libscope pack install react-docs@1.2.0    # specific version
+
+# Create your own registry
+libscope registry create ./my-registry
+
+# Publish a pack file to your registry
+libscope registry publish ./my-pack.json -r my-registry --version 1.0.0
+
+# Submit a pack to someone else's registry (creates a feature branch)
+libscope registry publish ./my-pack.json -r community --submit
+```
+
+Authentication is delegated to git — SSH keys and HTTPS credential helpers work automatically. Registries cache locally and support offline index lookups. See the [Pack Registries guide](/guide/pack-registries) for full details.
+
 There's also a web dashboard at `http://localhost:3377` when you run `libscope serve`, with search, document browsing, topic navigation, and a knowledge graph visualization at `/graph`.
 
 <details>
@@ -478,6 +505,19 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 | `libscope connect slack`           | Sync Slack                 |
 | `libscope add-repo <url>`          | Index a GitHub/GitLab repo |
 | `libscope disconnect <name>`       | Remove connector data      |
+
+**Registries**
+
+| Command                                               | Description                              |
+| ----------------------------------------------------- | ---------------------------------------- |
+| `libscope registry add <url> [-n <alias>]`            | Register a git repo as a pack registry   |
+| `libscope registry remove <name>`                     | Unregister a registry                    |
+| `libscope registry list`                              | List configured registries               |
+| `libscope registry sync [<name>]`                     | Sync one or all registries               |
+| `libscope registry search <query> [-r <name>]`        | Search registry pack indexes             |
+| `libscope registry create <path>`                     | Initialize a new registry repo           |
+| `libscope registry publish <file> -r <name>`          | Publish a pack file to a registry        |
+| `libscope registry unpublish <pack> -r <name>`        | Remove a pack version from a registry    |
 
 **Utilities**
 

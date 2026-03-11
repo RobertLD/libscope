@@ -93,6 +93,10 @@ import {
   signPayload,
 } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
+import { registerRegistryCommands } from "./commands/registry.js";
+import { parsePackSpecifier, resolvePackFromRegistries } from "../registry/resolve.js";
+import { loadRegistries } from "../registry/config.js";
+import { createInterface } from "node:readline";
 
 // Graceful shutdown
 const handleShutdown = (): void => {
@@ -1614,15 +1618,29 @@ const packCmd = program.command("pack").description("Manage knowledge packs");
 
 packCmd
   .command("install <nameOrPath>")
-  .description("Install a knowledge pack from registry or local .json/.json.gz file")
-  .option("--registry <url>", "Custom registry URL")
+  .description(
+    "Install a knowledge pack from a git registry, URL registry, or local .json/.json.gz file. " +
+      "Supports name@version syntax.",
+  )
+  .option("--registry <url>", "Custom registry URL (for URL-based registries)")
+  .option("--from-registry <name>", "Install from a specific git registry by name")
+  .option("--version <semver>", "Install a specific version (for git registries)")
+  .option("-y, --yes", "Non-interactive mode (fail on conflicts instead of prompting)")
   .option("--batch-size <n>", "Number of documents to embed per batch (default: 10)")
   .option("--resume-from <n>", "Skip the first N documents (resume a partial install)")
   .option("--concurrency <n>", "Number of batches to embed in parallel (default: 4)")
   .action(
     async (
       nameOrPath: string,
-      opts: { registry?: string; batchSize?: string; resumeFrom?: string; concurrency?: string },
+      opts: {
+        registry?: string;
+        fromRegistry?: string;
+        version?: string;
+        yes?: boolean;
+        batchSize?: string;
+        resumeFrom?: string;
+        concurrency?: string;
+      },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       const globalOpts = program.opts<ProgramOpts>();
@@ -1644,6 +1662,122 @@ packCmd
       }
 
       try {
+        // Check if this is a local file or URL-based registry install
+        const isLocalFile = nameOrPath.endsWith(".json") || nameOrPath.endsWith(".json.gz");
+
+        // Try git registry resolution if not a local file and we have registries configured
+        if (!isLocalFile && loadRegistries().length > 0) {
+          const { name: packName, version: specVersion } = parsePackSpecifier(nameOrPath);
+          const version = opts.version ?? specVersion;
+
+          const { resolved, conflict, warnings } = resolvePackFromRegistries(packName, {
+            version,
+            registryName: opts.fromRegistry,
+            conflictResolution: opts.fromRegistry
+              ? { strategy: "explicit", registryName: opts.fromRegistry }
+              : opts.yes
+                ? { strategy: "priority" }
+                : undefined,
+          });
+
+          for (const w of warnings) {
+            reporter.log(`Warning: ${w}`);
+          }
+
+          if (conflict && !resolved) {
+            // Multiple registries have this pack — prompt or fail
+            if (opts.yes) {
+              const names = conflict.sources.map((s) => s.registryName).join(", ");
+              reporter.log(
+                `Error: Pack "${packName}" found in multiple registries: ${names}. ` +
+                  "Use --from-registry <name> to disambiguate.",
+              );
+              closeDatabase();
+              process.exit(1);
+              return;
+            }
+
+            // Interactive prompt
+            console.log(`Pack "${packName}" found in multiple registries:`);
+            for (let i = 0; i < conflict.sources.length; i++) {
+              const s = conflict.sources[i]!;
+              console.log(
+                `  [${i + 1}] ${s.registryName} (v${s.version}, priority: ${s.priority})`,
+              );
+            }
+
+            const rl = createInterface({ input: process.stdin, output: process.stdout });
+            const answer = await new Promise<string>((resolve) => {
+              rl.question("Select registry [1]: ", (ans) => {
+                rl.close();
+                resolve(ans.trim() || "1");
+              });
+            });
+
+            const choice = parseInt(answer, 10) - 1;
+            if (isNaN(choice) || choice < 0 || choice >= conflict.sources.length) {
+              reporter.log("Invalid selection. Cancelled.");
+              closeDatabase();
+              process.exit(1);
+              return;
+            }
+
+            const chosen = conflict.sources[choice]!;
+            const retryResult = resolvePackFromRegistries(packName, {
+              version,
+              registryName: chosen.registryName,
+              conflictResolution: { strategy: "explicit", registryName: chosen.registryName },
+            });
+
+            if (retryResult.resolved) {
+              // Install from resolved local path
+              const result = await installPack(db, provider, retryResult.resolved.dataPath, {
+                batchSize,
+                resumeFrom,
+                concurrency,
+                onProgress: (current, total, docTitle) => {
+                  reporter.progress(current, total, docTitle);
+                },
+              });
+              reporter.clearProgress();
+              if (result.alreadyInstalled) {
+                reporter.log(`Pack "${result.packName}" is already installed.`);
+              } else {
+                const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
+                reporter.success(
+                  `Pack "${result.packName}" installed from ${chosen.registryName}: ${result.documentsInstalled} documents${errMsg}.`,
+                );
+              }
+              return;
+            }
+          }
+
+          if (resolved) {
+            // Install from resolved local path
+            const result = await installPack(db, provider, resolved.dataPath, {
+              batchSize,
+              resumeFrom,
+              concurrency,
+              onProgress: (current, total, docTitle) => {
+                reporter.progress(current, total, docTitle);
+              },
+            });
+            reporter.clearProgress();
+            if (result.alreadyInstalled) {
+              reporter.log(`Pack "${result.packName}" is already installed.`);
+            } else {
+              const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
+              reporter.success(
+                `Pack "${result.packName}" installed from ${resolved.registryName}: ${result.documentsInstalled} documents${errMsg}.`,
+              );
+            }
+            return;
+          }
+
+          // Fall through to URL-based registry install if git registry resolution failed
+        }
+
+        // Original URL-based or local file install
         const result = await installPack(db, provider, nameOrPath, {
           registryUrl: opts.registry,
           batchSize,
@@ -2666,5 +2800,8 @@ scheduleCmd
     saveCfg(connector, config);
     console.log(`✓ Schedule removed for ${connector}`);
   });
+
+// Registry commands
+registerRegistryCommands(program);
 
 program.parse();

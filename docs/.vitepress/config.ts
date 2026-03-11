@@ -56,6 +56,7 @@ export default defineConfig({
             { text: "MCP Setup", link: "/guide/mcp-setup" },
             { text: "Connectors", link: "/guide/connectors" },
             { text: "Knowledge Packs", link: "/guide/knowledge-packs" },
+            { text: "Pack Registries", link: "/guide/pack-registries" },
             {
               text: "Programmatic Usage",
               link: "/guide/programmatic-usage",
@@ -77,6 +78,7 @@ export default defineConfig({
             { text: "CLI Commands", link: "/reference/cli" },
             { text: "MCP Tools", link: "/reference/mcp-tools" },
             { text: "REST API", link: "/reference/rest-api" },
+            { text: "Registry", link: "/reference/registry" },
             { text: "Configuration", link: "/reference/configuration" },
           ],
         },
