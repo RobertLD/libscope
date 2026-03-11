@@ -127,6 +127,46 @@ function extractHref(tag: string): string | null {
  * Resolve a potentially-relative href against a base URL.
  * Returns null if the result is not an http/https URL (e.g. mailto:, javascript:, data:, #fragment-only).
  */
+/**
+ * Extract markdown-style links from content.
+ * Parses [text](url) patterns and returns an array of {text, url} objects.
+ */
+export function extractMarkdownLinks(content: string): Array<{ text: string; url: string }> {
+  if (!content) return [];
+
+  const results: Array<{ text: string; url: string }> = [];
+  const re = /\[([^\]]*)\]\(([^)]+)\)/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(content)) !== null) {
+    results.push({ text: match[1]!, url: match[2]! });
+  }
+
+  return results;
+}
+
+/**
+ * Extract wikilinks from content.
+ * Parses [[PageName]] and [[PageName|alias]] formats.
+ * Returns deduplicated array of page names.
+ */
+export function extractWikilinks(content: string): string[] {
+  if (!content) return [];
+
+  const seen = new Set<string>();
+  const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(content)) !== null) {
+    const pageName = match[1]!.trim();
+    if (pageName) {
+      seen.add(pageName);
+    }
+  }
+
+  return [...seen];
+}
+
 function resolveUrl(href: string, baseUrl: string): string | null {
   // Skip fragment-only links immediately — they point to the same page
   if (href.startsWith("#")) return null;

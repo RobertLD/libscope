@@ -2,14 +2,16 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { ValidationError, DocumentNotFoundError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
+import { extractMarkdownLinks, extractWikilinks } from "./link-extractor.js";
 
-export type LinkType = "see_also" | "prerequisite" | "supersedes" | "related";
+export type LinkType = "see_also" | "prerequisite" | "supersedes" | "related" | "references";
 
 const VALID_LINK_TYPES: ReadonlySet<string> = new Set<LinkType>([
   "see_also",
   "prerequisite",
   "supersedes",
   "related",
+  "references",
 ]);
 
 export interface DocumentLink {
@@ -223,4 +225,57 @@ export function listLinks(db: Database.Database, linkType?: LinkType): DocumentL
 
   const rows = db.prepare(sql).all(...params) as LinkRowWithTitles[];
   return rows.map(rowToLinkWithTitle);
+}
+
+/** Resolve a document by its URL. Returns the document id or null. */
+export function resolveDocumentByUrl(db: Database.Database, url: string): string | null {
+  const row = db.prepare("SELECT id FROM documents WHERE url = ? LIMIT 1").get(url) as
+    | { id: string }
+    | undefined;
+  return row?.id ?? null;
+}
+
+/** Resolve a document by its title (case-insensitive). Returns the document id or null. */
+export function resolveDocumentByTitle(db: Database.Database, title: string): string | null {
+  const row = db
+    .prepare("SELECT id FROM documents WHERE lower(title) = lower(?) LIMIT 1")
+    .get(title) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+/** Resolve a document reference by trying URL first, then title. Returns the document id or null. */
+export function resolveDocumentLink(db: Database.Database, ref: string): string | null {
+  return resolveDocumentByUrl(db, ref) ?? resolveDocumentByTitle(db, ref);
+}
+
+/** Extract markdown and wiki links from content, resolve them, and store as "references" links. */
+export function extractAndStoreDocumentLinks(
+  db: Database.Database,
+  documentId: string,
+  content: string,
+): void {
+  const log = createChildLogger({ operation: "extractAndStoreDocumentLinks" });
+  const resolved = new Set<string>();
+
+  for (const { url } of extractMarkdownLinks(content)) {
+    const targetId = resolveDocumentLink(db, url);
+    if (targetId && targetId !== documentId) {
+      resolved.add(targetId);
+    }
+  }
+
+  for (const pageName of extractWikilinks(content)) {
+    const targetId = resolveDocumentLink(db, pageName);
+    if (targetId && targetId !== documentId) {
+      resolved.add(targetId);
+    }
+  }
+
+  for (const targetId of resolved) {
+    try {
+      createLink(db, documentId, targetId, "references");
+    } catch (e) {
+      log.warn({ documentId, targetId, error: e }, "Failed to create reference link, skipping");
+    }
+  }
 }
