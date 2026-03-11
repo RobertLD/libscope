@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0](https://github.com/RobertLD/libscope/compare/v1.4.1...v1.5.0) (2026-03-11)
+
+
+### Features
+
+* git-based pack registries ([#393](https://github.com/RobertLD/libscope/issues/393)) ([f0653ce](https://github.com/RobertLD/libscope/commit/f0653cefc248ca7bd8d68bb174b579c20a4c8923))
+
+
+### Bug Fixes
+
+* deployments v2 ([#389](https://github.com/RobertLD/libscope/issues/389)) ([b800703](https://github.com/RobertLD/libscope/commit/b8007034caa8c79f85a9d81a6aa19c0e11513c02))
+* docs not updating on deployment ([#387](https://github.com/RobertLD/libscope/issues/387)) ([11e11ff](https://github.com/RobertLD/libscope/commit/11e11ff2b1e8b7a6bc9603e8e89b272873deb597))
+
 ## [1.4.1](https://github.com/RobertLD/libscope/compare/v1.4.0...v1.4.1) (2026-03-10)
 
 
