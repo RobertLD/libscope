@@ -102,6 +102,27 @@ export interface SearchResult {
   contextAfter?: ContextChunk[] | undefined;
 }
 
+export interface RelatedChunksOptions {
+  chunkId: string;
+  limit?: number;           // default 10
+  excludeDocumentId?: string; // exclude the source document (default: auto-detected from chunkId)
+  topic?: string;
+  library?: string;
+  tags?: string[];
+  minScore?: number;        // default 0.0
+  includeLinkedDocuments?: boolean; // blend in explicit document_links (default false)
+}
+
+export interface RelatedChunksResult {
+  chunks: SearchResult[];
+  sourceChunk: {
+    id: string;
+    documentId: string;
+    content: string;
+    chunkIndex: number;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Title boost multiplier: chunks whose document title contains any query word
 // receive this multiplicative boost to their final score.
@@ -818,6 +839,229 @@ function attachRatings(db: Database.Database, results: SearchResult[]): SearchRe
   );
   const ratingMap = new Map(rows.map((r) => [r.document_id, r.avg_rating]));
   return results.map((r) => ({ ...r, avgRating: ratingMap.get(r.documentId) ?? null }));
+}
+
+/**
+ * Find chunks related to a given chunk by vector similarity.
+ * Looks up the source chunk's embedding, then searches for similar chunks
+ * excluding the source document (by default). Returns synchronously.
+ */
+export function getRelatedChunks(
+  db: Database.Database,
+  options: RelatedChunksOptions,
+): RelatedChunksResult {
+  const { chunkId } = options;
+  const limit = Math.max(1, Math.min(options.limit ?? 10, 1000));
+  const minScore = options.minScore ?? 0.0;
+
+  // Look up the source chunk
+  const SourceChunkSchema = z.object({
+    id: z.string(),
+    document_id: z.string(),
+    content: z.string(),
+    chunk_index: z.number(),
+  });
+  const sourceChunkRow = validateRow(
+    SourceChunkSchema.optional(),
+    db
+      .prepare(`SELECT id, document_id, content, chunk_index FROM chunks WHERE id = ?`)
+      .get(chunkId),
+    "getRelatedChunks.sourceChunk",
+  );
+  if (!sourceChunkRow) {
+    throw new Error(`Chunk not found: ${chunkId}`);
+  }
+
+  const sourceChunk = {
+    id: sourceChunkRow.id,
+    documentId: sourceChunkRow.document_id,
+    content: sourceChunkRow.content,
+    chunkIndex: sourceChunkRow.chunk_index,
+  };
+
+  const excludeDocumentId = options.excludeDocumentId ?? sourceChunkRow.document_id;
+
+  // Fetch the embedding for the source chunk
+  const EmbeddingRowSchema = z.object({ embedding: z.instanceof(Buffer) });
+  const embeddingRow = validateRow(
+    EmbeddingRowSchema.optional(),
+    db
+      .prepare(`SELECT embedding FROM chunk_embeddings WHERE chunk_id = ?`)
+      .get(chunkId),
+    "getRelatedChunks.embedding",
+  );
+  if (!embeddingRow) {
+    throw new Error(`No embedding found for chunk: ${chunkId}`);
+  }
+
+  const vecBuffer = embeddingRow.embedding;
+
+  // Build SQL: vector ANN search excluding the source document
+  const tagFilter = buildTagFilter(options.tags, "d");
+
+  let sql = `
+    SELECT
+      candidates.chunk_id,
+      candidates.distance,
+      c.document_id,
+      c.content AS chunk_content,
+      d.title,
+      d.source_type,
+      d.library,
+      d.version,
+      d.topic_id,
+      d.url
+    FROM (
+      SELECT chunk_id, distance
+      FROM chunk_embeddings
+      WHERE embedding MATCH ?
+      ORDER BY distance
+      LIMIT ?
+    ) candidates
+    JOIN chunks c ON c.id = candidates.chunk_id
+    JOIN documents d ON d.id = c.document_id
+    WHERE c.document_id != ?
+  `;
+
+  const params: unknown[] = [vecBuffer, limit * 10, excludeDocumentId];
+
+  if (options.library) {
+    sql += ` AND d.library = ?`;
+    params.push(options.library);
+  }
+  if (options.topic) {
+    sql += ` AND d.topic_id = ?`;
+    params.push(options.topic);
+  }
+  sql += tagFilter.clause;
+  params.push(...tagFilter.params);
+
+  sql += ` ORDER BY candidates.distance LIMIT ?`;
+  params.push(limit * 2); // over-fetch to allow minScore filtering
+
+  const RelatedRowSchema = z.object({
+    chunk_id: z.string(),
+    distance: z.number(),
+    document_id: z.string(),
+    chunk_content: z.string(),
+    title: z.string(),
+    source_type: z.string(),
+    library: z.string().nullable(),
+    version: z.string().nullable(),
+    topic_id: z.string().nullable(),
+    url: z.string().nullable(),
+  });
+
+  const rows = validateRows(
+    RelatedRowSchema,
+    db.prepare(sql).all(...params),
+    "getRelatedChunks.rows",
+  );
+
+  let results: SearchResult[] = rows.map((row) => {
+    const similarity = 1 - row.distance;
+    return {
+      documentId: row.document_id,
+      chunkId: row.chunk_id,
+      title: row.title,
+      content: row.chunk_content,
+      sourceType: row.source_type,
+      library: row.library,
+      version: row.version,
+      topicId: row.topic_id,
+      url: row.url,
+      score: similarity,
+      avgRating: null,
+      scoreExplanation: {
+        method: "vector" as SearchMethod,
+        rawScore: row.distance,
+        boostFactors: [],
+        details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
+      },
+    };
+  });
+
+  // Apply minScore filter
+  if (minScore > 0) {
+    results = results.filter((r) => r.score >= minScore);
+  }
+
+  // Optional: blend in explicitly linked documents
+  if (options.includeLinkedDocuments) {
+    const linkedDocs = db
+      .prepare(
+        `SELECT DISTINCT
+          CASE WHEN source_id = ? THEN target_id ELSE source_id END AS linked_doc_id
+        FROM document_links
+        WHERE source_id = ? OR target_id = ?`,
+      )
+      .all(
+        sourceChunk.documentId,
+        sourceChunk.documentId,
+        sourceChunk.documentId,
+      ) as { linked_doc_id: string }[];
+
+    const LinkedChunkSchema = z.object({
+      id: z.string(),
+      document_id: z.string(),
+      content: z.string(),
+      chunk_index: z.number(),
+      title: z.string(),
+      source_type: z.string(),
+      library: z.string().nullable(),
+      version: z.string().nullable(),
+      topic_id: z.string().nullable(),
+      url: z.string().nullable(),
+    });
+
+    const presentDocIds = new Set(results.map((r) => r.documentId));
+    for (const { linked_doc_id } of linkedDocs) {
+      if (!presentDocIds.has(linked_doc_id)) {
+        const linkedChunk = validateRow(
+          LinkedChunkSchema.optional(),
+          db
+            .prepare(
+              `SELECT c.id, c.document_id, c.content, c.chunk_index,
+                      d.title, d.source_type, d.library, d.version, d.topic_id, d.url
+               FROM chunks c
+               JOIN documents d ON d.id = c.document_id
+               WHERE c.document_id = ?
+               ORDER BY c.chunk_index ASC
+               LIMIT 1`,
+            )
+            .get(linked_doc_id),
+          "getRelatedChunks.linkedChunk",
+        );
+        if (linkedChunk) {
+          results.push({
+            documentId: linkedChunk.document_id,
+            chunkId: linkedChunk.id,
+            title: linkedChunk.title,
+            content: linkedChunk.content,
+            sourceType: linkedChunk.source_type,
+            library: linkedChunk.library,
+            version: linkedChunk.version,
+            topicId: linkedChunk.topic_id,
+            url: linkedChunk.url,
+            score: 0.6,
+            avgRating: null,
+            scoreExplanation: {
+              method: "vector" as SearchMethod,
+              rawScore: 0.6,
+              boostFactors: ["linked_document"],
+              details: "Explicitly linked document",
+            },
+          });
+        }
+      }
+    }
+    results.sort((a, b) => b.score - a.score);
+  }
+
+  // Trim to requested limit
+  results = results.slice(0, limit);
+
+  return { chunks: results, sourceChunk };
 }
 
 /** FTS5-based full-text search with BM25 ranking. Uses AND logic by default. */
