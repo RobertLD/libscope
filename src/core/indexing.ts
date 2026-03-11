@@ -8,6 +8,7 @@ import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
+import { extractAndStoreDocumentLinks } from "./links.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 
 export interface IndexDocumentInput {
@@ -470,6 +471,14 @@ export async function indexDocument(
   transaction();
 
   log.info({ docId, chunkCount: chunks.length }, "Document indexed successfully");
+
+  // Extract and store document links (best-effort — don't fail indexing)
+  try {
+    extractAndStoreDocumentLinks(db, docId, input.content);
+  } catch (err) {
+    log.warn({ err, docId }, "Failed to extract document links");
+  }
+
   return { id: docId, chunkCount: chunks.length };
 }
 
