@@ -24,9 +24,9 @@ describe("getRelatedChunks", () => {
 
   describe("error handling", () => {
     it("throws when chunkId does not exist", () => {
-      expect(() =>
-        getRelatedChunks(db, { chunkId: "nonexistent-chunk-id" }),
-      ).toThrow("Chunk not found: nonexistent-chunk-id");
+      expect(() => getRelatedChunks(db, { chunkId: "nonexistent-chunk-id" })).toThrow(
+        "Chunk not found: nonexistent-chunk-id",
+      );
     });
 
     it("throws when chunk exists but has no embedding", () => {
