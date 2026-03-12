@@ -104,12 +104,12 @@ export interface SearchResult {
 
 export interface RelatedChunksOptions {
   chunkId: string;
-  limit?: number;           // default 10
+  limit?: number; // default 10
   excludeDocumentId?: string; // exclude the source document (default: auto-detected from chunkId)
   topic?: string;
   library?: string;
   tags?: string[];
-  minScore?: number;        // default 0.0
+  minScore?: number; // default 0.0
   includeLinkedDocuments?: boolean; // blend in explicit document_links (default false)
 }
 
@@ -885,9 +885,7 @@ export function getRelatedChunks(
   const EmbeddingRowSchema = z.object({ embedding: z.instanceof(Buffer) });
   const embeddingRow = validateRow(
     EmbeddingRowSchema.optional(),
-    db
-      .prepare(`SELECT embedding FROM chunk_embeddings WHERE chunk_id = ?`)
-      .get(chunkId),
+    db.prepare(`SELECT embedding FROM chunk_embeddings WHERE chunk_id = ?`).get(chunkId),
     "getRelatedChunks.embedding",
   );
   if (!embeddingRow) {
@@ -995,11 +993,9 @@ export function getRelatedChunks(
         FROM document_links
         WHERE source_id = ? OR target_id = ?`,
       )
-      .all(
-        sourceChunk.documentId,
-        sourceChunk.documentId,
-        sourceChunk.documentId,
-      ) as { linked_doc_id: string }[];
+      .all(sourceChunk.documentId, sourceChunk.documentId, sourceChunk.documentId) as {
+      linked_doc_id: string;
+    }[];
 
     const LinkedChunkSchema = z.object({
       id: z.string(),

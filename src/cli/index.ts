@@ -495,7 +495,9 @@ program
         }
 
         const { sourceChunk, chunks } = result;
-        console.log(`\nRelated to chunk: ${sourceChunk.id} from document ${sourceChunk.documentId}`);
+        console.log(
+          `\nRelated to chunk: ${sourceChunk.id} from document ${sourceChunk.documentId}`,
+        );
 
         if (chunks.length === 0) {
           console.log("No related chunks found.");
