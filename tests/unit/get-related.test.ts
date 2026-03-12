@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
-import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
+import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { insertDoc, insertChunk } from "../fixtures/helpers.js";
 import { getRelatedChunks } from "../../src/core/search.js";
 
@@ -75,7 +75,7 @@ describe("getRelatedChunks", () => {
         for (const chunk of result.chunks) {
           expect(chunk.documentId).not.toBe("doc1");
         }
-      } catch (_err) {
+      } catch {
         // sqlite-vec not available; vector behavior untestable here
       }
     });
@@ -90,7 +90,7 @@ describe("getRelatedChunks", () => {
         for (const chunk of result.chunks) {
           expect(chunk.documentId).not.toBe("other-doc");
         }
-      } catch (_err) {
+      } catch {
         // sqlite-vec not available
       }
     });
@@ -124,7 +124,7 @@ describe("getRelatedChunks", () => {
           expect(linkedResult.score).toBe(0.6);
           expect(linkedResult.scoreExplanation.boostFactors).toContain("linked_document");
         }
-      } catch (_err) {
+      } catch {
         // sqlite-vec not available; test the linking SQL directly instead
         const linkedDocs = db
           .prepare(
@@ -162,7 +162,7 @@ describe("getRelatedChunks", () => {
         const docIds = result.chunks.map((c) => c.documentId);
         const uniqueDocIds = new Set(docIds);
         expect(docIds.length).toBe(uniqueDocIds.size);
-      } catch (_err) {
+      } catch {
         // sqlite-vec not available
       }
     });
@@ -179,7 +179,7 @@ describe("getRelatedChunks", () => {
         for (const chunk of result.chunks) {
           expect(chunk.score).toBeGreaterThanOrEqual(0.9);
         }
-      } catch (_err) {
+      } catch {
         // sqlite-vec not available
       }
     });
@@ -194,7 +194,7 @@ describe("getRelatedChunks", () => {
       try {
         const result = getRelatedChunks(db, { chunkId: "c1", limit: 3 });
         expect(result.chunks.length).toBeLessThanOrEqual(3);
-      } catch (_err) {
+      } catch {
         // sqlite-vec not available
       }
     });

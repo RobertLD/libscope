@@ -190,7 +190,7 @@ async function main(): Promise<void> {
       minScore: z.number().min(0).max(1).optional().describe("Minimum similarity score threshold (0-1)"),
       includeLinkedDocuments: z.boolean().optional().describe("Also include explicitly linked documents even if below similarity threshold"),
     },
-    withErrorHandling(async ({ chunkId, limit, topic, library, tags, minScore, includeLinkedDocuments }) => {
+    withErrorHandling(({ chunkId, limit, topic, library, tags, minScore, includeLinkedDocuments }) => {
       const result = getRelatedChunks(db, {
         chunkId,
         ...(limit !== undefined && { limit }),
