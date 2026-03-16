@@ -24,11 +24,14 @@ export function validateRegistryName(name: string): void {
 
 /** Validate a git URL (https or ssh). */
 export function validateGitUrl(url: string): void {
-  // Accept https:// URLs and SSH-style git@host:path URLs
+  // Accept https:// URLs, ssh:// URLs, and SCP-style git@host:path URLs
   const isHttps = url.startsWith("https://");
-  const isSsh = /^git@[\w.-]+:/.test(url);
-  if (!isHttps && !isSsh) {
-    throw new ValidationError("Registry URL must use https:// or SSH (git@host:path) format");
+  const isSshProtocol = url.startsWith("ssh://");
+  const isScp = /^git@[\w.-]+:/.test(url);
+  if (!isHttps && !isSshProtocol && !isScp) {
+    throw new ValidationError(
+      "Registry URL must use https://, ssh://, or SSH (git@host:path) format",
+    );
   }
 }
 

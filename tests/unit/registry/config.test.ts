@@ -78,6 +78,10 @@ describe("registry config", () => {
       expect(() => validateGitUrl("git@github.com:org/repo.git")).not.toThrow();
     });
 
+    it("should accept ssh:// protocol URLs", () => {
+      expect(() => validateGitUrl("ssh://git@bitbucket:7999/mdog/repo.git")).not.toThrow();
+    });
+
     it("should reject http:// URLs", () => {
       expect(() => validateGitUrl("http://github.com/org/repo.git")).toThrow();
     });
