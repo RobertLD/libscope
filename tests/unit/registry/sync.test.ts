@@ -54,7 +54,14 @@ function createBareRepo(dir: string, packs: PackSummary[] = []): string {
   const workDir = join(dir, `work-${randomUUID()}`);
   execSync(`git clone "${bareDir}" "${workDir}"`, { stdio: "pipe" });
   writeFileSync(join(workDir, "index.json"), JSON.stringify(packs), "utf-8");
-  execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe" });
+  const gitEnv = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "test",
+    GIT_AUTHOR_EMAIL: "test@test.com",
+    GIT_COMMITTER_NAME: "test",
+    GIT_COMMITTER_EMAIL: "test@test.com",
+  };
+  execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe", env: gitEnv });
   execSync("git push", { cwd: workDir, stdio: "pipe" });
   return bareDir;
 }
