@@ -7,6 +7,14 @@ import { execSync } from "node:child_process";
 import { initLogger } from "../../../src/logger.js";
 import type { RegistryEntry, PackSummary } from "../../../src/registry/types.js";
 
+const gitEnv = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "test",
+  GIT_AUTHOR_EMAIL: "test@test.com",
+  GIT_COMMITTER_NAME: "test",
+  GIT_COMMITTER_EMAIL: "test@test.com",
+};
+
 let tempHome: string = join(tmpdir(), `libscope-lifecycle-test-${process.pid}`);
 mkdirSync(tempHome, { recursive: true });
 
@@ -98,7 +106,7 @@ function createBareRegistryRepo(dir: string, packs: PackSummary[]): string {
     );
   }
 
-  execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe" });
+  execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe", env: gitEnv });
   execSync("git push", { cwd: workDir, stdio: "pipe" });
 
   return bareDir;
@@ -234,6 +242,7 @@ describe("integration: registry lifecycle", () => {
     execSync("git add . && git commit -m 'add new pack' && git push", {
       cwd: workDir,
       stdio: "pipe",
+      env: gitEnv,
     });
 
     // Re-sync

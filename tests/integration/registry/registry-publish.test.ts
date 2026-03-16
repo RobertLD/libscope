@@ -7,6 +7,14 @@ import { execSync } from "node:child_process";
 import { initLogger } from "../../../src/logger.js";
 import type { RegistryEntry, PackSummary, PackManifest } from "../../../src/registry/types.js";
 
+const gitEnv = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "test",
+  GIT_AUTHOR_EMAIL: "test@test.com",
+  GIT_COMMITTER_NAME: "test",
+  GIT_COMMITTER_EMAIL: "test@test.com",
+};
+
 let tempHome: string = join(tmpdir(), `libscope-publish-test-${process.pid}`);
 mkdirSync(tempHome, { recursive: true });
 
@@ -47,7 +55,7 @@ function createBareRepo(dir: string): string {
   writeFileSync(join(workDir, "index.json"), "[]", "utf-8");
   mkdirSync(join(workDir, "packs"), { recursive: true });
   writeFileSync(join(workDir, "packs", ".gitkeep"), "", "utf-8");
-  execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe" });
+  execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe", env: gitEnv });
   execSync("git push", { cwd: workDir, stdio: "pipe" });
   return bareDir;
 }
