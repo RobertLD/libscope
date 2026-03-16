@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { initLogger } from "../../../src/logger.js";
 import type { RegistryEntry, PackSummary } from "../../../src/registry/types.js";
 
@@ -17,10 +17,10 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-const { findPackInRegistries, resolvePackFromRegistries, parsePackSpecifier } =
+const { findPackInRegistries, resolvePackFromRegistries, parsePackSpecifier, verifyResolvedPackChecksum } =
   await import("../../../src/registry/resolve.js");
 const { saveRegistries } = await import("../../../src/registry/config.js");
-const { getRegistryCacheDir, getPackDataPath } = await import("../../../src/registry/types.js");
+const { getRegistryCacheDir, getPackDataPath, getPackManifestPath } = await import("../../../src/registry/types.js");
 const { clearIndexCache } = await import("../../../src/registry/git.js");
 
 function makeEntry(name: string, overrides: Partial<RegistryEntry> = {}): RegistryEntry {
@@ -66,6 +66,58 @@ function setupPackDataFile(regName: string, packName: string, version: string): 
     }),
     "utf-8",
   );
+}
+
+/**
+ * Set up a pack data file with a matching manifest that includes a real checksum.
+ * Returns the checksum that was written.
+ */
+function setupPackDataFileWithManifest(
+  regName: string,
+  packName: string,
+  version: string,
+  content?: string,
+): string {
+  const dataPath = getPackDataPath(regName, packName, version);
+  mkdirSync(join(dataPath, ".."), { recursive: true });
+
+  const packContent =
+    content ??
+    JSON.stringify({
+      name: packName,
+      version,
+      description: "test",
+      documents: [],
+      metadata: { author: "test", license: "MIT", createdAt: "2026-01-01" },
+    });
+  writeFileSync(dataPath, packContent, "utf-8");
+
+  const checksum = createHash("sha256").update(packContent, "utf-8").digest("hex");
+
+  const manifestPath = getPackManifestPath(regName, packName);
+  mkdirSync(join(manifestPath, ".."), { recursive: true });
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      name: packName,
+      description: "test",
+      tags: [],
+      author: "test",
+      license: "MIT",
+      versions: [
+        {
+          version,
+          publishedAt: "2026-01-01T00:00:00.000Z",
+          checksumPath: `${version}/checksum.sha256`,
+          checksum,
+          docCount: 0,
+        },
+      ],
+    }),
+    "utf-8",
+  );
+
+  return checksum;
 }
 
 describe("registry conflict resolution", () => {
@@ -273,6 +325,120 @@ describe("registry conflict resolution", () => {
       const { resolved, conflict } = resolvePackFromRegistries("pack-a");
       expect(resolved).not.toBeNull();
       expect(conflict).toBeUndefined();
+    });
+  });
+
+  describe("verifyResolvedPackChecksum", () => {
+    it("should pass when file matches recorded checksum", async () => {
+      saveRegistries([makeEntry("reg1")]);
+      setupRegistry("reg1", [makePack("test-pack")]);
+      setupPackDataFileWithManifest("reg1", "test-pack", "1.0.0");
+
+      const { resolved } = resolvePackFromRegistries("test-pack");
+      expect(resolved).not.toBeNull();
+
+      await expect(verifyResolvedPackChecksum(resolved!)).resolves.toBeUndefined();
+    });
+
+    it("should throw when file has been tampered with", async () => {
+      saveRegistries([makeEntry("reg1")]);
+      setupRegistry("reg1", [makePack("test-pack")]);
+      setupPackDataFileWithManifest("reg1", "test-pack", "1.0.0");
+
+      const { resolved } = resolvePackFromRegistries("test-pack");
+      expect(resolved).not.toBeNull();
+
+      // Tamper with the pack data file after checksum was recorded
+      writeFileSync(resolved!.dataPath, '{"tampered":true}', "utf-8");
+
+      await expect(verifyResolvedPackChecksum(resolved!)).rejects.toThrow(
+        /Checksum verification failed/,
+      );
+    });
+
+    it("should skip verification and warn when no manifest exists", async () => {
+      saveRegistries([makeEntry("reg1")]);
+      setupRegistry("reg1", [makePack("no-manifest-pack")]);
+      setupPackDataFile("reg1", "no-manifest-pack", "1.0.0");
+
+      const { resolved } = resolvePackFromRegistries("no-manifest-pack");
+      expect(resolved).not.toBeNull();
+
+      // Should not throw — manifest is missing, logs a warning and skips
+      await expect(verifyResolvedPackChecksum(resolved!)).resolves.toBeUndefined();
+    });
+
+    it("should throw when manifest has no checksum for the version", async () => {
+      saveRegistries([makeEntry("reg1")]);
+      setupRegistry("reg1", [makePack("zero-checksum-pack")]);
+      setupPackDataFile("reg1", "zero-checksum-pack", "1.0.0");
+
+      // Write a manifest with an empty checksum
+      const manifestPath = getPackManifestPath("reg1", "zero-checksum-pack");
+      mkdirSync(join(manifestPath, ".."), { recursive: true });
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          name: "zero-checksum-pack",
+          description: "test",
+          tags: [],
+          author: "test",
+          license: "MIT",
+          versions: [
+            {
+              version: "1.0.0",
+              publishedAt: "2026-01-01T00:00:00.000Z",
+              checksumPath: "1.0.0/checksum.sha256",
+              checksum: "",
+              docCount: 0,
+            },
+          ],
+        }),
+        "utf-8",
+      );
+
+      const { resolved } = resolvePackFromRegistries("zero-checksum-pack");
+      expect(resolved).not.toBeNull();
+
+      await expect(verifyResolvedPackChecksum(resolved!)).rejects.toThrow(
+        /has no checksum recorded/,
+      );
+    });
+
+    it("should skip verification when version entry not found in manifest", async () => {
+      saveRegistries([makeEntry("reg1")]);
+      setupRegistry("reg1", [makePack("version-mismatch-pack")]);
+      setupPackDataFile("reg1", "version-mismatch-pack", "1.0.0");
+
+      // Manifest only records version 2.0.0, not 1.0.0
+      const manifestPath = getPackManifestPath("reg1", "version-mismatch-pack");
+      mkdirSync(join(manifestPath, ".."), { recursive: true });
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          name: "version-mismatch-pack",
+          description: "test",
+          tags: [],
+          author: "test",
+          license: "MIT",
+          versions: [
+            {
+              version: "2.0.0",
+              publishedAt: "2026-01-01T00:00:00.000Z",
+              checksumPath: "2.0.0/checksum.sha256",
+              checksum: "abc123",
+              docCount: 0,
+            },
+          ],
+        }),
+        "utf-8",
+      );
+
+      const { resolved } = resolvePackFromRegistries("version-mismatch-pack");
+      expect(resolved).not.toBeNull();
+
+      // Should not throw — version entry missing, logs a warning and skips
+      await expect(verifyResolvedPackChecksum(resolved!)).resolves.toBeUndefined();
     });
   });
 });

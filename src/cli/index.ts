@@ -94,7 +94,11 @@ import {
 } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
 import { registerRegistryCommands } from "./commands/registry.js";
-import { parsePackSpecifier, resolvePackFromRegistries } from "../registry/resolve.js";
+import {
+  parsePackSpecifier,
+  resolvePackFromRegistries,
+  verifyResolvedPackChecksum,
+} from "../registry/resolve.js";
 import { loadRegistries } from "../registry/config.js";
 import { createInterface } from "node:readline";
 
@@ -1730,6 +1734,8 @@ packCmd
             });
 
             if (retryResult.resolved) {
+              // Verify checksum before installing from registry cache
+              await verifyResolvedPackChecksum(retryResult.resolved);
               // Install from resolved local path
               const result = await installPack(db, provider, retryResult.resolved.dataPath, {
                 batchSize,
@@ -1753,6 +1759,8 @@ packCmd
           }
 
           if (resolved) {
+            // Verify checksum before installing from registry cache
+            await verifyResolvedPackChecksum(resolved);
             // Install from resolved local path
             const result = await installPack(db, provider, resolved.dataPath, {
               batchSize,
