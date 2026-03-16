@@ -124,7 +124,18 @@ export async function createRegistryRepo(path: string): Promise<void> {
 
   // Stage and commit
   await git(["add", "."], { cwd: path });
-  await git(["commit", "-m", "Initial registry structure"], { cwd: path });
+  await git(
+    [
+      "-c",
+      "user.name=libscope",
+      "-c",
+      "user.email=libscope@localhost",
+      "commit",
+      "-m",
+      "Initial registry structure",
+    ],
+    { cwd: path },
+  );
 
   log.info({ path }, "Registry repo initialized");
 }
@@ -142,6 +153,9 @@ export async function checkGitAvailable(): Promise<boolean> {
 /** Add, commit, and push changes in a registry repo. */
 export async function commitAndPush(repoPath: string, message: string): Promise<void> {
   await git(["add", "."], { cwd: repoPath });
-  await git(["commit", "-m", message], { cwd: repoPath });
+  await git(
+    ["-c", "user.name=libscope", "-c", "user.email=libscope@localhost", "commit", "-m", message],
+    { cwd: repoPath },
+  );
   await git(["push"], { cwd: repoPath });
 }
