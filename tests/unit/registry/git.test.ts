@@ -4,6 +4,15 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { initLogger } from "../../../src/logger.js";
+
+const gitEnv = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "test",
+  GIT_AUTHOR_EMAIL: "test@test.com",
+  GIT_COMMITTER_NAME: "test",
+  GIT_COMMITTER_EMAIL: "test@test.com",
+};
+
 import {
   readIndex,
   createRegistryRepo,
@@ -142,7 +151,7 @@ describe("registry git helpers", () => {
       const workDir = join(tempDir, "work");
       execSync(`git clone "${bareDir}" "${workDir}"`, { stdio: "pipe" });
       writeFileSync(join(workDir, "index.json"), "[]", "utf-8");
-      execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe" });
+      execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe", env: gitEnv });
       execSync("git push", { cwd: workDir, stdio: "pipe" });
 
       // Clone via our helper
@@ -152,7 +161,7 @@ describe("registry git helpers", () => {
 
       // Push new content to bare
       writeFileSync(join(workDir, "index.json"), '[{"name":"new"}]', "utf-8");
-      execSync("git add . && git commit -m 'update'", { cwd: workDir, stdio: "pipe" });
+      execSync("git add . && git commit -m 'update'", { cwd: workDir, stdio: "pipe", env: gitEnv });
       execSync("git push", { cwd: workDir, stdio: "pipe" });
 
       // Fetch via our helper
@@ -172,7 +181,7 @@ describe("registry git helpers", () => {
       const workDir = join(tempDir, "push-work");
       execSync(`git clone "${bareDir}" "${workDir}"`, { stdio: "pipe" });
       writeFileSync(join(workDir, "file.txt"), "initial", "utf-8");
-      execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe" });
+      execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe", env: gitEnv });
       execSync("git push", { cwd: workDir, stdio: "pipe" });
 
       // Modify and use commitAndPush
