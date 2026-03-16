@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1](https://github.com/RobertLD/libscope/compare/v1.5.0...v1.5.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* handle missing VERCEL_DOCS_DEPLOY_HOOK in release workflow ([#403](https://github.com/RobertLD/libscope/issues/403)) ([61f43e1](https://github.com/RobertLD/libscope/commit/61f43e1791b20e3f1761587851b0c403edaa747d))
+
 ## [1.5.0](https://github.com/RobertLD/libscope/compare/v1.4.1...v1.5.0) (2026-03-16)
 
 
