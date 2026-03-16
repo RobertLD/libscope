@@ -26,6 +26,40 @@ import { commitAndPush, fetchRegistry, git } from "./git.js";
 import { computeChecksum, writeChecksumFile } from "./checksum.js";
 import type { KnowledgePack } from "../core/packs.js";
 
+/** Maximum pack data size (50 MB). */
+const MAX_PACK_SIZE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Validate a path segment used in registry directory structures.
+ * Rejects empty values, path traversal sequences, and characters outside [a-zA-Z0-9._-].
+ */
+function validatePathSegment(value: string, label: string): void {
+  if (!value) {
+    throw new ValidationError(`Invalid ${label}: must not be empty.`);
+  }
+  if (value.includes("/") || value.includes("\\") || value.includes("..") || value.includes("\0")) {
+    throw new ValidationError(
+      `Invalid ${label} "${value}": must not contain path separators, "..", or null bytes.`,
+    );
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(value)) {
+    throw new ValidationError(
+      `Invalid ${label} "${value}": only alphanumeric characters, dots, hyphens, and underscores are allowed.`,
+    );
+  }
+}
+
+/**
+ * Validate that a version string is a valid semver (with optional pre-release label).
+ */
+function validateSemver(version: string): void {
+  if (!/^\d+\.\d+\.\d+(-[a-zA-Z0-9._-]+)?$/.test(version)) {
+    throw new ValidationError(
+      `Invalid version "${version}": must follow semver format (e.g. 1.2.3 or 1.2.3-beta.1).`,
+    );
+  }
+}
+
 /**
  * Increment the patch version of a semver string.
  */
@@ -84,6 +118,17 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
     throw new ValidationError("Pack file must have 'name' and 'version' fields");
   }
 
+  // Validate pack name (path traversal prevention)
+  validatePathSegment(pack.name, "pack name");
+
+  // Check pack data size limit (50 MB)
+  const packDataSize = JSON.stringify(pack).length;
+  if (packDataSize > MAX_PACK_SIZE_BYTES) {
+    throw new ValidationError(
+      `Pack data size (${packDataSize} bytes) exceeds the 50 MB limit. Reduce the number of documents or their content.`,
+    );
+  }
+
   // Determine version
   const packDir = join(cacheDir, PACKS_DIR, pack.name);
   const manifestPath = join(packDir, PACK_MANIFEST_FILE);
@@ -121,74 +166,114 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
     };
   }
 
-  // Create version directory
+  // Validate final version (path traversal prevention + semver)
+  validatePathSegment(version, "version");
+  validateSemver(version);
+
+  // Create version directory and perform publish operations; roll back on failure
   const versionDir = join(packDir, version);
   if (existsSync(versionDir)) {
     throw new ValidationError(`Version directory already exists: ${versionDir}`);
   }
-  mkdirSync(versionDir, { recursive: true });
 
-  // Copy pack file
-  const destFile = join(versionDir, `${pack.name}.json`);
-  copyFileSync(packFilePath, destFile);
+  let versionDirCreated = false;
+  try {
+    mkdirSync(versionDir, { recursive: true });
+    versionDirCreated = true;
 
-  // Generate checksum (streaming — doesn't buffer entire file)
-  const checksum = await computeChecksum(destFile);
-  const checksumPath = join(versionDir, CHECKSUM_FILE);
-  writeChecksumFile(checksumPath, checksum);
+    // Copy pack file
+    const destFile = join(versionDir, `${pack.name}.json`);
+    copyFileSync(packFilePath, destFile);
 
-  // Update manifest
-  const versionEntry: PackVersionEntry = {
-    version,
-    publishedAt: new Date().toISOString(),
-    checksumPath: `${version}/${CHECKSUM_FILE}`,
-    checksum,
-    docCount: pack.documents.length,
-  };
-  manifest.versions.unshift(versionEntry);
-  manifest.description = pack.description;
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+    // Generate checksum (streaming — doesn't buffer entire file)
+    const checksum = await computeChecksum(destFile);
+    const checksumPath = join(versionDir, CHECKSUM_FILE);
+    writeChecksumFile(checksumPath, checksum);
 
-  // Update index.json
-  const indexPath = join(cacheDir, INDEX_FILE);
-  let index: PackSummary[] = [];
-  if (existsSync(indexPath)) {
-    try {
-      index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
-    } catch (err) {
-      log.warn(
-        { indexPath, err: err instanceof Error ? err.message : String(err) },
-        "Failed to parse index.json, resetting to empty",
-      );
-      index = [];
+    // Update manifest
+    const versionEntry: PackVersionEntry = {
+      version,
+      publishedAt: new Date().toISOString(),
+      checksumPath: `${version}/${CHECKSUM_FILE}`,
+      checksum,
+      docCount: pack.documents.length,
+    };
+    manifest.versions.unshift(versionEntry);
+    manifest.description = pack.description;
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+
+    // Update index.json
+    const indexPath = join(cacheDir, INDEX_FILE);
+    let index: PackSummary[] = [];
+    if (existsSync(indexPath)) {
+      try {
+        index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
+      } catch (err) {
+        throw new ValidationError(
+          `Registry index.json is corrupted: ${err instanceof Error ? err.message : String(err)}. Re-sync the registry or manually fix ${indexPath}.`,
+        );
+      }
     }
+
+    // Deduplicate index entries by pack name (keep first, warn on duplicates)
+    const seen = new Set<string>();
+    const deduped: PackSummary[] = [];
+    for (const entry of index) {
+      if (seen.has(entry.name)) {
+        log.warn(
+          { packName: entry.name },
+          "Duplicate entry in index.json for pack — removing duplicate",
+        );
+      } else {
+        seen.add(entry.name);
+        deduped.push(entry);
+      }
+    }
+    index = deduped;
+
+    const existingIdx = index.findIndex((p) => p.name === pack.name);
+    const summary: PackSummary = {
+      name: pack.name,
+      description: pack.description,
+      tags: manifest.tags,
+      latestVersion: version,
+      author: pack.metadata.author,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIdx >= 0) {
+      index[existingIdx] = summary;
+    } else {
+      index.push(summary);
+    }
+
+    writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
+
+    // Commit and push
+    const msg = commitMessage ?? `publish: ${pack.name}@${version}`;
+    await commitAndPush(cacheDir, msg);
+
+    log.info({ registry: registryName, pack: pack.name, version, checksum }, "Pack published");
+
+    return { packName: pack.name, version, checksum, registryName };
+  } catch (err) {
+    // Roll back version directory if it was created to prevent orphaned directories
+    if (versionDirCreated && existsSync(versionDir)) {
+      try {
+        rmSync(versionDir, { recursive: true, force: true });
+        log.warn(
+          { versionDir },
+          "Rolled back version directory after publish failure",
+        );
+      } catch (cleanupErr) {
+        log.warn(
+          { err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },
+          "Failed to roll back version directory after publish failure",
+        );
+      }
+    }
+    throw err;
   }
-
-  const existingIdx = index.findIndex((p) => p.name === pack.name);
-  const summary: PackSummary = {
-    name: pack.name,
-    description: pack.description,
-    tags: manifest.tags,
-    latestVersion: version,
-    author: pack.metadata.author,
-    updatedAt: new Date().toISOString(),
-  };
-
-  if (existingIdx >= 0) {
-    index[existingIdx] = summary;
-  } else {
-    index.push(summary);
-  }
-
-  writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
-
-  // Commit and push
-  const msg = commitMessage ?? `publish: ${pack.name}@${version}`;
-  await commitAndPush(cacheDir, msg);
-
-  log.info({ registry: registryName, pack: pack.name, version, checksum }, "Pack published");
-
-  return { packName: pack.name, version, checksum, registryName };
 }
 
 /**
@@ -274,6 +359,10 @@ export async function unpublishPack(options: UnpublishOptions): Promise<void> {
       "Could not fetch latest registry state before unpublish",
     );
   }
+
+  // Validate packName and version (path traversal prevention)
+  validatePathSegment(packName, "pack name");
+  validatePathSegment(version, "version");
 
   const packDir = join(cacheDir, PACKS_DIR, packName);
   const manifestPath = join(packDir, PACK_MANIFEST_FILE);
