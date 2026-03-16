@@ -135,11 +135,34 @@ export function extractMarkdownLinks(content: string): Array<{ text: string; url
   if (!content) return [];
 
   const results: Array<{ text: string; url: string }> = [];
-  const re = /\[([^\]]*)\]\(([^)]+)\)/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = re.exec(content)) !== null) {
-    results.push({ text: match[1]!, url: match[2]! });
+  // indexOf-based parsing to avoid ReDoS with regex on untrusted content
+  let pos = 0;
+  while (pos < content.length) {
+    const bracketOpen = content.indexOf("[", pos);
+    if (bracketOpen === -1) break;
+
+    const bracketClose = content.indexOf("]", bracketOpen + 1);
+    if (bracketClose === -1) break;
+
+    // Must be followed immediately by (
+    if (bracketClose + 1 >= content.length || content[bracketClose + 1] !== "(") {
+      pos = bracketClose + 1;
+      continue;
+    }
+
+    const parenClose = content.indexOf(")", bracketClose + 2);
+    if (parenClose === -1) break;
+
+    const text = content.slice(bracketOpen + 1, bracketClose);
+    const url = content.slice(bracketClose + 2, parenClose);
+
+    // Skip if text contains unescaped [ (nested brackets) or url is empty
+    if (url.length > 0 && !text.includes("[")) {
+      results.push({ text, url });
+    }
+
+    pos = parenClose + 1;
   }
 
   return results;
@@ -154,14 +177,29 @@ export function extractWikilinks(content: string): string[] {
   if (!content) return [];
 
   const seen = new Set<string>();
-  const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = re.exec(content)) !== null) {
-    const pageName = match[1]!.trim();
-    if (pageName) {
-      seen.add(pageName);
+  // indexOf-based parsing to avoid ReDoS with regex on untrusted content
+  let pos = 0;
+  while (pos < content.length) {
+    const open = content.indexOf("[[", pos);
+    if (open === -1) break;
+
+    const close = content.indexOf("]]", open + 2);
+    if (close === -1) break;
+
+    const inner = content.slice(open + 2, close);
+
+    // Skip if inner contains nested [[ (malformed)
+    if (!inner.includes("[[")) {
+      // [[PageName|alias]] → extract PageName (before the pipe)
+      const pipeIdx = inner.indexOf("|");
+      const pageName = (pipeIdx === -1 ? inner : inner.slice(0, pipeIdx)).trim();
+      if (pageName) {
+        seen.add(pageName);
+      }
     }
+
+    pos = close + 2;
   }
 
   return [...seen];
