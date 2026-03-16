@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { extractLinks } from "../../src/core/link-extractor.js";
+import {
+  extractLinks,
+  extractMarkdownLinks,
+  extractWikilinks,
+} from "../../src/core/link-extractor.js";
 
 const BASE = "https://example.com/docs/intro";
 
@@ -151,5 +155,47 @@ describe("extractLinks", () => {
     const links = extractLinks(html, BASE);
     expect(links).toContain("http://example.com/http");
     expect(links).toContain("https://example.com/https");
+  });
+});
+
+describe("extractMarkdownLinks", () => {
+  it("extracts a standard markdown link", () => {
+    const result = extractMarkdownLinks("[click here](https://example.com)");
+    expect(result).toEqual([{ text: "click here", url: "https://example.com" }]);
+  });
+
+  it("extracts multiple links", () => {
+    const content = "See [a](https://a.com) and [b](https://b.com).";
+    const result = extractMarkdownLinks(content);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ text: "a", url: "https://a.com" });
+    expect(result[1]).toEqual({ text: "b", url: "https://b.com" });
+  });
+
+  it("returns empty array when no links present", () => {
+    expect(extractMarkdownLinks("no links here")).toEqual([]);
+  });
+
+  it("returns empty array for empty string", () => {
+    expect(extractMarkdownLinks("")).toEqual([]);
+  });
+});
+
+describe("extractWikilinks", () => {
+  it("extracts a simple wikilink", () => {
+    expect(extractWikilinks("See [[MyPage]] for details")).toEqual(["MyPage"]);
+  });
+
+  it("extracts page name from aliased wikilink, not the alias", () => {
+    expect(extractWikilinks("See [[MyPage|display text]]")).toEqual(["MyPage"]);
+  });
+
+  it("extracts multiple wikilinks and deduplicates", () => {
+    const result = extractWikilinks("[[A]] then [[B]] then [[A]] again");
+    expect(result).toEqual(["A", "B"]);
+  });
+
+  it("returns empty array for empty string", () => {
+    expect(extractWikilinks("")).toEqual([]);
   });
 });

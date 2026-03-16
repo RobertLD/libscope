@@ -11,7 +11,15 @@ export interface GraphNode {
 export interface GraphEdge {
   source: string;
   target: string;
-  type: "belongs_to_topic" | "has_tag" | "similar_to";
+  type:
+    | "belongs_to_topic"
+    | "has_tag"
+    | "similar_to"
+    | "see_also"
+    | "prerequisite"
+    | "supersedes"
+    | "related"
+    | "references";
   weight: number; // 0-1
 }
 
@@ -191,6 +199,22 @@ export function buildKnowledgeGraph(
         source: dt.document_id,
         target: `tag:${dt.tag_id}`,
         type: "has_tag",
+        weight: 1,
+      });
+    }
+  }
+
+  // Add document link edges
+  const docLinks = db
+    .prepare("SELECT source_id, target_id, link_type FROM document_links")
+    .all() as Array<{ source_id: string; target_id: string; link_type: string }>;
+
+  for (const link of docLinks) {
+    if (docIds.has(link.source_id) && docIds.has(link.target_id)) {
+      edges.push({
+        source: link.source_id,
+        target: link.target_id,
+        type: link.link_type as GraphEdge["type"],
         weight: 1,
       });
     }

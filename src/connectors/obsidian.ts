@@ -7,6 +7,7 @@ import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { addTagsToDocument, createTag } from "../core/tags.js";
+import { createLink, resolveDocumentByTitle } from "../core/links.js";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
@@ -354,6 +355,20 @@ export async function syncObsidianVault(
             addTagsToDocument(db, indexed.id, parsed.tags);
           } catch (err) {
             log.debug({ err, docId: indexed.id }, "Failed to add some tags");
+          }
+        }
+
+        // Store wikilinks as document references
+        if (parsed.wikilinks.length > 0) {
+          for (const pageName of parsed.wikilinks) {
+            try {
+              const targetId = resolveDocumentByTitle(db, pageName);
+              if (targetId && targetId !== indexed.id) {
+                createLink(db, indexed.id, targetId, "references");
+              }
+            } catch (err) {
+              log.debug({ err, pageName, docId: indexed.id }, "Failed to resolve wikilink");
+            }
           }
         }
 
