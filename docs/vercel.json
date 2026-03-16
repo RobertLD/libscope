@@ -1,5 +1,5 @@
 {
-  "ignoreCommand": "exit 0",
+  "ignoreCommand": "! git log -1 --pretty=%s | grep -q '^chore(main): release'",
   "installCommand": "cd .. && npm install --include=dev --ignore-scripts",
   "buildCommand": "cd .. && npx vitepress build docs",
   "outputDirectory": ".vitepress/dist"
