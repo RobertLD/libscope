@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { initLogger } from "../../../src/logger.js";
 import type { RegistryEntry, PackSummary } from "../../../src/registry/types.js";
@@ -53,6 +53,24 @@ function createBareRepoWithPacks(dir: string, packs: PackSummary[]): string {
   for (const pack of packs) {
     const packDir = join(workDir, "packs", pack.name);
     mkdirSync(packDir, { recursive: true });
+
+    const versionDir = join(packDir, pack.latestVersion);
+    mkdirSync(versionDir, { recursive: true });
+
+    // Write the pack data file and compute its real SHA-256 checksum
+    const packDataContent = JSON.stringify({
+      name: pack.name,
+      version: pack.latestVersion,
+      description: pack.description,
+      documents: [{ title: "Doc", content: "Content from " + pack.author, source: "test" }],
+      metadata: { author: pack.author, license: "MIT", createdAt: pack.updatedAt },
+    });
+    const dataFilePath = join(versionDir, `${pack.name}.json`);
+    writeFileSync(dataFilePath, packDataContent, "utf-8");
+    const checksum = createHash("sha256").update(packDataContent, "utf-8").digest("hex");
+
+    writeFileSync(join(versionDir, "checksum.sha256"), checksum + "\n", "utf-8");
+
     writeFileSync(
       join(packDir, "pack.json"),
       JSON.stringify({
@@ -66,24 +84,10 @@ function createBareRepoWithPacks(dir: string, packs: PackSummary[]): string {
             version: pack.latestVersion,
             publishedAt: pack.updatedAt,
             checksumPath: `${pack.latestVersion}/checksum.sha256`,
-            checksum: "placeholder",
+            checksum,
             docCount: 1,
           },
         ],
-      }),
-      "utf-8",
-    );
-
-    const versionDir = join(packDir, pack.latestVersion);
-    mkdirSync(versionDir, { recursive: true });
-    writeFileSync(
-      join(versionDir, `${pack.name}.json`),
-      JSON.stringify({
-        name: pack.name,
-        version: pack.latestVersion,
-        description: pack.description,
-        documents: [{ title: "Doc", content: "Content from " + pack.author, source: "test" }],
-        metadata: { author: pack.author, license: "MIT", createdAt: pack.updatedAt },
       }),
       "utf-8",
     );

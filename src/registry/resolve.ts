@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLogger } from "../logger.js";
+import { ValidationError } from "../errors.js";
 import type {
   RegistryEntry,
   PackSummary,
@@ -20,6 +21,7 @@ import {
 } from "./types.js";
 import { loadRegistries } from "./config.js";
 import { readIndex } from "./git.js";
+import { verifyChecksum } from "./checksum.js";
 
 /** Parse a pack specifier like "name@1.2.0" into name and optional version. */
 export function parsePackSpecifier(specifier: string): { name: string; version?: string } {
@@ -200,4 +202,48 @@ export function resolvePackFromRegistries(
     },
     warnings,
   };
+}
+
+/**
+ * Verify the checksum of a resolved pack's data file against the expected value
+ * stored in the pack manifest. Throws a ValidationError if the checksum does not
+ * match, indicating the file may have been tampered with or corrupted.
+ *
+ * Call this immediately before installing a registry-resolved pack.
+ */
+export async function verifyResolvedPackChecksum(resolved: ResolvedPack): Promise<void> {
+  const log = getLogger();
+  const manifest = readPackManifest(resolved.registryName, resolved.packName);
+
+  if (!manifest) {
+    log.warn(
+      { registryName: resolved.registryName, packName: resolved.packName },
+      "No pack manifest found — skipping checksum verification",
+    );
+    return;
+  }
+
+  const versionEntry = manifest.versions.find((v) => v.version === resolved.version);
+  if (!versionEntry) {
+    log.warn(
+      { registryName: resolved.registryName, packName: resolved.packName, version: resolved.version },
+      "Version entry not found in manifest — skipping checksum verification",
+    );
+    return;
+  }
+
+  if (!versionEntry.checksum) {
+    throw new ValidationError(
+      `Pack "${resolved.packName}@${resolved.version}" in registry "${resolved.registryName}" ` +
+        "has no checksum recorded. The registry may be corrupted or from an older format.",
+    );
+  }
+
+  // verifyChecksum throws ValidationError on mismatch
+  await verifyChecksum(resolved.dataPath, versionEntry.checksum);
+
+  log.info(
+    { registryName: resolved.registryName, packName: resolved.packName, version: resolved.version },
+    "Pack checksum verified before installation",
+  );
 }
