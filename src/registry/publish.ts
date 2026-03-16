@@ -22,7 +22,7 @@ import {
   getRegistryCacheDir,
 } from "./types.js";
 import { getRegistry } from "./config.js";
-import { commitAndPush, fetchRegistry, git } from "./git.js";
+import { commitAndPush, fetchRegistry, git, clearIndexCache } from "./git.js";
 import { computeChecksum, writeChecksumFile } from "./checksum.js";
 import type { KnowledgePack } from "../core/packs.js";
 
@@ -33,7 +33,7 @@ const MAX_PACK_SIZE_BYTES = 50 * 1024 * 1024;
  * Validate a path segment used in registry directory structures.
  * Rejects empty values, path traversal sequences, and characters outside [a-zA-Z0-9._-].
  */
-function validatePathSegment(value: string, label: string): void {
+export function validatePathSegment(value: string, label: string): void {
   if (!value) {
     throw new ValidationError(`Invalid ${label}: must not be empty.`);
   }
@@ -102,6 +102,7 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
   // Fetch latest before publishing
   try {
     await fetchRegistry(cacheDir);
+    clearIndexCache(cacheDir);
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },
@@ -353,6 +354,7 @@ export async function unpublishPack(options: UnpublishOptions): Promise<void> {
   // Fetch latest
   try {
     await fetchRegistry(cacheDir);
+    clearIndexCache(cacheDir);
   } catch (err) {
     log.warn(
       { err: err instanceof Error ? err.message : String(err) },

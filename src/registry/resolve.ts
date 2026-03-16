@@ -22,6 +22,7 @@ import {
 import { loadRegistries } from "./config.js";
 import { readIndex } from "./git.js";
 import { verifyChecksum } from "./checksum.js";
+import { validatePathSegment } from "./publish.js";
 
 /** Parse a pack specifier like "name@1.2.0" into name and optional version. */
 export function parsePackSpecifier(specifier: string): { name: string; version?: string } {
@@ -129,6 +130,13 @@ export function resolvePackFromRegistries(
   },
 ): { resolved: ResolvedPack | null; conflict?: RegistryConflict; warnings: string[] } {
   const log = getLogger();
+
+  // Validate pack name and version to prevent path traversal via malicious index.json
+  validatePathSegment(packName, "pack name");
+  if (options?.version) {
+    validatePathSegment(options.version, "version");
+  }
+
   const { matches, warnings } = findPackInRegistries(packName);
 
   if (matches.length === 0) {

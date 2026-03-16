@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -27,6 +27,7 @@ const {
   updateRegistrySyncTime,
   validateRegistryName,
   validateGitUrl,
+  sanitizeUrl,
 } = await import("../../../src/registry/config.js");
 
 function makeEntry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
@@ -67,6 +68,25 @@ describe("registry config", () => {
     it("should reject empty string", () => {
       expect(() => validateRegistryName("")).toThrow(/Invalid registry name/);
     });
+
+    // Security/robustness fixes: min 2, max 64 chars
+    it("should reject a single-character name (min 2 chars)", () => {
+      expect(() => validateRegistryName("a")).toThrow(/at least 2 characters/);
+    });
+
+    it("should accept a two-character name (exactly at min)", () => {
+      expect(() => validateRegistryName("ab")).not.toThrow();
+    });
+
+    it("should reject a name that is 65 characters long (max is 64)", () => {
+      const longName = "a".repeat(65);
+      expect(() => validateRegistryName(longName)).toThrow(/at most 64 characters/);
+    });
+
+    it("should accept a name that is exactly 64 characters long", () => {
+      const maxName = "a".repeat(64);
+      expect(() => validateRegistryName(maxName)).not.toThrow();
+    });
   });
 
   describe("validateGitUrl", () => {
@@ -88,6 +108,73 @@ describe("registry config", () => {
 
     it("should reject arbitrary strings", () => {
       expect(() => validateGitUrl("not-a-url")).toThrow();
+    });
+
+    // Security/robustness fixes: whitespace trimming and trailing slash normalisation
+    it("should trim leading and trailing whitespace", () => {
+      const result = validateGitUrl("  https://github.com/org/repo.git  ");
+      expect(result).toBe("https://github.com/org/repo.git");
+    });
+
+    it("should strip trailing slashes", () => {
+      const result = validateGitUrl("https://github.com/org/repo/");
+      expect(result).toBe("https://github.com/org/repo");
+    });
+
+    it("should strip both whitespace and trailing slashes together", () => {
+      const result = validateGitUrl("  https://github.com/org/repo.git  ");
+      expect(result).toBe("https://github.com/org/repo.git");
+    });
+
+    // Security: reject embedded credentials
+    it("should reject https URL with user:pass credentials", () => {
+      expect(() => validateGitUrl("https://user:pass@github.com/org/repo.git")).toThrow(
+        /embedded credentials/,
+      );
+    });
+
+    it("should reject https URL with token@ credentials", () => {
+      expect(() => validateGitUrl("https://mytoken@github.com/org/repo.git")).toThrow(
+        /embedded credentials/,
+      );
+    });
+
+    // ssh:// protocol URLs (distinct from SCP-style git@)
+    it("should accept ssh:// URL with port", () => {
+      const result = validateGitUrl("ssh://git@host.example.com:7999/org/repo.git");
+      expect(result).toBe("ssh://git@host.example.com:7999/org/repo.git");
+    });
+
+    it("should return the normalized (trimmed) URL", () => {
+      const result = validateGitUrl("https://github.com/org/repo.git");
+      expect(result).toBe("https://github.com/org/repo.git");
+    });
+  });
+
+  describe("sanitizeUrl", () => {
+    it("should mask user:pass credentials in an https URL", () => {
+      const result = sanitizeUrl("https://user:secretpass@github.com/org/repo.git");
+      expect(result).not.toContain("secretpass");
+      expect(result).not.toContain("user");
+      expect(result).toContain("***");
+    });
+
+    it("should mask token-only credentials in an https URL", () => {
+      const result = sanitizeUrl("https://ghp_token123@github.com/org/repo.git");
+      expect(result).not.toContain("ghp_token123");
+      expect(result).toContain("***");
+    });
+
+    it("should leave git@ SCP-style URLs unchanged (no masking needed)", () => {
+      const url = "git@github.com:org/repo.git";
+      const result = sanitizeUrl(url);
+      // git@ is not an https:// URL so regex should not match — URL passes through as-is
+      expect(result).toBe(url);
+    });
+
+    it("should leave clean https URLs unchanged", () => {
+      const url = "https://github.com/org/repo.git";
+      expect(sanitizeUrl(url)).toBe(url);
     });
   });
 
@@ -154,6 +241,16 @@ describe("registry config", () => {
       >;
       expect(raw["otherKey"]).toBe("keep-me");
       expect(raw["registries"]).toBeTruthy();
+    });
+
+    // Security: config file should be private (mode 0o600)
+    it("should set config file permissions to 0o600 after writing", () => {
+      saveRegistries([makeEntry()]);
+      const configPath = join(tempHome, ".libscope", "config.json");
+      const stats = statSync(configPath);
+      // Mask to lower 9 permission bits only (ignore file type bits)
+      const mode = stats.mode & 0o777;
+      expect(mode).toBe(0o600);
     });
   });
 

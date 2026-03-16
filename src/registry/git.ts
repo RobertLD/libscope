@@ -77,6 +77,9 @@ export async function fetchRegistry(cachedPath: string): Promise<void> {
     );
   }
 
+  // Ensure symlinks are disabled (may not be persisted from clone -c flag)
+  await git(["config", "core.symlinks", "false"], { cwd: cachedPath });
+
   await git(["fetch", "--depth", "1", "origin"], { cwd: cachedPath });
 
   // Try origin/HEAD first, then fall back to origin/main, then origin/master

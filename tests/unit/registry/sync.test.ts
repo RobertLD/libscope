@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -206,6 +206,101 @@ describe("registry sync functions", () => {
       const { packs: result, warning } = await getRegistryIndex(staleEntry);
       expect(result).toHaveLength(1);
       expect(warning).toContain("unreachable");
+    });
+  });
+
+  // Robustness fix: sync locking prevents concurrent syncs
+  describe("sync locking", () => {
+    it("should create a lock file during sync and remove it when done", async () => {
+      const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
+      const repo = createBareRepo(tempDir);
+      const regName = `lock-test-${randomUUID()}`;
+      addTestRegistry(makeEntry(regName, repo));
+
+      const cacheDir = getRegistryCacheDir(regName);
+      const lockPath = cacheDir + ".lock";
+
+      // Lock file should not exist before sync
+      expect(existsSync(lockPath)).toBe(false);
+
+      const status = await syncRegistry(makeEntry(regName, repo));
+      expect(status.status).toBe("success");
+
+      // Lock file should be removed after successful sync
+      expect(existsSync(lockPath)).toBe(false);
+    });
+
+    it("should skip sync and return error status when a live lock is held", async () => {
+      const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
+      const repo = createBareRepo(tempDir);
+      const regName = `live-lock-${randomUUID()}`;
+      addTestRegistry(makeEntry(regName, repo));
+
+      const cacheDir = getRegistryCacheDir(regName);
+      const lockPath = cacheDir + ".lock";
+
+      // Create parent dir so we can write lock file
+      mkdirSync(join(cacheDir, ".."), { recursive: true });
+
+      // Write a lock file claiming OUR process PID (which is definitely alive)
+      writeFileSync(lockPath, String(process.pid), "utf-8");
+
+      try {
+        const status = await syncRegistry(makeEntry(regName, repo));
+        expect(status.status).toBe("error");
+        expect(status.error).toMatch(/already in progress/);
+      } finally {
+        // Clean up lock file
+        try {
+          rmSync(lockPath);
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    it("should clean up a stale lock from a dead PID and proceed with sync", async () => {
+      const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
+      const repo = createBareRepo(tempDir);
+      const regName = `stale-lock-${randomUUID()}`;
+      addTestRegistry(makeEntry(regName, repo));
+
+      const cacheDir = getRegistryCacheDir(regName);
+      const lockPath = cacheDir + ".lock";
+
+      // Create parent dir
+      mkdirSync(join(cacheDir, ".."), { recursive: true });
+
+      // Write a lock file with a PID that is guaranteed not to exist
+      // PID 99999999 is well above Linux's max PID (usually 4194304)
+      const deadPid = 99999999;
+      writeFileSync(lockPath, String(deadPid), "utf-8");
+
+      // Sync should succeed — it should detect the dead PID, remove the stale lock, and proceed
+      const status = await syncRegistry(makeEntry(regName, repo));
+      expect(status.status).toBe("success");
+
+      // Lock file should be cleaned up
+      expect(existsSync(lockPath)).toBe(false);
+    });
+
+    it("should remove lock even when sync fails (lock released in finally)", async () => {
+      const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
+      const regName = `fail-lock-${randomUUID()}`;
+      // Use a non-existent URL — sync will fail immediately (no network call on local)
+      // We need the lock file to be released regardless. Use an invalid local path.
+      const entry = makeEntry(regName, "/nonexistent/path/that/does/not/exist.git");
+      addTestRegistry(entry);
+
+      const cacheDir = getRegistryCacheDir(regName);
+      const lockPath = cacheDir + ".lock";
+
+      const status = await syncRegistry(entry);
+      // Sync should fail (bad URL)
+      expect(["error", "offline"]).toContain(status.status);
+
+      // Lock file should still be removed
+      expect(existsSync(lockPath)).toBe(false);
     });
   });
 });
