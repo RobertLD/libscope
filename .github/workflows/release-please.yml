@@ -48,4 +48,11 @@ jobs:
     if: ${{ needs.release-please.outputs.release_created }}
     steps:
       - name: Trigger Vercel docs deployment
-        run: curl -X POST "${{ secrets.VERCEL_DOCS_DEPLOY_HOOK }}"
+        run: |
+          if [ -n "$DEPLOY_HOOK" ]; then
+            curl -X POST "$DEPLOY_HOOK"
+          else
+            echo "::warning::VERCEL_DOCS_DEPLOY_HOOK secret is not set, skipping docs deployment"
+          fi
+        env:
+          DEPLOY_HOOK: ${{ secrets.VERCEL_DOCS_DEPLOY_HOOK }}
