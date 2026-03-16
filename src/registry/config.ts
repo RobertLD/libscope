@@ -3,7 +3,7 @@
  * Reads/writes the "registries" array in ~/.libscope/config.json.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError, ValidationError } from "../errors.js";
@@ -15,21 +15,50 @@ function getUserConfigPath(): string {
   return join(homedir(), ".libscope", "config.json");
 }
 
-/** Validate a registry name (alphanumeric, hyphens, underscores). */
+/** Sanitize a URL for safe display in logs — masks any embedded credentials. */
+export function sanitizeUrl(url: string): string {
+  // Replace password in https://user:pass@host or https://token@host patterns
+  return url.replace(/(https?:\/\/)[^:@/]+:[^@/]+@/, "$1***:***@").replace(/(https?:\/\/)[^:@/]+@/, "$1***@");
+}
+
+/** Validate a registry name (alphanumeric, hyphens, underscores; 2–64 chars). */
 export function validateRegistryName(name: string): void {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new ValidationError(`Invalid registry name "${name}": must match /^[a-zA-Z0-9_-]+$/`);
   }
+  if (name.length < 2) {
+    throw new ValidationError(
+      `Invalid registry name "${name}": must be at least 2 characters long`,
+    );
+  }
+  if (name.length > 64) {
+    throw new ValidationError(
+      `Invalid registry name "${name}": must be at most 64 characters long`,
+    );
+  }
 }
 
-/** Validate a git URL (https or ssh). */
-export function validateGitUrl(url: string): void {
+/** Validate a git URL (https or ssh). Returns the normalized (trimmed, no trailing slash) URL. */
+export function validateGitUrl(url: string): string {
+  // Trim whitespace and trailing slashes
+  const normalized = url.trim().replace(/\/+$/, "");
+
+  // Reject URLs with embedded credentials (e.g. https://user:pass@host or https://token@host)
+  if (/https?:\/\/[^@/]+:[^@/]*@/.test(normalized) || /https?:\/\/[^@/]+@/.test(normalized)) {
+    throw new ValidationError(
+      "Registry URL must not contain embedded credentials (user:pass@host or token@host). " +
+        "Use SSH keys or a git credential helper instead.",
+    );
+  }
+
   // Accept https:// URLs and SSH-style git@host:path URLs
-  const isHttps = url.startsWith("https://");
-  const isSsh = /^git@[\w.-]+:/.test(url);
+  const isHttps = normalized.startsWith("https://");
+  const isSsh = /^git@[\w.-]+:/.test(normalized);
   if (!isHttps && !isSsh) {
     throw new ValidationError("Registry URL must use https:// or SSH (git@host:path) format");
   }
+
+  return normalized;
 }
 
 /** Read the raw config JSON from disk. */
@@ -48,9 +77,11 @@ function readRawConfig(): Record<string, unknown> {
 function writeRawConfig(config: Record<string, unknown>): void {
   const dir = join(homedir(), ".libscope");
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
-  writeFileSync(getUserConfigPath(), JSON.stringify(config, null, 2), "utf-8");
+  const configPath = getUserConfigPath();
+  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  chmodSync(configPath, 0o600);
 }
 
 /** Load all registry entries from config. */
@@ -77,16 +108,21 @@ export function getRegistry(name: string): RegistryEntry | undefined {
 export function addRegistry(entry: RegistryEntry): void {
   const log = getLogger();
   validateRegistryName(entry.name);
-  validateGitUrl(entry.url);
+  // Normalize and validate URL; use the normalized form going forward
+  const normalizedUrl = validateGitUrl(entry.url);
+  const normalizedEntry = { ...entry, url: normalizedUrl };
 
   const registries = loadRegistries();
-  if (registries.some((r) => r.name === entry.name)) {
-    throw new ValidationError(`Registry "${entry.name}" already exists`);
+  if (registries.some((r) => r.name === normalizedEntry.name)) {
+    throw new ValidationError(`Registry "${normalizedEntry.name}" already exists`);
   }
 
-  registries.push(entry);
+  registries.push(normalizedEntry);
   saveRegistries(registries);
-  log.info({ registry: entry.name, url: entry.url }, "Registry added to config");
+  log.info(
+    { registry: normalizedEntry.name, url: sanitizeUrl(normalizedEntry.url) },
+    "Registry added to config",
+  );
 }
 
 /** Remove a registry entry by name. Throws if not found. */
