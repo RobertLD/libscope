@@ -5,7 +5,7 @@ import { loadConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
 import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
 import { createEmbeddingProvider } from "../providers/index.js";
-import { searchDocuments } from "../core/search.js";
+import { searchDocuments, getRelatedChunks } from "../core/search.js";
 import {
   askQuestion,
   createLlmProvider,
@@ -175,6 +175,55 @@ async function main(): Promise<void> {
 
       return { content: [{ type: "text" as const, text }] };
     }),
+  );
+
+  // Tool: get-related
+  server.tool(
+    "get-related",
+    "Find chunks semantically similar to a given chunk (more-like-this). Returns related content seeded from an existing chunk's stored embedding without requiring a text query.",
+    {
+      chunkId: z.string().describe("ID of the source chunk to find related content for"),
+      limit: z
+        .number()
+        .min(1)
+        .max(50)
+        .optional()
+        .describe("Number of results to return (default 10)"),
+      topic: z.string().optional().describe("Filter results to a specific topic"),
+      library: z.string().optional().describe("Filter results to a specific library"),
+      tags: z.array(z.string()).optional().describe("Filter results to documents with these tags"),
+      minScore: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Minimum similarity score threshold (0-1)"),
+      includeLinkedDocuments: z
+        .boolean()
+        .optional()
+        .describe("Also include explicitly linked documents even if below similarity threshold"),
+    },
+    withErrorHandling(
+      ({ chunkId, limit, topic, library, tags, minScore, includeLinkedDocuments }) => {
+        const result = getRelatedChunks(db, {
+          chunkId,
+          ...(limit !== undefined && { limit }),
+          ...(topic !== undefined && { topic }),
+          ...(library !== undefined && { library }),
+          ...(tags !== undefined && { tags }),
+          ...(minScore !== undefined && { minScore }),
+          ...(includeLinkedDocuments !== undefined && { includeLinkedDocuments }),
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      },
+    ),
   );
 
   // Tool: get-document

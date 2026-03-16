@@ -6,7 +6,7 @@ import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "..
 import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument, indexFile } from "../core/indexing.js";
 import { getSupportedExtensions } from "../core/parsers/index.js";
-import { searchDocuments } from "../core/search.js";
+import { searchDocuments, getRelatedChunks } from "../core/search.js";
 import { askQuestion, createLlmProvider } from "../core/rag.js";
 import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
@@ -445,6 +445,71 @@ program
             Object.keys(filters).length > 0 ? filters : undefined,
           );
           console.log(`\n✓ Search saved as "${saved.name}" (${saved.id})`);
+        }
+      } finally {
+        closeDatabase();
+      }
+    },
+  );
+
+// related
+program
+  .command("related <chunkId>")
+  .description("Find chunks related to a given chunk by vector similarity")
+  .option("--limit <n>", "Number of results", "10")
+  .option("--topic <topic>", "Filter by topic")
+  .option("--library <lib>", "Filter by library")
+  .option("--min-score <n>", "Minimum similarity score (0-1)")
+  .option("--tags <tags>", "Comma-separated tags to filter by")
+  .action(
+    (
+      chunkId: string,
+      opts: {
+        limit: string;
+        topic?: string;
+        library?: string;
+        minScore?: string;
+        tags?: string;
+      },
+    ) => {
+      const { db } = initializeApp();
+      try {
+        const limit = parseIntOption(opts.limit, "--limit");
+        const minScore = opts.minScore !== undefined ? parseFloat(opts.minScore) : undefined;
+        const tags = opts.tags ? opts.tags.split(",").map((t) => t.trim()) : undefined;
+
+        let result;
+        try {
+          result = getRelatedChunks(db, {
+            chunkId,
+            ...(limit !== undefined && { limit }),
+            ...(opts.topic !== undefined && { topic: opts.topic }),
+            ...(opts.library !== undefined && { library: opts.library }),
+            ...(tags !== undefined && { tags }),
+            ...(minScore !== undefined && { minScore }),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`Error: ${message}`);
+          process.exit(1);
+        }
+
+        const { sourceChunk, chunks } = result;
+        console.log(
+          `\nRelated to chunk: ${sourceChunk.id} from document ${sourceChunk.documentId}`,
+        );
+
+        if (chunks.length === 0) {
+          console.log("No related chunks found.");
+        } else {
+          console.log(`\nShowing ${chunks.length} related chunks:\n`);
+          for (const r of chunks) {
+            console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
+            console.log(`  Chunk ID: ${r.chunkId}`);
+            if (r.library) console.log(`  Library: ${r.library}`);
+            if (r.url) console.log(`  Source: ${r.url}`);
+            console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+          }
         }
       } finally {
         closeDatabase();
