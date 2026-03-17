@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1](https://github.com/RobertLD/libscope/compare/v1.5.0...v1.5.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* handle missing VERCEL_DOCS_DEPLOY_HOOK in release workflow ([#403](https://github.com/RobertLD/libscope/issues/403)) ([61f43e1](https://github.com/RobertLD/libscope/commit/61f43e1791b20e3f1761587851b0c403edaa747d))
+
+## [1.5.0](https://github.com/RobertLD/libscope/compare/v1.4.1...v1.5.0) (2026-03-16)
+
+
+### Features
+
+* add get-related chunk similarity lookup (more-like-this) ([#397](https://github.com/RobertLD/libscope/issues/397)) ([69b0bc7](https://github.com/RobertLD/libscope/commit/69b0bc73c49d7ca655a508928ef9e23c82020845))
+* auto-detect document links from markdown and wikilinks ([#396](https://github.com/RobertLD/libscope/issues/396)) ([5863b2c](https://github.com/RobertLD/libscope/commit/5863b2cd2eff5833a81a5d0e5ad5af13d7bd848a))
+* git-based pack registries ([#393](https://github.com/RobertLD/libscope/issues/393)) ([f0653ce](https://github.com/RobertLD/libscope/commit/f0653cefc248ca7bd8d68bb174b579c20a4c8923))
+
+
+### Bug Fixes
+
+* deployments v2 ([#389](https://github.com/RobertLD/libscope/issues/389)) ([b800703](https://github.com/RobertLD/libscope/commit/b8007034caa8c79f85a9d81a6aa19c0e11513c02))
+* docs not updating on deployment ([#387](https://github.com/RobertLD/libscope/issues/387)) ([11e11ff](https://github.com/RobertLD/libscope/commit/11e11ff2b1e8b7a6bc9603e8e89b272873deb597))
+* set git identity in integration registry tests for CI ([#402](https://github.com/RobertLD/libscope/issues/402)) ([6afa1fb](https://github.com/RobertLD/libscope/commit/6afa1fbf8a714a4e80ab30094f88bcadeb17b10f))
+* set git identity in registry git helpers and tests for CI ([#401](https://github.com/RobertLD/libscope/issues/401)) ([9ede32f](https://github.com/RobertLD/libscope/commit/9ede32fdfd712edf77100f24315fa4104a50163d))
+* set git identity in registry sync test for CI runners ([#400](https://github.com/RobertLD/libscope/issues/400)) ([1162bd4](https://github.com/RobertLD/libscope/commit/1162bd403621020c251c4befab2881b9f1e4bc94))
+
 ## [1.4.1](https://github.com/RobertLD/libscope/compare/v1.4.0...v1.4.1) (2026-03-10)
 
 
