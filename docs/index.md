@@ -19,7 +19,7 @@ features:
     details: Vector similarity search powered by sqlite-vec, with FTS5 full-text fallback. Find what you need, even when you don't know the exact words.
   - icon: 🤖
     title: MCP Integration
-    details: 26 tools for AI assistants out of the box. Works with Claude, Cursor, VS Code, and any MCP-compatible client.
+    details: 31 tools for AI assistants out of the box. Works with Claude, Cursor, VS Code, and any MCP-compatible client.
   - icon: 🔗
     title: Connectors
     details: Pull in docs from Obsidian, Notion, Confluence, Slack, OneNote, and GitHub/GitLab. Keep everything in one place.

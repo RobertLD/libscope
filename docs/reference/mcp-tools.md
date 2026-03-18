@@ -83,19 +83,16 @@ Update an existing document's title, content, or metadata. Changing content trig
 | `url`        | string |          | New source URL (pass `null` to clear)   |
 | `topicId`    | string |          | New topic ID (pass `null` to clear)     |
 
-## update-document
+## get-related
 
-Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding.
+Find document chunks that are semantically similar to a given chunk (more-like-this).
 
-| Parameter    | Type   | Required | Description                             |
-| ------------ | ------ | -------- | --------------------------------------- |
-| `documentId` | string | ✅       | The document ID to update               |
-| `title`      | string |          | New title                               |
-| `content`    | string |          | New content (triggers re-chunking)      |
-| `library`    | string |          | New library name (pass `null` to clear) |
-| `version`    | string |          | New version (pass `null` to clear)      |
-| `url`        | string |          | New source URL (pass `null` to clear)   |
-| `topicId`    | string |          | New topic ID (pass `null` to clear)     |
+| Parameter   | Type   | Required | Description                        |
+| ----------- | ------ | -------- | ---------------------------------- |
+| `chunkId`   | string | ✅       | The source chunk ID                |
+| `limit`     | number |          | Max results (default: 10)          |
+| `library`   | string |          | Filter results by library          |
+| `topic`     | string |          | Filter results by topic            |
 
 ## rate-document
 

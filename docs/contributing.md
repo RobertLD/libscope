@@ -36,6 +36,10 @@ src/
 ├── providers/   # Embedding providers (local, Ollama, OpenAI)
 ├── mcp/         # MCP server and tool definitions
 ├── cli/         # CLI entry point and commands
+├── api/         # REST API server and routes
+├── web/         # Web dashboard and knowledge graph
+├── connectors/  # Third-party syncs (Obsidian, Notion, Confluence, Slack, OneNote)
+├── registry/    # Git-backed pack registry system
 ├── config.ts    # Configuration management
 ├── logger.ts    # Structured logging (pino)
 └── errors.ts    # Custom error hierarchy
@@ -44,6 +48,20 @@ tests/
 ├── integration/ # Tests with real SQLite DB
 └── fixtures/    # Test helpers, mock providers, sample data
 ```
+
+For a full module-by-module breakdown and data flow diagrams, see the [Architecture Guide](/guide/architecture).
+
+## Design Principles
+
+**Entry points are thin.** The CLI, MCP server, and REST API are adapters. They parse input and format output. All business logic lives in `src/core/`.
+
+**Errors are typed.** Use the appropriate `LibScopeError` subclass (`DatabaseError`, `ValidationError`, `FetchError`, etc.) rather than throwing plain `Error`. MCP tool handlers must be wrapped with `withErrorHandling()` from `src/mcp/errors.ts`.
+
+**Core modules are testable.** They accept `db` and `provider` as parameters — never import them directly inside a function. This makes it easy to swap in `createTestDb()` and `MockEmbeddingProvider` in tests.
+
+**Migrations are additive.** Never modify an existing migration. Add a new entry in `MIGRATIONS` and increment `SCHEMA_VERSION` in `src/db/schema.ts`.
+
+**No `any`.** Use `unknown` and narrow with type guards. The ESLint rule `no-explicit-any: "error"` is enforced.
 
 ## Making Changes
 

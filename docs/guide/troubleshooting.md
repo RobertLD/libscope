@@ -90,3 +90,152 @@ LibScope uses SQLite WAL mode which supports concurrent reads but only one write
 ```bash
 libscope db reset    # removes all indexed content (keeps config)
 ```
+
+---
+
+## Connector Issues
+
+### Notion sync returns no pages
+
+- Verify your integration token has access to the pages you want to sync — in Notion, you must explicitly share pages with your integration
+- Check that the token starts with `secret_` (internal integrations) or is a valid OAuth token
+- Try syncing a specific page ID first: `libscope connect notion --token $NOTION_TOKEN`
+
+### Confluence sync fails with 401
+
+- Ensure you are using an API token (not your password) — generate one at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens)
+- The `--email` flag must match the Atlassian account that owns the token
+- Verify the `--url` uses your full Atlassian domain: `https://your-org.atlassian.net`
+
+### Slack sync fails with `missing_scope` error
+
+Your Slack bot token is missing required OAuth scopes. Add the following in your Slack app settings under **OAuth & Permissions**:
+
+- `channels:history`
+- `channels:read`
+- `groups:history` (for private channels)
+- `users:read` (for author names)
+
+Reinstall the app to your workspace after adding scopes.
+
+### OneNote sync prompts for authentication every time
+
+OneNote uses device code auth which caches a refresh token. If the cache is missing or expired:
+
+1. Ensure `ONENOTE_CLIENT_ID` is set to your Azure AD app registration client ID
+2. The token is cached in `~/.libscope/connectors/onenote.json` — delete this file to force re-authentication
+3. Ensure your app registration has `Notes.Read` (or `Notes.ReadWrite`) permission granted in Azure
+
+### Obsidian sync misses some notes
+
+- Check your `--exclude` patterns — glob patterns use `/` as separator even on Windows
+- Obsidian notes in the `.obsidian/` config folder are automatically excluded
+- Notes without the `.md` extension are skipped; check your vault for unusual extensions
+
+---
+
+## REST API Issues
+
+### `401 Unauthorized` from API
+
+The REST API requires an `X-API-Key` header for write operations. Retrieve your key:
+
+```bash
+libscope config show
+```
+
+Then include it in requests:
+
+```bash
+curl -H "X-API-Key: <your-key>" http://localhost:3378/api/v1/documents
+```
+
+### `429 Too Many Requests`
+
+The API applies rate limiting per IP. If you're hitting limits during bulk operations, use the batch endpoints:
+
+- `POST /api/v1/batch-search` — up to 20 queries at once
+- `POST /api/v1/bulk/delete`, `/bulk/retag`, `/bulk/move` — process many documents in one request
+
+### CORS errors when calling from a browser
+
+The REST API allows CORS by default for localhost origins. If you're calling from a different origin, you can either:
+
+- Run your frontend on the same host as the API
+- Use a reverse proxy that adds the appropriate `Access-Control-Allow-Origin` header
+
+---
+
+## Indexing Issues
+
+### PDF or DOCX files are not indexed
+
+Optional parser dependencies may not be installed. Install them:
+
+```bash
+npm install -g pdf-parse   # for .pdf files
+npm install -g mammoth     # for .docx files
+npm install -g epub2       # for .epub files
+```
+
+Or install all optional parsers at once:
+
+```bash
+npm install -g libscope --include=optional
+```
+
+### URL indexing fails with SSL errors
+
+If you are fetching from a server with a self-signed certificate:
+
+```bash
+libscope config set indexing.allowSelfSignedCerts true
+# or
+export LIBSCOPE_ALLOW_SELF_SIGNED_CERTS=true
+```
+
+For internal/private URLs (RFC 1918 address ranges):
+
+```bash
+libscope config set indexing.allowPrivateUrls true
+# or
+export LIBSCOPE_ALLOW_PRIVATE_URLS=true
+```
+
+### Import is very slow for large directories
+
+Use `import-batch` with parallelism instead of `import`:
+
+```bash
+libscope import-batch ./docs/ --concurrency 8 --library my-lib
+```
+
+The default `import` command is sequential. `import-batch` processes files in parallel.
+
+---
+
+## LLM / RAG Issues
+
+### `ask` returns "No LLM provider configured"
+
+The `ask` command requires an LLM provider. Configure one:
+
+```bash
+# OpenAI
+libscope config set llm.provider openai
+export LIBSCOPE_OPENAI_API_KEY=sk-...
+
+# Ollama (must be running locally)
+libscope config set llm.provider ollama
+
+# Anthropic
+libscope config set llm.provider anthropic
+export LIBSCOPE_ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Answers are low quality or hallucinated
+
+- Index more relevant documents — the quality of RAG answers depends on what's in the knowledge base
+- Increase `--top-k` to retrieve more context chunks: `libscope ask "..." --top-k 10`
+- Switch to a more capable embedding provider (OpenAI `text-embedding-3-small` outperforms the local model)
+- Switch to a more capable LLM model: `libscope config set llm.model gpt-4o`
