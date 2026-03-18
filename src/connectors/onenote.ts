@@ -434,18 +434,31 @@ async function indexOneNotePage(
   return outcome;
 }
 
+interface SyncOneNoteSectionOptions {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  token: string;
+  notebookName: string;
+  section: GraphSection;
+  notebookTopicId: string;
+  config: OneNoteConfig;
+  seenSourceUrls: Set<string>;
+  result: OneNoteSyncResult;
+}
+
 /** Sync all pages within a single section. */
-async function syncOneNoteSection(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  token: string,
-  notebookName: string,
-  section: GraphSection,
-  notebookTopicId: string,
-  config: OneNoteConfig,
-  seenSourceUrls: Set<string>,
-  result: OneNoteSyncResult,
-): Promise<void> {
+async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<void> {
+  const {
+    db,
+    provider,
+    token,
+    notebookName,
+    section,
+    notebookTopicId,
+    config,
+    seenSourceUrls,
+    result,
+  } = options;
   const log = getLogger();
   const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
 
@@ -510,17 +523,17 @@ async function syncOneNoteNotebook(
   result.sections += filteredSections.length;
 
   for (const section of filteredSections) {
-    await syncOneNoteSection(
+    await syncOneNoteSection({
       db,
       provider,
       token,
-      notebook.displayName,
+      notebookName: notebook.displayName,
       section,
       notebookTopicId,
       config,
       seenSourceUrls,
       result,
-    );
+    });
   }
 }
 

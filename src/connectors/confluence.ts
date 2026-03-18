@@ -370,17 +370,22 @@ function checkExistingVersion(
   return { existingDoc, unchanged: !!existingMeta };
 }
 
+interface IndexConfluencePageOptions {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  page: ConfluencePage;
+  space: ConfluenceSpace;
+  topicId: string;
+  base: string;
+  urls: ApiUrls;
+  auth: string;
+}
+
 /** Index a single Confluence page. Returns "indexed", "updated", or "skipped". */
 async function indexConfluencePage(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  page: ConfluencePage,
-  space: ConfluenceSpace,
-  topicId: string,
-  base: string,
-  urls: ApiUrls,
-  auth: string,
+  options: IndexConfluencePageOptions,
 ): Promise<"indexed" | "updated" | "skipped"> {
+  const { db, provider, page, space, topicId, base, urls, auth } = options;
   const log = getLogger();
   const fullPage = await confluenceFetch<ConfluencePage>(urls.pageContent(page.id), auth);
 
@@ -429,17 +434,20 @@ async function indexConfluencePage(
   return outcome;
 }
 
+interface SyncConfluenceSpaceOptions {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  space: ConfluenceSpace;
+  confluenceType: "cloud" | "server";
+  base: string;
+  urls: ApiUrls;
+  auth: string;
+  result: ConfluenceSyncResult;
+}
+
 /** Sync all pages within a single Confluence space. */
-async function syncConfluenceSpace(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  space: ConfluenceSpace,
-  confluenceType: "cloud" | "server",
-  base: string,
-  urls: ApiUrls,
-  auth: string,
-  result: ConfluenceSyncResult,
-): Promise<void> {
+async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise<void> {
+  const { db, provider, space, confluenceType, base, urls, auth, result } = options;
   const log = getLogger();
   const topic = createTopic(db, { name: space.name });
 
@@ -456,16 +464,16 @@ async function syncConfluenceSpace(
 
   for (const page of pages) {
     try {
-      const outcome = await indexConfluencePage(
+      const outcome = await indexConfluencePage({
         db,
         provider,
         page,
         space,
-        topic.id,
+        topicId: topic.id,
         base,
         urls,
         auth,
-      );
+      });
       if (outcome === "indexed") result.pagesIndexed++;
       if (outcome === "updated") {
         result.pagesUpdated++;
@@ -533,7 +541,16 @@ export async function syncConfluence(
     log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
 
     for (const space of spacesToSync) {
-      await syncConfluenceSpace(db, provider, space, confluenceType, base, urls, auth, result);
+      await syncConfluenceSpace({
+        db,
+        provider,
+        space,
+        confluenceType,
+        base,
+        urls,
+        auth,
+        result,
+      });
     }
 
     log.info(

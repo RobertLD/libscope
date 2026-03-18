@@ -344,12 +344,12 @@ export function convertNotionBlocks(blocks: NotionBlock[]): string {
 
     // Try special blocks first (ones needing type-specific data extraction)
     const specialLine = convertSpecialBlock(block, text);
-    if (specialLine !== undefined) {
-      lines.push(specialLine);
-    } else {
+    if (specialLine === undefined) {
       // Simple blocks that just need text formatting
       const simpleLine = blockToMarkdownLine(block, text);
       if (simpleLine !== undefined) lines.push(simpleLine);
+    } else {
+      lines.push(specialLine);
     }
 
     // Render nested children (except table children which are handled above)
