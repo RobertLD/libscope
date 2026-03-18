@@ -36,6 +36,150 @@ import { ConfigError, ValidationError } from "../errors.js";
 import { errorResponse, withErrorHandling } from "./errors.js";
 export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
 
+/** Build SpiderOptions from submit-document params. */
+function buildSpiderOptions(
+  params: {
+    maxPages?: number | undefined;
+    maxDepth?: number | undefined;
+    sameDomain?: boolean | undefined;
+    pathPrefix?: string | undefined;
+    excludePatterns?: string[] | undefined;
+  },
+  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+): SpiderOptions {
+  const opts: SpiderOptions = { fetchOptions };
+  if (params.maxPages !== undefined) opts.maxPages = params.maxPages;
+  if (params.maxDepth !== undefined) opts.maxDepth = params.maxDepth;
+  if (params.sameDomain !== undefined) opts.sameDomain = params.sameDomain;
+  if (params.pathPrefix !== undefined) opts.pathPrefix = params.pathPrefix;
+  if (params.excludePatterns !== undefined) opts.excludePatterns = params.excludePatterns;
+  return opts;
+}
+
+/** Handle spider mode for submit-document. */
+async function handleSpiderSubmit(
+  db: import("better-sqlite3").Database,
+  provider: import("../providers/embedding.js").EmbeddingProvider,
+  params: {
+    url?: string | undefined;
+    library?: string | undefined;
+    version?: string | undefined;
+    topic?: string | undefined;
+    sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
+    maxPages?: number | undefined;
+    maxDepth?: number | undefined;
+    sameDomain?: boolean | undefined;
+    pathPrefix?: string | undefined;
+    excludePatterns?: string[] | undefined;
+  },
+  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const { url, library, version, topic } = params;
+  if (!url) {
+    throw new ValidationError("Field 'url' is required when spider is true");
+  }
+
+  const spiderOptions = buildSpiderOptions(params, fetchOptions);
+  const indexed: Array<{ id: string; title: string }> = [];
+  const errors: Array<{ url: string; error: string }> = [];
+  const sourceType = params.sourceType ?? (library ? "library" : "manual");
+
+  const gen = spiderUrl(url, spiderOptions);
+  let result = await gen.next();
+  while (!result.done) {
+    const page = result.value;
+    try {
+      const doc = await indexDocument(db, provider, {
+        title: page.title,
+        content: page.content,
+        sourceType,
+        library,
+        version,
+        topicId: topic,
+        url: page.url,
+        submittedBy: "model",
+      });
+      indexed.push({ id: doc.id, title: page.title });
+    } catch (err) {
+      errors.push({ url: page.url, error: err instanceof Error ? err.message : String(err) });
+    }
+    result = await gen.next();
+  }
+  const stats = result.value;
+
+  const summary = [
+    `Spider complete.`,
+    `Pages indexed: ${indexed.length}`,
+    `Pages crawled: ${stats?.pagesCrawled ?? indexed.length}`,
+    `Pages skipped: ${stats?.pagesSkipped ?? 0}`,
+    errors.length > 0 ? `Errors: ${errors.length}` : null,
+    stats?.abortReason ? `Stopped early: ${stats.abortReason}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { content: [{ type: "text" as const, text: summary }] };
+}
+
+/** Handle single-document submission for submit-document. */
+async function handleSingleDocSubmit(
+  db: import("better-sqlite3").Database,
+  provider: import("../providers/embedding.js").EmbeddingProvider,
+  params: {
+    title?: string | undefined;
+    content?: string | undefined;
+    url?: string | undefined;
+    library?: string | undefined;
+    version?: string | undefined;
+    topic?: string | undefined;
+    sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
+  },
+  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  let { title, content } = params;
+  const { url, library, version, topic } = params;
+
+  if (url && !content) {
+    const fetched = await fetchAndConvert(url, fetchOptions);
+    content = fetched.content;
+    title ??= fetched.title;
+  }
+
+  if (!title) {
+    throw new ValidationError("A title is required when not providing a URL");
+  }
+  if (!content) {
+    throw new ValidationError("Either content or a URL must be provided");
+  }
+
+  const sourceType = params.sourceType ?? (library ? "library" : "manual");
+
+  const result = await indexDocument(db, provider, {
+    title,
+    content,
+    sourceType,
+    library,
+    version,
+    topicId: topic,
+    url,
+    submittedBy: "model",
+  });
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `Document indexed successfully.\n` +
+          `Title: ${title}\n` +
+          `ID: ${result.id}\n` +
+          `Chunks: ${result.chunkCount}` +
+          (url ? `\nSource: ${url}` : ""),
+      },
+    ],
+  };
+}
+
 // Start the server
 async function main(): Promise<void> {
   let config;
@@ -407,109 +551,16 @@ async function main(): Promise<void> {
         .describe("Glob patterns for URLs to skip (e.g. ['*/changelog*', '*/api/v1/*'])."),
     },
     withErrorHandling(async (params) => {
-      let { title, content } = params;
-      const { url, library, version, topic } = params;
       const fetchOptions = {
         allowPrivateUrls: config.indexing.allowPrivateUrls,
         allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
       };
 
-      // Spider mode — crawl linked pages from the URL
-      if (params.spider && !url) {
-        throw new ValidationError("Field 'url' is required when spider is true");
-      }
-      if (params.spider && url) {
-        const spiderOptions: SpiderOptions = { fetchOptions };
-        if (params.maxPages !== undefined) spiderOptions.maxPages = params.maxPages;
-        if (params.maxDepth !== undefined) spiderOptions.maxDepth = params.maxDepth;
-        if (params.sameDomain !== undefined) spiderOptions.sameDomain = params.sameDomain;
-        if (params.pathPrefix !== undefined) spiderOptions.pathPrefix = params.pathPrefix;
-        if (params.excludePatterns !== undefined)
-          spiderOptions.excludePatterns = params.excludePatterns;
-
-        const indexed: Array<{ id: string; title: string }> = [];
-        const errors: Array<{ url: string; error: string }> = [];
-        const sourceType = params.sourceType ?? (library ? "library" : "manual");
-
-        const gen = spiderUrl(url, spiderOptions);
-        let result = await gen.next();
-        while (!result.done) {
-          const page = result.value;
-          try {
-            const doc = await indexDocument(db, provider, {
-              title: page.title,
-              content: page.content,
-              sourceType,
-              library,
-              version,
-              topicId: topic,
-              url: page.url,
-              submittedBy: "model",
-            });
-            indexed.push({ id: doc.id, title: page.title });
-          } catch (err) {
-            errors.push({ url: page.url, error: err instanceof Error ? err.message : String(err) });
-          }
-          result = await gen.next();
-        }
-        const stats = result.value;
-
-        const summary = [
-          `Spider complete.`,
-          `Pages indexed: ${indexed.length}`,
-          `Pages crawled: ${stats?.pagesCrawled ?? indexed.length}`,
-          `Pages skipped: ${stats?.pagesSkipped ?? 0}`,
-          errors.length > 0 ? `Errors: ${errors.length}` : null,
-          stats?.abortReason ? `Stopped early: ${stats.abortReason}` : null,
-        ]
-          .filter(Boolean)
-          .join("\n");
-
-        return {
-          content: [{ type: "text" as const, text: summary }],
-        };
+      if (params.spider) {
+        return handleSpiderSubmit(db, provider, params, fetchOptions);
       }
 
-      // If URL is provided and no content, fetch it
-      if (url && !content) {
-        const fetched = await fetchAndConvert(url, fetchOptions);
-        content = fetched.content;
-        title ??= fetched.title;
-      }
-
-      if (!title) {
-        throw new ValidationError("A title is required when not providing a URL");
-      }
-      if (!content) {
-        throw new ValidationError("Either content or a URL must be provided");
-      }
-
-      const sourceType = params.sourceType ?? (library ? "library" : "manual");
-
-      const result = await indexDocument(db, provider, {
-        title,
-        content,
-        sourceType,
-        library,
-        version,
-        topicId: topic,
-        url,
-        submittedBy: "model",
-      });
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text:
-              `Document indexed successfully.\n` +
-              `Title: ${title}\n` +
-              `ID: ${result.id}\n` +
-              `Chunks: ${result.chunkCount}` +
-              (url ? `\nSource: ${url}` : ""),
-          },
-        ],
-      };
+      return handleSingleDocSubmit(db, provider, params, fetchOptions);
     }),
   );
 

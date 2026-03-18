@@ -116,6 +116,146 @@ function readPackJson(filePath: string): KnowledgePack {
   return JSON.parse(text) as KnowledgePack;
 }
 
+/** Validate that the registry exists and has a local cache; return the cache directory. */
+function validateRegistryCache(registryName: string): string {
+  const entry = getRegistry(registryName);
+  if (!entry) {
+    throw new ValidationError(`Registry "${registryName}" not found. Add it first.`);
+  }
+  const cacheDir = getRegistryCacheDir(registryName);
+  if (!existsSync(cacheDir)) {
+    throw new ValidationError(
+      `Registry "${registryName}" has no local cache. Run: libscope registry sync ${registryName}`,
+    );
+  }
+  return cacheDir;
+}
+
+/** Best-effort fetch of the latest registry state. */
+async function tryFetchLatest(cacheDir: string, context: string): Promise<void> {
+  try {
+    await fetchRegistry(cacheDir);
+    clearIndexCache(cacheDir);
+  } catch (err) {
+    getLogger().warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      `Could not fetch latest registry state before ${context} — proceeding with cached state`,
+    );
+  }
+}
+
+/** Read and validate a pack file, returning the parsed pack. */
+function readAndValidatePack(packFilePath: string): KnowledgePack {
+  if (!existsSync(packFilePath)) {
+    throw new ValidationError(`Pack file not found: ${packFilePath}`);
+  }
+  const pack = readPackJson(packFilePath);
+  if (!pack.name || !pack.version) {
+    throw new ValidationError("Pack file must have 'name' and 'version' fields");
+  }
+  validatePathSegment(pack.name, "pack name");
+
+  const packDataSize = JSON.stringify(pack).length;
+  if (packDataSize > MAX_PACK_SIZE_BYTES) {
+    throw new ValidationError(
+      `Pack data size (${packDataSize} bytes) exceeds the 50 MB limit. Reduce the number of documents or their content.`,
+    );
+  }
+  return pack;
+}
+
+/** Resolve version and manifest for a publish operation. */
+function resolveVersionAndManifest(
+  manifestPath: string,
+  pack: KnowledgePack,
+  registryName: string,
+  explicitVersion: string | undefined,
+): { version: string; manifest: PackManifest } {
+  if (!existsSync(manifestPath)) {
+    return {
+      version: explicitVersion ?? pack.version,
+      manifest: {
+        name: pack.name,
+        description: pack.description,
+        tags: [],
+        author: pack.metadata.author,
+        license: pack.metadata.license,
+        versions: [],
+      },
+    };
+  }
+
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PackManifest;
+  const version =
+    explicitVersion ?? bumpPatchVersion(manifest.versions[0]?.version ?? pack.version);
+
+  if (manifest.versions.some((v) => v.version === version)) {
+    throw new ValidationError(
+      `Version ${version} of "${pack.name}" already exists in "${registryName}". ` +
+        "Use --version to specify a different version.",
+    );
+  }
+
+  return { version, manifest };
+}
+
+/** Read and deduplicate the registry index, returning a clean array. */
+function readAndDeduplicateIndex(indexPath: string): PackSummary[] {
+  if (!existsSync(indexPath)) return [];
+
+  const log = getLogger();
+  let index: PackSummary[];
+  try {
+    index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
+  } catch (err) {
+    throw new ValidationError(
+      `Registry index.json is corrupted: ${err instanceof Error ? err.message : String(err)}. Re-sync the registry or manually fix ${indexPath}.`,
+    );
+  }
+
+  const seen = new Set<string>();
+  const deduped: PackSummary[] = [];
+  for (const entry of index) {
+    if (seen.has(entry.name)) {
+      log.warn(
+        { packName: entry.name },
+        "Duplicate entry in index.json for pack — removing duplicate",
+      );
+    } else {
+      seen.add(entry.name);
+      deduped.push(entry);
+    }
+  }
+  return deduped;
+}
+
+/** Upsert a pack summary into the index and write it to disk. */
+function upsertIndexEntry(indexPath: string, index: PackSummary[], summary: PackSummary): void {
+  const existingIdx = index.findIndex((p) => p.name === summary.name);
+  if (existingIdx >= 0) {
+    index[existingIdx] = summary;
+  } else {
+    index.push(summary);
+  }
+  writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
+}
+
+/** Roll back a version directory on publish failure. */
+function rollbackVersionDir(versionDir: string, created: boolean): void {
+  if (!created) return;
+  if (!existsSync(versionDir)) return;
+  const log = getLogger();
+  try {
+    rmSync(versionDir, { recursive: true, force: true });
+    log.warn({ versionDir }, "Rolled back version directory after publish failure");
+  } catch (cleanupErr) {
+    log.warn(
+      { err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },
+      "Failed to roll back version directory after publish failure",
+    );
+  }
+}
+
 /**
  * Publish a pack to a registry.
  * Creates the canonical folder structure, generates checksum, updates index and manifest, commits and pushes.
@@ -124,92 +264,24 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
   const log = getLogger();
   const { registryName, packFilePath, commitMessage } = options;
 
-  // Validate registry exists
-  const entry = getRegistry(registryName);
-  if (!entry) {
-    throw new ValidationError(`Registry "${registryName}" not found. Add it first.`);
-  }
+  const cacheDir = validateRegistryCache(registryName);
+  await tryFetchLatest(cacheDir, "publish");
 
-  const cacheDir = getRegistryCacheDir(registryName);
-  if (!existsSync(cacheDir)) {
-    throw new ValidationError(
-      `Registry "${registryName}" has no local cache. Run: libscope registry sync ${registryName}`,
-    );
-  }
+  const pack = readAndValidatePack(packFilePath);
 
-  // Fetch latest before publishing
-  try {
-    await fetchRegistry(cacheDir);
-    clearIndexCache(cacheDir);
-  } catch (err) {
-    log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      "Could not fetch latest registry state before publish — proceeding with cached state",
-    );
-  }
-
-  // Read the pack file
-  if (!existsSync(packFilePath)) {
-    throw new ValidationError(`Pack file not found: ${packFilePath}`);
-  }
-  const pack = readPackJson(packFilePath);
-  if (!pack.name || !pack.version) {
-    throw new ValidationError("Pack file must have 'name' and 'version' fields");
-  }
-
-  // Validate pack name (path traversal prevention)
-  validatePathSegment(pack.name, "pack name");
-
-  // Check pack data size limit (50 MB)
-  const packDataSize = JSON.stringify(pack).length;
-  if (packDataSize > MAX_PACK_SIZE_BYTES) {
-    throw new ValidationError(
-      `Pack data size (${packDataSize} bytes) exceeds the 50 MB limit. Reduce the number of documents or their content.`,
-    );
-  }
-
-  // Determine version
   const packDir = join(cacheDir, PACKS_DIR, pack.name);
   const manifestPath = join(packDir, PACK_MANIFEST_FILE);
 
-  let manifest: PackManifest;
-  let version: string;
+  const { version, manifest } = resolveVersionAndManifest(
+    manifestPath,
+    pack,
+    registryName,
+    options.version,
+  );
 
-  if (existsSync(manifestPath)) {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PackManifest;
-
-    if (options.version) {
-      version = options.version;
-    } else {
-      // Bump patch from latest
-      const latestVersion = manifest.versions[0]?.version ?? pack.version;
-      version = bumpPatchVersion(latestVersion);
-    }
-
-    // Check version doesn't already exist
-    if (manifest.versions.some((v) => v.version === version)) {
-      throw new ValidationError(
-        `Version ${version} of "${pack.name}" already exists in "${registryName}". ` +
-          "Use --version to specify a different version.",
-      );
-    }
-  } else {
-    version = options.version ?? pack.version;
-    manifest = {
-      name: pack.name,
-      description: pack.description,
-      tags: [],
-      author: pack.metadata.author,
-      license: pack.metadata.license,
-      versions: [],
-    };
-  }
-
-  // Validate final version (path traversal prevention + semver)
   validatePathSegment(version, "version");
   validateSemver(version);
 
-  // Create version directory and perform publish operations; roll back on failure
   const versionDir = join(packDir, version);
   if (existsSync(versionDir)) {
     throw new ValidationError(`Version directory already exists: ${versionDir}`);
@@ -220,16 +292,12 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
     mkdirSync(versionDir, { recursive: true });
     versionDirCreated = true;
 
-    // Copy pack file
     const destFile = join(versionDir, `${pack.name}.json`);
     copyFileSync(packFilePath, destFile);
 
-    // Generate checksum (streaming — doesn't buffer entire file)
     const checksum = await computeChecksum(destFile);
-    const checksumPath = join(versionDir, CHECKSUM_FILE);
-    writeChecksumFile(checksumPath, checksum);
+    writeChecksumFile(join(versionDir, CHECKSUM_FILE), checksum);
 
-    // Update manifest
     const versionEntry: PackVersionEntry = {
       version,
       publishedAt: new Date().toISOString(),
@@ -241,36 +309,8 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
     manifest.description = pack.description;
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
 
-    // Update index.json
     const indexPath = join(cacheDir, INDEX_FILE);
-    let index: PackSummary[] = [];
-    if (existsSync(indexPath)) {
-      try {
-        index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
-      } catch (err) {
-        throw new ValidationError(
-          `Registry index.json is corrupted: ${err instanceof Error ? err.message : String(err)}. Re-sync the registry or manually fix ${indexPath}.`,
-        );
-      }
-    }
-
-    // Deduplicate index entries by pack name (keep first, warn on duplicates)
-    const seen = new Set<string>();
-    const deduped: PackSummary[] = [];
-    for (const entry of index) {
-      if (seen.has(entry.name)) {
-        log.warn(
-          { packName: entry.name },
-          "Duplicate entry in index.json for pack — removing duplicate",
-        );
-      } else {
-        seen.add(entry.name);
-        deduped.push(entry);
-      }
-    }
-    index = deduped;
-
-    const existingIdx = index.findIndex((p) => p.name === pack.name);
+    const index = readAndDeduplicateIndex(indexPath);
     const summary: PackSummary = {
       name: pack.name,
       description: pack.description,
@@ -279,35 +319,15 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
       author: pack.metadata.author,
       updatedAt: new Date().toISOString(),
     };
+    upsertIndexEntry(indexPath, index, summary);
 
-    if (existingIdx >= 0) {
-      index[existingIdx] = summary;
-    } else {
-      index.push(summary);
-    }
-
-    writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
-
-    // Commit and push
     const msg = commitMessage ?? `publish: ${pack.name}@${version}`;
     await commitAndPush(cacheDir, msg);
 
     log.info({ registry: registryName, pack: pack.name, version, checksum }, "Pack published");
-
     return { packName: pack.name, version, checksum, registryName };
   } catch (err) {
-    // Roll back version directory if it was created to prevent orphaned directories
-    if (versionDirCreated && existsSync(versionDir)) {
-      try {
-        rmSync(versionDir, { recursive: true, force: true });
-        log.warn({ versionDir }, "Rolled back version directory after publish failure");
-      } catch (cleanupErr) {
-        log.warn(
-          { err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },
-          "Failed to roll back version directory after publish failure",
-        );
-      }
-    }
+    rollbackVersionDir(versionDir, versionDirCreated);
     throw err;
   }
 }
@@ -321,17 +341,7 @@ export async function publishPackToBranch(
   const log = getLogger();
   const { registryName, packFilePath } = options;
 
-  const entry = getRegistry(registryName);
-  if (!entry) {
-    throw new ValidationError(`Registry "${registryName}" not found.`);
-  }
-
-  const cacheDir = getRegistryCacheDir(registryName);
-  if (!existsSync(cacheDir)) {
-    throw new ValidationError(
-      `Registry "${registryName}" has no local cache. Run: libscope registry sync ${registryName}`,
-    );
-  }
+  const cacheDir = validateRegistryCache(registryName);
 
   const pack = readPackJson(packFilePath);
   const branchName = `feature/add-${pack.name}`;
@@ -374,28 +384,8 @@ export async function unpublishPack(options: UnpublishOptions): Promise<void> {
   const log = getLogger();
   const { registryName, packName, version, commitMessage } = options;
 
-  const entry = getRegistry(registryName);
-  if (!entry) {
-    throw new ValidationError(`Registry "${registryName}" not found.`);
-  }
-
-  const cacheDir = getRegistryCacheDir(registryName);
-  if (!existsSync(cacheDir)) {
-    throw new ValidationError(
-      `Registry "${registryName}" has no local cache. Run: libscope registry sync ${registryName}`,
-    );
-  }
-
-  // Fetch latest
-  try {
-    await fetchRegistry(cacheDir);
-    clearIndexCache(cacheDir);
-  } catch (err) {
-    log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      "Could not fetch latest registry state before unpublish",
-    );
-  }
+  const cacheDir = validateRegistryCache(registryName);
+  await tryFetchLatest(cacheDir, "unpublish");
 
   // Validate packName and version (path traversal prevention)
   validatePathSegment(packName, "pack name");
