@@ -98,6 +98,7 @@ import {
   parsePackSpecifier,
   resolvePackFromRegistries,
   verifyResolvedPackChecksum,
+  type ResolvedPack,
 } from "../registry/resolve.js";
 import { loadRegistries } from "../registry/config.js";
 import { createInterface } from "node:readline";
@@ -121,6 +122,216 @@ function parseIntOption(value: string, name: string): number {
     process.exit(1);
   }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Extracted helpers to reduce cognitive complexity (SonarCloud S3776)
+// ---------------------------------------------------------------------------
+
+/** Truncate a string and add "..." suffix if it exceeds maxLen. */
+function previewText(text: string, maxLen: number): string {
+  return text.length > maxLen ? text.slice(0, maxLen) + "..." : text;
+}
+
+/** Print context-before chunks for a search result. */
+function printContextBefore(contextBefore: Array<{ content: string }> | undefined): void {
+  if (!contextBefore || contextBefore.length === 0) return;
+  for (const c of contextBefore) {
+    console.log(`  \u2191 ${previewText(c.content, 120)}`);
+  }
+  console.log("  \u2500 \u2500 \u2500");
+}
+
+/** Print context-after chunks for a search result. */
+function printContextAfter(contextAfter: Array<{ content: string }> | undefined): void {
+  if (!contextAfter || contextAfter.length === 0) return;
+  console.log("  \u2500 \u2500 \u2500");
+  for (const c of contextAfter) {
+    console.log(`  \u2193 ${previewText(c.content, 120)}`);
+  }
+}
+
+/** Print a single search result with optional context chunks. */
+function printSearchResult(r: {
+  title: string;
+  score: number;
+  library?: string | null;
+  url?: string | null;
+  content: string;
+  contextBefore?: Array<{ content: string }> | undefined;
+  contextAfter?: Array<{ content: string }> | undefined;
+}): void {
+  console.log(`\n\u2500\u2500 ${r.title} (score: ${r.score.toFixed(2)}) \u2500\u2500`);
+  if (r.library) console.log(`  Library: ${r.library}`);
+  if (r.url) console.log(`  Source: ${r.url}`);
+  printContextBefore(r.contextBefore);
+  console.log(`  ${previewText(r.content, 200)}`);
+  printContextAfter(r.contextAfter);
+}
+
+/** Print a single related-chunk result. */
+function printRelatedChunk(r: {
+  title: string;
+  score: number;
+  chunkId: string;
+  library?: string | null;
+  url?: string | null;
+  content: string;
+}): void {
+  console.log(`\n\u2500\u2500 ${r.title} (score: ${r.score.toFixed(2)}) \u2500\u2500`);
+  console.log(`  Chunk ID: ${r.chunkId}`);
+  if (r.library) console.log(`  Library: ${r.library}`);
+  if (r.url) console.log(`  Source: ${r.url}`);
+  console.log(`  ${previewText(r.content, 200)}`);
+}
+
+/** Build search filters from CLI options. */
+function buildSearchFilters(opts: {
+  topic?: string;
+  library?: string;
+  source?: string;
+}): Record<string, unknown> | undefined {
+  const filters: Record<string, unknown> = {};
+  if (opts.topic) filters.topic = opts.topic;
+  if (opts.library) filters.library = opts.library;
+  if (opts.source) filters.source = opts.source;
+  return Object.keys(filters).length > 0 ? filters : undefined;
+}
+
+/** Report the result of a pack install operation. */
+function reportInstallResult(
+  result: {
+    packName: string;
+    documentsInstalled: number;
+    alreadyInstalled: boolean;
+    errors: number;
+  },
+  reporter: { log(msg: string): void; success(msg: string): void },
+  registryName?: string,
+): void {
+  if (result.alreadyInstalled) {
+    reporter.log(`Pack "${result.packName}" is already installed.`);
+    return;
+  }
+  const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
+  const from = registryName ? ` from ${registryName}` : "";
+  reporter.success(
+    `Pack "${result.packName}" installed${from}: ${result.documentsInstalled} documents${errMsg}.`,
+  );
+}
+
+/** Install a resolved registry pack -- verify checksum, install, and report. */
+async function installResolvedPack(
+  db: ReturnType<typeof getDatabase>,
+  provider: EmbeddingProvider,
+  resolved: ResolvedPack,
+  installOpts: {
+    batchSize?: number | undefined;
+    resumeFrom?: number | undefined;
+    concurrency?: number | undefined;
+  },
+  reporter: {
+    log(msg: string): void;
+    success(msg: string): void;
+    progress(c: number, t: number, l: string): void;
+    clearProgress(): void;
+  },
+): Promise<void> {
+  await verifyResolvedPackChecksum(resolved);
+  const result = await installPack(db, provider, resolved.dataPath, {
+    ...installOpts,
+    onProgress: (current, total, docTitle) => {
+      reporter.progress(current, total, docTitle);
+    },
+  });
+  reporter.clearProgress();
+  reportInstallResult(result, reporter, resolved.registryName);
+}
+
+/**
+ * Prompt user to choose a registry when there is a conflict.
+ * Returns the chosen source index or -1 on invalid input.
+ */
+async function promptRegistryChoice(
+  packName: string,
+  sources: Array<{ registryName: string; version: string; priority: number }>,
+): Promise<number> {
+  console.log(`Pack "${packName}" found in multiple registries:`);
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i]!;
+    console.log(`  [${i + 1}] ${s.registryName} (v${s.version}, priority: ${s.priority})`);
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => {
+    rl.question("Select registry [1]: ", (ans) => {
+      rl.close();
+      resolve(ans.trim() || "1");
+    });
+  });
+
+  const choice = parseInt(answer, 10) - 1;
+  if (isNaN(choice) || choice < 0 || choice >= sources.length) return -1;
+  return choice;
+}
+
+/**
+ * Handle the conflict case where a pack exists in multiple registries.
+ * Returns true if the install was handled (or process exited).
+ */
+async function handlePackConflict(
+  conflict: {
+    sources: Array<{ registryName: string; version: string; priority: number }>;
+  },
+  packName: string,
+  version: string | undefined,
+  opts: { yes?: boolean },
+  db: ReturnType<typeof getDatabase>,
+  provider: EmbeddingProvider,
+  installOpts: {
+    batchSize?: number | undefined;
+    resumeFrom?: number | undefined;
+    concurrency?: number | undefined;
+  },
+  reporter: {
+    log(msg: string): void;
+    success(msg: string): void;
+    progress(c: number, t: number, l: string): void;
+    clearProgress(): void;
+  },
+): Promise<boolean> {
+  if (opts.yes) {
+    const names = conflict.sources.map((s) => s.registryName).join(", ");
+    reporter.log(
+      `Error: Pack "${packName}" found in multiple registries: ${names}. ` +
+        "Use --from-registry <name> to disambiguate.",
+    );
+    closeDatabase();
+    process.exit(1);
+    return true;
+  }
+
+  const choice = await promptRegistryChoice(packName, conflict.sources);
+  if (choice < 0) {
+    reporter.log("Invalid selection. Cancelled.");
+    closeDatabase();
+    process.exit(1);
+    return true;
+  }
+
+  const chosen = conflict.sources[choice]!;
+  const retryResult = resolvePackFromRegistries(packName, {
+    version,
+    registryName: chosen.registryName,
+    conflictResolution: { strategy: "explicit", registryName: chosen.registryName },
+  });
+
+  if (retryResult.resolved) {
+    await installResolvedPack(db, provider, retryResult.resolved, installOpts, reporter);
+    return true;
+  }
+
+  return false;
 }
 
 const program = new Command();
@@ -413,41 +624,13 @@ program
         } else {
           console.log(`\nShowing ${results.length} of ${totalCount} results:\n`);
           for (const r of results) {
-            console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
-            if (r.library) console.log(`  Library: ${r.library}`);
-            if (r.url) console.log(`  Source: ${r.url}`);
-
-            if (r.contextBefore && r.contextBefore.length > 0) {
-              for (const c of r.contextBefore) {
-                const preview = c.content.slice(0, 120);
-                console.log(`  ↑ ${preview}${c.content.length > 120 ? "..." : ""}`);
-              }
-              console.log("  ─ ─ ─");
-            }
-
-            console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
-
-            if (r.contextAfter && r.contextAfter.length > 0) {
-              console.log("  ─ ─ ─");
-              for (const c of r.contextAfter) {
-                const preview = c.content.slice(0, 120);
-                console.log(`  ↓ ${preview}${c.content.length > 120 ? "..." : ""}`);
-              }
-            }
+            printSearchResult(r);
           }
         }
 
         if (opts.save) {
-          const filters: Record<string, unknown> = {};
-          if (opts.topic) filters.topic = opts.topic;
-          if (opts.library) filters.library = opts.library;
-          if (opts.source) filters.source = opts.source;
-          const saved = createSavedSearch(
-            db,
-            opts.save,
-            query,
-            Object.keys(filters).length > 0 ? filters : undefined,
-          );
+          const filters = buildSearchFilters(opts);
+          const saved = createSavedSearch(db, opts.save, query, filters);
           console.log(`\n✓ Search saved as "${saved.name}" (${saved.id})`);
         }
       } finally {
@@ -508,11 +691,7 @@ program
         } else {
           console.log(`\nShowing ${chunks.length} related chunks:\n`);
           for (const r of chunks) {
-            console.log(`\n── ${r.title} (score: ${r.score.toFixed(2)}) ──`);
-            console.log(`  Chunk ID: ${r.chunkId}`);
-            if (r.library) console.log(`  Library: ${r.library}`);
-            if (r.url) console.log(`  Source: ${r.url}`);
-            console.log(`  ${r.content.slice(0, 200)}${r.content.length > 200 ? "..." : ""}`);
+            printRelatedChunk(r);
           }
         }
       } finally {
@@ -1730,6 +1909,8 @@ packCmd
         return;
       }
 
+      const installOpts = { batchSize, resumeFrom, concurrency };
+
       try {
         // Check if this is a local file or URL-based registry install
         const isLocalFile = nameOrPath.endsWith(".json") || nameOrPath.endsWith(".json.gz");
@@ -1754,96 +1935,21 @@ packCmd
           }
 
           if (conflict && !resolved) {
-            // Multiple registries have this pack — prompt or fail
-            if (opts.yes) {
-              const names = conflict.sources.map((s) => s.registryName).join(", ");
-              reporter.log(
-                `Error: Pack "${packName}" found in multiple registries: ${names}. ` +
-                  "Use --from-registry <name> to disambiguate.",
-              );
-              closeDatabase();
-              process.exit(1);
-              return;
-            }
-
-            // Interactive prompt
-            console.log(`Pack "${packName}" found in multiple registries:`);
-            for (let i = 0; i < conflict.sources.length; i++) {
-              const s = conflict.sources[i]!;
-              console.log(
-                `  [${i + 1}] ${s.registryName} (v${s.version}, priority: ${s.priority})`,
-              );
-            }
-
-            const rl = createInterface({ input: process.stdin, output: process.stdout });
-            const answer = await new Promise<string>((resolve) => {
-              rl.question("Select registry [1]: ", (ans) => {
-                rl.close();
-                resolve(ans.trim() || "1");
-              });
-            });
-
-            const choice = parseInt(answer, 10) - 1;
-            if (isNaN(choice) || choice < 0 || choice >= conflict.sources.length) {
-              reporter.log("Invalid selection. Cancelled.");
-              closeDatabase();
-              process.exit(1);
-              return;
-            }
-
-            const chosen = conflict.sources[choice]!;
-            const retryResult = resolvePackFromRegistries(packName, {
+            const handled = await handlePackConflict(
+              conflict,
+              packName,
               version,
-              registryName: chosen.registryName,
-              conflictResolution: { strategy: "explicit", registryName: chosen.registryName },
-            });
-
-            if (retryResult.resolved) {
-              // Verify checksum before installing from registry cache
-              await verifyResolvedPackChecksum(retryResult.resolved);
-              // Install from resolved local path
-              const result = await installPack(db, provider, retryResult.resolved.dataPath, {
-                batchSize,
-                resumeFrom,
-                concurrency,
-                onProgress: (current, total, docTitle) => {
-                  reporter.progress(current, total, docTitle);
-                },
-              });
-              reporter.clearProgress();
-              if (result.alreadyInstalled) {
-                reporter.log(`Pack "${result.packName}" is already installed.`);
-              } else {
-                const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
-                reporter.success(
-                  `Pack "${result.packName}" installed from ${chosen.registryName}: ${result.documentsInstalled} documents${errMsg}.`,
-                );
-              }
-              return;
-            }
+              opts,
+              db,
+              provider,
+              installOpts,
+              reporter,
+            );
+            if (handled) return;
           }
 
           if (resolved) {
-            // Verify checksum before installing from registry cache
-            await verifyResolvedPackChecksum(resolved);
-            // Install from resolved local path
-            const result = await installPack(db, provider, resolved.dataPath, {
-              batchSize,
-              resumeFrom,
-              concurrency,
-              onProgress: (current, total, docTitle) => {
-                reporter.progress(current, total, docTitle);
-              },
-            });
-            reporter.clearProgress();
-            if (result.alreadyInstalled) {
-              reporter.log(`Pack "${result.packName}" is already installed.`);
-            } else {
-              const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
-              reporter.success(
-                `Pack "${result.packName}" installed from ${resolved.registryName}: ${result.documentsInstalled} documents${errMsg}.`,
-              );
-            }
+            await installResolvedPack(db, provider, resolved, installOpts, reporter);
             return;
           }
 
@@ -1853,24 +1959,14 @@ packCmd
         // Original URL-based or local file install
         const result = await installPack(db, provider, nameOrPath, {
           registryUrl: opts.registry,
-          batchSize,
-          resumeFrom,
-          concurrency,
+          ...installOpts,
           onProgress: (current, total, docTitle) => {
             reporter.progress(current, total, docTitle);
           },
         });
 
         reporter.clearProgress();
-
-        if (result.alreadyInstalled) {
-          reporter.log(`Pack "${result.packName}" is already installed.`);
-        } else {
-          const errMsg = result.errors > 0 ? ` (${result.errors} errors)` : "";
-          reporter.success(
-            `Pack "${result.packName}" installed: ${result.documentsInstalled} documents${errMsg}.`,
-          );
-        }
+        reportInstallResult(result, reporter);
       } finally {
         closeDatabase();
       }
