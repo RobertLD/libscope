@@ -692,13 +692,11 @@ function extractOptionalString(
   key: string,
 ): string | null | undefined {
   if (body[key] === undefined) return undefined;
-  return typeof body[key] === "string" ? (body[key] as string) : null;
+  return typeof body[key] === "string" ? body[key] : null;
 }
 
 /** Parse metadata fields from an update request body. */
-function parseUpdateMetadata(
-  body: Record<string, unknown>,
-):
+function parseUpdateMetadata(body: Record<string, unknown>):
   | {
       library?: string | null;
       version?: string | null;
@@ -961,6 +959,27 @@ function isBulkPath(segments: string[]): boolean {
 // Segment-based route dispatcher (document/:id, links, searches, webhooks, bulk)
 // ---------------------------------------------------------------------------
 
+/** Dispatch single-document CRUD routes (GET/DELETE/PATCH /documents/:id). */
+async function dispatchDocumentCrudRoutes(
+  ctx: RouteContext,
+  docId: string,
+  method: string,
+): Promise<boolean> {
+  if (method === "GET") {
+    handleGetDocument(ctx, docId);
+    return true;
+  }
+  if (method === "DELETE") {
+    handleDeleteDocument(ctx, docId);
+    return true;
+  }
+  if (method === "PATCH") {
+    await handleUpdateDocument(ctx, docId);
+    return true;
+  }
+  return false;
+}
+
 /** Dispatch document-related segment routes (tags, suggest, CRUD, links). */
 async function dispatchDocumentRoutes(
   ctx: RouteContext,
@@ -978,18 +997,7 @@ async function dispatchDocumentRoutes(
     return true;
   }
   const docId = matchDocumentId(segments);
-  if (docId && method === "GET") {
-    handleGetDocument(ctx, docId);
-    return true;
-  }
-  if (docId && method === "DELETE") {
-    handleDeleteDocument(ctx, docId);
-    return true;
-  }
-  if (docId && method === "PATCH") {
-    await handleUpdateDocument(ctx, docId);
-    return true;
-  }
+  if (docId) return dispatchDocumentCrudRoutes(ctx, docId, method);
   const linksDocId = matchDocumentLinks(segments);
   if (linksDocId && method === "GET") {
     handleGetDocumentLinks(ctx, linksDocId);
@@ -1002,6 +1010,33 @@ async function dispatchDocumentRoutes(
   const linkId = matchLinkId(segments);
   if (linkId && method === "DELETE") {
     handleDeleteLink(ctx, linkId);
+    return true;
+  }
+  return false;
+}
+
+/** Dispatch webhook segment routes. */
+async function dispatchWebhookRoutes(
+  ctx: RouteContext,
+  segments: string[],
+  method: string,
+): Promise<boolean> {
+  if (isApiV1Path(segments, "webhooks") && method === "GET") {
+    handleListWebhooks(ctx);
+    return true;
+  }
+  if (isApiV1Path(segments, "webhooks") && method === "POST") {
+    await handleCreateWebhook(ctx);
+    return true;
+  }
+  const webhookTestId = matchWebhookTest(segments);
+  if (webhookTestId && method === "POST") {
+    await handleTestWebhook(ctx, webhookTestId);
+    return true;
+  }
+  const webhookId = matchWebhookId(segments);
+  if (webhookId && method === "DELETE") {
+    handleDeleteWebhook(ctx, webhookId);
     return true;
   }
   return false;
@@ -1036,25 +1071,7 @@ async function dispatchMiscSegmentRoutes(
     handleDeleteSavedSearch(ctx, savedSearchId);
     return true;
   }
-  if (isApiV1Path(segments, "webhooks") && method === "GET") {
-    handleListWebhooks(ctx);
-    return true;
-  }
-  if (isApiV1Path(segments, "webhooks") && method === "POST") {
-    await handleCreateWebhook(ctx);
-    return true;
-  }
-  const webhookTestId = matchWebhookTest(segments);
-  if (webhookTestId && method === "POST") {
-    await handleTestWebhook(ctx, webhookTestId);
-    return true;
-  }
-  const webhookId = matchWebhookId(segments);
-  if (webhookId && method === "DELETE") {
-    handleDeleteWebhook(ctx, webhookId);
-    return true;
-  }
-  return false;
+  return dispatchWebhookRoutes(ctx, segments, method);
 }
 
 async function dispatchSegmentRoutes(
