@@ -99,6 +99,62 @@ async function syncAllRegistriesAction(): Promise<void> {
   }
 }
 
+/** Format an error for console output. */
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Require git to be available, exiting if not. */
+async function requireGit(): Promise<void> {
+  if (!(await checkGitAvailable())) {
+    console.error("Error: git is not installed or not in PATH.");
+    process.exit(1);
+  }
+}
+
+/** Derive or validate the registry name from URL/option. Returns the name or exits. */
+function resolveRegistryName(url: string, explicitName?: string): string {
+  if (explicitName) return explicitName;
+
+  const derived = deriveNameFromUrl(url);
+  try {
+    validateRegistryName(derived);
+  } catch {
+    console.error(
+      `Error: Could not derive a valid registry name from URL (got "${derived}"). ` +
+        "Please provide a name using --name.",
+    );
+    process.exit(1);
+  }
+  return derived;
+}
+
+/** Parse and validate a non-negative integer option. Exits on invalid input. */
+function parseNonNegativeInt(value: string, optionName: string): number {
+  const n = parseInt(value, 10);
+  if (isNaN(n) || n < 0) {
+    console.error(`Error: "${optionName}" must be a non-negative integer.`);
+    process.exit(1);
+  }
+  return n;
+}
+
+/** Perform the initial clone/sync after adding a registry. */
+async function initialSync(name: string, url: string): Promise<void> {
+  const cacheDir = getRegistryCacheDir(name);
+  console.log(`Cloning registry to ${cacheDir}...`);
+  try {
+    await cloneRegistry(url, cacheDir);
+    const index = readIndex(cacheDir);
+    console.log(`Synced: ${index.length} pack(s) available.`);
+  } catch (syncErr) {
+    console.warn(
+      `Warning: initial sync failed (${formatError(syncErr)}). ` +
+        'You can retry with "libscope registry sync".',
+    );
+  }
+}
+
 /** Register all `registry` subcommands on the given Commander program. */
 export function registerRegistryCommands(program: Command): void {
   const registryCmd = program
@@ -123,80 +179,30 @@ export function registerRegistryCommands(program: Command): void {
           sync: boolean;
         },
       ) => {
-        if (!(await checkGitAvailable())) {
-          console.error("Error: git is not installed or not in PATH.");
-          process.exit(1);
-          return;
-        }
+        await requireGit();
 
-        let name: string;
-        if (opts.name) {
-          name = opts.name;
-        } else {
-          const derived = deriveNameFromUrl(url);
-          try {
-            validateRegistryName(derived);
-          } catch {
-            console.error(
-              `Error: Could not derive a valid registry name from URL (got "${derived}"). ` +
-                "Please provide a name using --name.",
-            );
-            process.exit(1);
-            return;
-          }
-          name = derived;
-        }
-        const priority = parseInt(opts.priority, 10);
-        const syncInterval = parseInt(opts.syncInterval, 10);
-
-        if (isNaN(priority) || priority < 0) {
-          console.error('Error: "--priority" must be a non-negative integer.');
-          process.exit(1);
-          return;
-        }
-        if (isNaN(syncInterval) || syncInterval < 0) {
-          console.error('Error: "--sync-interval" must be a non-negative integer.');
-          process.exit(1);
-          return;
-        }
+        const name = resolveRegistryName(url, opts.name);
+        const priority = parseNonNegativeInt(opts.priority, "--priority");
+        const syncInterval = parseNonNegativeInt(opts.syncInterval, "--sync-interval");
 
         try {
           validateRegistryName(name);
           validateGitUrl(url);
         } catch (err) {
-          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          console.error(`Error: ${formatError(err)}`);
           process.exit(1);
           return;
         }
 
         try {
-          addRegistry({
-            name,
-            url,
-            syncInterval,
-            priority,
-            lastSyncedAt: null,
-          });
-
+          addRegistry({ name, url, syncInterval, priority, lastSyncedAt: null });
           console.log(`Registry "${name}" added (${url}).`);
 
-          // Initial sync
           if (opts.sync !== false) {
-            const cacheDir = getRegistryCacheDir(name);
-            console.log(`Cloning registry to ${cacheDir}...`);
-            try {
-              await cloneRegistry(url, cacheDir);
-              const index = readIndex(cacheDir);
-              console.log(`Synced: ${index.length} pack(s) available.`);
-            } catch (syncErr) {
-              console.warn(
-                `Warning: initial sync failed (${syncErr instanceof Error ? syncErr.message : String(syncErr)}). ` +
-                  'You can retry with "libscope registry sync".',
-              );
-            }
+            await initialSync(name, url);
           }
         } catch (err) {
-          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          console.error(`Error: ${formatError(err)}`);
           process.exit(1);
         }
       },
@@ -226,14 +232,12 @@ export function registerRegistryCommands(program: Command): void {
         try {
           rmSync(cacheDir, { recursive: true, force: true });
         } catch (rmErr) {
-          console.warn(
-            `Warning: could not remove cache directory (${rmErr instanceof Error ? rmErr.message : String(rmErr)})`,
-          );
+          console.warn(`Warning: could not remove cache directory (${formatError(rmErr)})`);
         }
 
         console.log(`Registry "${name}" removed.`);
       } catch (err) {
-        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`Error: ${formatError(err)}`);
         process.exit(1);
       }
     });
@@ -274,11 +278,7 @@ export function registerRegistryCommands(program: Command): void {
     .command("sync [name]")
     .description("Sync one or all registries (git fetch + fast-forward)")
     .action(async (name?: string) => {
-      if (!(await checkGitAvailable())) {
-        console.error("Error: git is not installed or not in PATH.");
-        process.exit(1);
-        return;
-      }
+      await requireGit();
 
       if (name) {
         await syncSingleRegistry(name);
@@ -332,11 +332,7 @@ export function registerRegistryCommands(program: Command): void {
     .command("create <path>")
     .description("Initialize a new registry git repo with canonical folder structure")
     .action(async (rawPath: string) => {
-      if (!(await checkGitAvailable())) {
-        console.error("Error: git is not installed or not in PATH.");
-        process.exit(1);
-        return;
-      }
+      await requireGit();
 
       const resolved = pathResolve(rawPath);
       try {
@@ -344,7 +340,7 @@ export function registerRegistryCommands(program: Command): void {
         console.log(`Registry repo initialized at ${resolved}`);
         console.log("Push to a git remote, then add it with 'libscope registry add <url>'.");
       } catch (err) {
-        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`Error: ${formatError(err)}`);
         process.exit(1);
       }
     });
@@ -362,11 +358,7 @@ export function registerRegistryCommands(program: Command): void {
         packFile: string,
         opts: { registry: string; version?: string; message?: string; submit?: boolean },
       ) => {
-        if (!(await checkGitAvailable())) {
-          console.error("Error: git is not installed or not in PATH.");
-          process.exit(1);
-          return;
-        }
+        await requireGit();
 
         const resolved = pathResolve(packFile);
 
@@ -394,7 +386,7 @@ export function registerRegistryCommands(program: Command): void {
             );
           }
         } catch (err) {
-          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          console.error(`Error: ${formatError(err)}`);
           process.exit(1);
         }
       },
@@ -413,11 +405,7 @@ export function registerRegistryCommands(program: Command): void {
         packName: string,
         opts: { registry: string; version: string; message?: string; yes?: boolean },
       ) => {
-        if (!(await checkGitAvailable())) {
-          console.error("Error: git is not installed or not in PATH.");
-          process.exit(1);
-          return;
-        }
+        await requireGit();
 
         if (
           !(await confirmAction(
@@ -438,7 +426,7 @@ export function registerRegistryCommands(program: Command): void {
           });
           console.log(`Pack "${packName}@${opts.version}" unpublished from "${opts.registry}".`);
         } catch (err) {
-          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+          console.error(`Error: ${formatError(err)}`);
           process.exit(1);
         }
       },
