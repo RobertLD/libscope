@@ -216,7 +216,7 @@ function matchWebhookTest(segments: string[]): string | null {
 /** Parse an optional integer search param, returning NaN if absent/invalid. */
 function parseOptionalInt(url: URL, name: string): number {
   const raw = url.searchParams.get(name);
-  return raw ? parseInt(raw, 10) : NaN;
+  return raw ? Number.parseInt(raw, 10) : Number.NaN;
 }
 
 /** Parse an optional integer param clamped to [min, max], with a fallback default. */
@@ -686,40 +686,59 @@ function validateUrlMetadata(urlStr: string): string | null {
   return null;
 }
 
+/** Extract an optional string field from the body, returning null for non-strings. */
+function extractOptionalString(
+  body: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  if (body[key] === undefined) return undefined;
+  return typeof body[key] === "string" ? (body[key] as string) : null;
+}
+
+/** Parse metadata fields from an update request body. */
+function parseUpdateMetadata(
+  body: Record<string, unknown>,
+):
+  | {
+      library?: string | null;
+      version?: string | null;
+      url?: string | null;
+      topicId?: string | null;
+    }
+  | undefined {
+  const metadata: Record<string, string | null | undefined> = {};
+  const library = extractOptionalString(body, "library");
+  if (library !== undefined) metadata.library = library;
+  const version = extractOptionalString(body, "version");
+  if (version !== undefined) metadata.version = version;
+  const url = extractOptionalString(body, "url");
+  if (url !== undefined) metadata.url = url;
+  const topicId = extractOptionalString(body, "topicId");
+  if (topicId !== undefined) metadata.topicId = topicId;
+  return Object.keys(metadata).length > 0
+    ? (metadata as {
+        library?: string | null;
+        version?: string | null;
+        url?: string | null;
+        topicId?: string | null;
+      })
+    : undefined;
+}
+
 async function handleUpdateDocument(ctx: RouteContext, docId: string): Promise<void> {
   const b = await requireJsonBody(ctx.req, ctx.res);
   if (!b) return;
   const title = typeof b["title"] === "string" ? b["title"] : undefined;
   const content = typeof b["content"] === "string" ? b["content"] : undefined;
-  const metadata: Record<string, string | null | undefined> = {};
-  if (b["library"] !== undefined)
-    metadata.library = typeof b["library"] === "string" ? b["library"] : null;
-  if (b["version"] !== undefined)
-    metadata.version = typeof b["version"] === "string" ? b["version"] : null;
-  if (b["url"] !== undefined) metadata.url = typeof b["url"] === "string" ? b["url"] : null;
-  if (metadata.url) {
+  const metadata = parseUpdateMetadata(b);
+  if (metadata?.url) {
     const urlErr = validateUrlMetadata(metadata.url);
     if (urlErr) {
       sendError(ctx.res, 400, "VALIDATION_ERROR", urlErr);
       return;
     }
   }
-  if (b["topicId"] !== undefined)
-    metadata.topicId = typeof b["topicId"] === "string" ? b["topicId"] : null;
-
-  const doc = await updateDocument(ctx.db, ctx.provider, docId, {
-    title,
-    content,
-    metadata:
-      Object.keys(metadata).length > 0
-        ? (metadata as {
-            library?: string | null;
-            version?: string | null;
-            url?: string | null;
-            topicId?: string | null;
-          })
-        : undefined,
-  });
+  const doc = await updateDocument(ctx.db, ctx.provider, docId, { title, content, metadata });
   sendJson(ctx.res, 200, doc, elapsed(ctx.start));
 }
 
@@ -942,26 +961,22 @@ function isBulkPath(segments: string[]): boolean {
 // Segment-based route dispatcher (document/:id, links, searches, webhooks, bulk)
 // ---------------------------------------------------------------------------
 
-async function dispatchSegmentRoutes(
+/** Dispatch document-related segment routes (tags, suggest, CRUD, links). */
+async function dispatchDocumentRoutes(
   ctx: RouteContext,
   segments: string[],
   method: string,
 ): Promise<boolean> {
-  // Add tags to document
   const tagDocId = matchDocumentTags(segments);
   if (tagDocId && method === "POST") {
     await handleAddTagsToDocument(ctx, tagDocId);
     return true;
   }
-
-  // Suggest tags for a document
   const suggestDocId = matchDocumentSuggestTags(segments);
   if (suggestDocId && method === "GET") {
     handleSuggestTags(ctx, suggestDocId);
     return true;
   }
-
-  // Single document GET / DELETE / PATCH
   const docId = matchDocumentId(segments);
   if (docId && method === "GET") {
     handleGetDocument(ctx, docId);
@@ -975,8 +990,6 @@ async function dispatchSegmentRoutes(
     await handleUpdateDocument(ctx, docId);
     return true;
   }
-
-  // Document links: GET/POST /api/v1/documents/:id/links
   const linksDocId = matchDocumentLinks(segments);
   if (linksDocId && method === "GET") {
     handleGetDocumentLinks(ctx, linksDocId);
@@ -986,146 +999,106 @@ async function dispatchSegmentRoutes(
     await handleCreateDocumentLink(ctx, linksDocId);
     return true;
   }
-
-  // Delete link: DELETE /api/v1/links/:id
   const linkId = matchLinkId(segments);
   if (linkId && method === "DELETE") {
     handleDeleteLink(ctx, linkId);
     return true;
   }
+  return false;
+}
 
-  // Saved searches: run must be matched before generic :id routes
+/** Dispatch search, bulk, and webhook segment routes. */
+async function dispatchMiscSegmentRoutes(
+  ctx: RouteContext,
+  segments: string[],
+  method: string,
+): Promise<boolean> {
   const searchRunId = matchSearchRun(segments);
   if (searchRunId && method === "POST") {
     await handleRunSavedSearch(ctx, searchRunId);
     return true;
   }
-
-  // Saved searches: list + create
-  if (isApiV1Path(segments, "searches")) {
-    if (method === "GET") {
-      handleListSavedSearches(ctx);
-      return true;
-    }
-    if (method === "POST") {
-      await handleCreateSavedSearch(ctx);
-      return true;
-    }
+  if (isApiV1Path(segments, "searches") && method === "GET") {
+    handleListSavedSearches(ctx);
+    return true;
   }
-
-  // Bulk operations: POST /api/v1/bulk/:operation
+  if (isApiV1Path(segments, "searches") && method === "POST") {
+    await handleCreateSavedSearch(ctx);
+    return true;
+  }
   if (isBulkPath(segments) && method === "POST") {
     const operation = segments[3] as string;
     await handleBulkOperation(ctx, operation);
     return true;
   }
-
-  // Saved searches: delete
   const savedSearchId = matchSearchId(segments);
   if (savedSearchId && method === "DELETE") {
     handleDeleteSavedSearch(ctx, savedSearchId);
     return true;
   }
-
-  // Webhooks: list + create
-  if (isApiV1Path(segments, "webhooks")) {
-    if (method === "GET") {
-      handleListWebhooks(ctx);
-      return true;
-    }
-    if (method === "POST") {
-      await handleCreateWebhook(ctx);
-      return true;
-    }
+  if (isApiV1Path(segments, "webhooks") && method === "GET") {
+    handleListWebhooks(ctx);
+    return true;
   }
-
-  // Webhooks: test ping
+  if (isApiV1Path(segments, "webhooks") && method === "POST") {
+    await handleCreateWebhook(ctx);
+    return true;
+  }
   const webhookTestId = matchWebhookTest(segments);
   if (webhookTestId && method === "POST") {
     await handleTestWebhook(ctx, webhookTestId);
     return true;
   }
-
-  // Webhooks: delete
   const webhookId = matchWebhookId(segments);
   if (webhookId && method === "DELETE") {
     handleDeleteWebhook(ctx, webhookId);
     return true;
   }
-
   return false;
+}
+
+async function dispatchSegmentRoutes(
+  ctx: RouteContext,
+  segments: string[],
+  method: string,
+): Promise<boolean> {
+  const docHandled = await dispatchDocumentRoutes(ctx, segments, method);
+  if (docHandled) return true;
+  return dispatchMiscSegmentRoutes(ctx, segments, method);
 }
 
 // ---------------------------------------------------------------------------
 // Pathname-based route dispatcher (simple /api/v1/... paths)
 // ---------------------------------------------------------------------------
 
+/** Route table: maps "METHOD /path" → handler. */
+const PATHNAME_ROUTES: Record<string, (ctx: RouteContext) => void | Promise<void>> = {
+  "GET /openapi.json": handleOpenApiSpec,
+  "GET /api/v1/health": handleHealthCheck,
+  "GET /api/v1/search": handleSearch,
+  "POST /api/v1/batch-search": handleBatchSearch,
+  "GET /api/v1/documents": handleListDocuments,
+  "POST /api/v1/documents": handleCreateDocument,
+  "POST /api/v1/documents/url": handleIndexFromUrl,
+  "POST /api/v1/ask": handleAsk,
+  "GET /api/v1/topics": handleListTopics,
+  "POST /api/v1/topics": handleCreateTopic,
+  "GET /api/v1/tags": handleListTags,
+  "GET /api/v1/analytics/searches": handleSearchAnalytics,
+  "GET /api/v1/connectors/status": handleConnectorStatus,
+  "GET /api/v1/connectors/schedules": handleScheduleStatus,
+  "GET /api/v1/stats": handleStats,
+};
+
 async function dispatchPathnameRoutes(
   ctx: RouteContext,
   pathname: string,
   method: string,
 ): Promise<boolean> {
-  if (pathname === "/openapi.json" && method === "GET") {
-    handleOpenApiSpec(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/health" && method === "GET") {
-    handleHealthCheck(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/search" && method === "GET") {
-    await handleSearch(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/batch-search" && method === "POST") {
-    await handleBatchSearch(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/documents" && method === "GET") {
-    handleListDocuments(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/documents" && method === "POST") {
-    await handleCreateDocument(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/documents/url" && method === "POST") {
-    await handleIndexFromUrl(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/ask" && method === "POST") {
-    await handleAsk(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/topics" && method === "GET") {
-    handleListTopics(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/topics" && method === "POST") {
-    await handleCreateTopic(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/tags" && method === "GET") {
-    handleListTags(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/analytics/searches" && method === "GET") {
-    handleSearchAnalytics(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/connectors/status" && method === "GET") {
-    handleConnectorStatus(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/connectors/schedules" && method === "GET") {
-    handleScheduleStatus(ctx);
-    return true;
-  }
-  if (pathname === "/api/v1/stats" && method === "GET") {
-    handleStats(ctx);
-    return true;
-  }
-  return false;
+  const handler = PATHNAME_ROUTES[`${method} ${pathname}`];
+  if (!handler) return false;
+  await handler(ctx);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
