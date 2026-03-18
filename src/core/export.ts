@@ -139,9 +139,13 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
           `INSERT OR REPLACE INTO webhooks (id, url, events, active, created_at, last_triggered_at, failure_count)
            VALUES (@id, @url, @events, @active, @created_at, @last_triggered_at, @failure_count)`,
         );
-      } catch {
-        // webhooks table may not exist in older schema versions
-        log.debug("Webhooks table not present, skipping webhook import");
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("no such table")) {
+          log.debug({ err }, "Webhooks table not present, skipping webhook import");
+        } else {
+          log.warn({ err }, "Failed to prepare webhook import statement, skipping webhooks");
+        }
       }
     }
 
