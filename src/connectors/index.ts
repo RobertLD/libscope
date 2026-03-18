@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError } from "../errors.js";
@@ -35,6 +35,11 @@ export function saveConnectorConfig(config: Record<string, unknown>): void {
   const configPath = getConfigPath();
   try {
     writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    try {
+      chmodSync(configPath, 0o600);
+    } catch {
+      // chmod may fail in test environments or non-POSIX systems
+    }
   } catch (err) {
     throw new ConfigError("Failed to save connector config", err);
   }
@@ -77,7 +82,7 @@ const CONNECTORS_DIR = join(homedir(), ".libscope", "connectors");
 
 function ensureConnectorsDir(): void {
   if (!existsSync(CONNECTORS_DIR)) {
-    mkdirSync(CONNECTORS_DIR, { recursive: true });
+    mkdirSync(CONNECTORS_DIR, { recursive: true, mode: 0o700 });
   }
 }
 
@@ -93,6 +98,11 @@ export function saveNamedConnectorConfig(name: string, config: object): void {
   ensureConnectorsDir();
   const filePath = join(CONNECTORS_DIR, `${name}.json`);
   writeFileSync(filePath, JSON.stringify(config, null, 2), "utf-8");
+  try {
+    chmodSync(filePath, 0o600);
+  } catch {
+    // chmod may fail in test environments or non-POSIX systems
+  }
   getLogger().info({ connector: name }, "Connector config saved");
 }
 

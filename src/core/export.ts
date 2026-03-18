@@ -131,6 +131,20 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
        VALUES (@id, @document_id, @chunk_id, @rating, @feedback, @suggested_correction, @rated_by, @created_at)`,
     );
 
+    // Webhooks are optional in backups (added later, secrets are redacted on export)
+    let insertWebhook: ReturnType<Database.Database["prepare"]> | null = null;
+    if (Array.isArray(parsed.webhooks) && parsed.webhooks.length > 0) {
+      try {
+        insertWebhook = db.prepare(
+          `INSERT OR REPLACE INTO webhooks (id, url, events, active, created_at, last_triggered_at, failure_count)
+           VALUES (@id, @url, @events, @active, @created_at, @last_triggered_at, @failure_count)`,
+        );
+      } catch {
+        // webhooks table may not exist in older schema versions
+        log.debug("Webhooks table not present, skipping webhook import");
+      }
+    }
+
     const importAll = db.transaction(() => {
       for (const topic of parsed.topics) insertTopic.run(topic);
       for (const doc of parsed.documents) {
@@ -140,6 +154,17 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
       }
       for (const chunk of parsed.chunks) insertChunk.run(chunk);
       for (const rating of parsed.ratings) insertRating.run(rating);
+
+      // Import webhooks (without secrets — they are redacted on export)
+      if (insertWebhook && parsed.webhooks) {
+        for (const webhook of parsed.webhooks) {
+          // Strip redacted secret — pass all fields except secret
+          const cleaned = Object.fromEntries(
+            Object.entries(webhook).filter(([key]) => key !== "secret"),
+          );
+          insertWebhook.run(cleaned);
+        }
+      }
     });
 
     importAll();

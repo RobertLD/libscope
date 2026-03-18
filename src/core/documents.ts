@@ -79,8 +79,12 @@ export function deleteDocument(db: Database.Database, documentId: string): void 
     `,
     ).run(documentId);
   } catch (err: unknown) {
-    // chunk_embeddings table may not exist (sqlite-vec not loaded)
-    getLogger().debug({ err, documentId }, "Skipped chunk_embeddings cleanup");
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("no such table")) {
+      getLogger().debug({ err, documentId }, "chunk_embeddings table not present, skipping cleanup");
+    } else {
+      getLogger().warn({ err, documentId }, "Unexpected error cleaning up chunk_embeddings");
+    }
   }
 
   const result = db.prepare("DELETE FROM documents WHERE id = ?").run(documentId);
