@@ -232,6 +232,102 @@ function getBlockText(block: NotionBlock): string {
   return extractRichText(richText);
 }
 
+/** Convert a single Notion block to its markdown line(s). Does not handle children. */
+function blockToMarkdownLine(block: NotionBlock, text: string): string | undefined {
+  switch (block.type) {
+    case "paragraph":
+      return text;
+    case "heading_1":
+      return `# ${text}`;
+    case "heading_2":
+      return `## ${text}`;
+    case "heading_3":
+      return `### ${text}`;
+    case "bulleted_list_item":
+      return `- ${text}`;
+    case "numbered_list_item":
+      return `1. ${text}`;
+    case "toggle":
+      return text;
+    case "quote":
+      return `> ${text}`;
+    case "divider":
+      return "---";
+    case "table_row":
+      return undefined; // Handled by table
+    default:
+      return text || undefined;
+  }
+}
+
+/** Convert a Notion block with type-specific data to markdown. */
+function convertSpecialBlock(block: NotionBlock, text: string): string | undefined {
+  switch (block.type) {
+    case "to_do": {
+      const data = block["to_do"] as { checked?: boolean } | undefined;
+      const checked = data?.checked ? "x" : " ";
+      return `- [${checked}] ${text}`;
+    }
+    case "code": {
+      const data = block["code"] as { language?: string } | undefined;
+      const lang = data?.language ?? "";
+      return `\`\`\`${lang}\n${text}\n\`\`\``;
+    }
+    case "callout": {
+      const data = block["callout"] as { icon?: { emoji?: string } } | undefined;
+      const emoji = data?.icon?.emoji ?? "";
+      return `> ${emoji} ${text}`.trim();
+    }
+    case "image": {
+      const data = block["image"] as
+        | {
+            type?: string;
+            file?: { url?: string };
+            external?: { url?: string };
+            caption?: NotionRichText[];
+          }
+        | undefined;
+      const url = data?.type === "external" ? data?.external?.url : data?.file?.url;
+      const caption = extractRichText(data?.caption);
+      return url ? `![${caption}](${url})` : "[image]";
+    }
+    case "bookmark": {
+      const data = block["bookmark"] as { url?: string; caption?: NotionRichText[] } | undefined;
+      const caption = extractRichText(data?.caption);
+      const url = data?.url ?? "";
+      return `[${caption || url}](${url})`;
+    }
+    case "child_page": {
+      const data = block["child_page"] as { title?: string } | undefined;
+      return `[${data?.title ?? "Untitled"}](notion://page/${block.id})`;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** Render table rows from children blocks. */
+function renderTableRows(children: NotionBlock[]): string[] {
+  const lines: string[] = [];
+  for (const row of children) {
+    const rowData = row["table_row"] as { cells?: NotionRichText[][] } | undefined;
+    if (!rowData?.cells) continue;
+    const cells = rowData.cells.map((cell) => extractRichText(cell));
+    lines.push(`| ${cells.join(" | ")} |`);
+  }
+  return lines;
+}
+
+/** Render indented child content for non-table blocks. */
+function renderChildContent(children: NotionBlock[]): string | undefined {
+  const childContent = convertNotionBlocks(children);
+  if (!childContent) return undefined;
+  return childContent
+    .split("\n")
+    .map((l) => `  ${l}`)
+    .join("\n");
+}
+
 /** Convert an array of Notion blocks to markdown. */
 export function convertNotionBlocks(blocks: NotionBlock[]): string {
   const lines: string[] = [];
@@ -240,129 +336,26 @@ export function convertNotionBlocks(blocks: NotionBlock[]): string {
     const text = getBlockText(block);
     const children = (block as Record<string, unknown>)["children"] as NotionBlock[] | undefined;
 
-    switch (block.type) {
-      case "paragraph":
-        lines.push(text);
-        break;
-
-      case "heading_1":
-        lines.push(`# ${text}`);
-        break;
-
-      case "heading_2":
-        lines.push(`## ${text}`);
-        break;
-
-      case "heading_3":
-        lines.push(`### ${text}`);
-        break;
-
-      case "bulleted_list_item":
-        lines.push(`- ${text}`);
-        break;
-
-      case "numbered_list_item":
-        lines.push(`1. ${text}`);
-        break;
-
-      case "to_do": {
-        const data = block["to_do"] as { checked?: boolean } | undefined;
-        const checked = data?.checked ? "x" : " ";
-        lines.push(`- [${checked}] ${text}`);
-        break;
-      }
-
-      case "toggle":
-        lines.push(text);
-        break;
-
-      case "code": {
-        const data = block["code"] as { language?: string } | undefined;
-        const lang = data?.language ?? "";
-        lines.push(`\`\`\`${lang}\n${text}\n\`\`\``);
-        break;
-      }
-
-      case "quote":
-        lines.push(`> ${text}`);
-        break;
-
-      case "callout": {
-        const data = block["callout"] as { icon?: { emoji?: string } } | undefined;
-        const emoji = data?.icon?.emoji ?? "";
-        lines.push(`> ${emoji} ${text}`.trim());
-        break;
-      }
-
-      case "divider":
-        lines.push("---");
-        break;
-
-      case "table": {
-        if (children) {
-          for (const row of children) {
-            const rowData = row["table_row"] as { cells?: NotionRichText[][] } | undefined;
-            if (rowData?.cells) {
-              const cells = rowData.cells.map((cell) => extractRichText(cell));
-              lines.push(`| ${cells.join(" | ")} |`);
-            }
-          }
-        }
-        break;
-      }
-
-      case "table_row":
-        // Handled by table
-        break;
-
-      case "image": {
-        const data = block["image"] as
-          | {
-              type?: string;
-              file?: { url?: string };
-              external?: { url?: string };
-              caption?: NotionRichText[];
-            }
-          | undefined;
-        const url = data?.type === "external" ? data?.external?.url : data?.file?.url;
-        const caption = extractRichText(data?.caption);
-        if (url) {
-          lines.push(`![${caption}](${url})`);
-        } else {
-          lines.push("[image]");
-        }
-        break;
-      }
-
-      case "bookmark": {
-        const data = block["bookmark"] as { url?: string; caption?: NotionRichText[] } | undefined;
-        const caption = extractRichText(data?.caption);
-        const url = data?.url ?? "";
-        lines.push(`[${caption || url}](${url})`);
-        break;
-      }
-
-      case "child_page": {
-        const data = block["child_page"] as { title?: string } | undefined;
-        lines.push(`[${data?.title ?? "Untitled"}](notion://page/${block.id})`);
-        break;
-      }
-
-      default:
-        if (text) lines.push(text);
-        break;
+    // Handle table specially (children are inline rows)
+    if (block.type === "table" && children) {
+      lines.push(...renderTableRows(children));
+      continue;
     }
 
-    // Render nested children (except table children which are handled inline)
+    // Try special blocks first (ones needing type-specific data extraction)
+    const specialLine = convertSpecialBlock(block, text);
+    if (specialLine !== undefined) {
+      lines.push(specialLine);
+    } else {
+      // Simple blocks that just need text formatting
+      const simpleLine = blockToMarkdownLine(block, text);
+      if (simpleLine !== undefined) lines.push(simpleLine);
+    }
+
+    // Render nested children (except table children which are handled above)
     if (children && block.type !== "table") {
-      const childContent = convertNotionBlocks(children);
-      if (childContent) {
-        const indented = childContent
-          .split("\n")
-          .map((l) => `  ${l}`)
-          .join("\n");
-        lines.push(indented);
-      }
+      const indented = renderChildContent(children);
+      if (indented) lines.push(indented);
     }
   }
 
@@ -385,35 +378,106 @@ function extractTitle(result: NotionSearchResult): string {
   return "Untitled";
 }
 
+/** Convert a single Notion property to tag string(s). Returns empty array for unsupported types. */
+function propertyToTags(key: string, prop: NotionProperty): string[] {
+  if (prop.type === "select" && prop.select) return [`${key}:${prop.select.name}`];
+  if (prop.type === "multi_select" && prop.multi_select) {
+    return prop.multi_select.map((s) => `${key}:${s.name}`);
+  }
+  if (prop.type === "date" && prop.date) return [`${key}:${prop.date.start}`];
+  if (prop.type === "rich_text" && prop.rich_text) {
+    const text = extractRichText(prop.rich_text as unknown as NotionRichText[]);
+    return text ? [`${key}:${text}`] : [];
+  }
+  return [];
+}
+
 function extractPropertyMetadata(properties: Record<string, NotionProperty>): string[] {
   const tags: string[] = [];
   for (const [key, prop] of Object.entries(properties)) {
-    if (prop.type === "title") continue; // Skip title, it's used as the document title
-    switch (prop.type) {
-      case "select":
-        if (prop.select) tags.push(`${key}:${prop.select.name}`);
-        break;
-      case "multi_select":
-        if (prop.multi_select) {
-          for (const s of prop.multi_select) {
-            tags.push(`${key}:${s.name}`);
-          }
-        }
-        break;
-      case "date":
-        if (prop.date) tags.push(`${key}:${prop.date.start}`);
-        break;
-      case "rich_text":
-        if (prop.rich_text) {
-          const text = extractRichText(prop.rich_text as unknown as NotionRichText[]);
-          if (text) tags.push(`${key}:${text}`);
-        }
-        break;
-      default:
-        break;
-    }
+    if (prop.type === "title") continue;
+    tags.push(...propertyToTags(key, prop));
   }
   return tags;
+}
+
+/** Delete any existing documents for a Notion page URL and re-index. */
+async function upsertNotionDocument(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  pageId: string,
+  title: string,
+  content: string,
+): Promise<void> {
+  const existingDocs = db
+    .prepare("SELECT id FROM documents WHERE url = ?")
+    .all(`notion://page/${pageId}`) as Array<{ id: string }>;
+  for (const doc of existingDocs) {
+    deleteDocument(db, doc.id);
+  }
+
+  await indexDocument(db, provider, {
+    title,
+    content,
+    sourceType: "manual",
+    url: `notion://page/${pageId}`,
+    submittedBy: "crawler",
+  });
+}
+
+/** Sync a single Notion page. Returns true if indexed, false if skipped. */
+async function syncNotionPage(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  item: NotionSearchResult,
+): Promise<boolean> {
+  const log = getLogger();
+
+  // Database rows are indexed via their parent database
+  if (item.parent?.type === "database_id") return false;
+
+  const title = extractTitle(item);
+  const blocks = await fetchBlockChildren(token, item.id);
+  const content = convertNotionBlocks(blocks);
+
+  if (!content.trim()) {
+    log.debug({ id: item.id, title }, "Skipping empty page");
+    return false;
+  }
+
+  await upsertNotionDocument(db, provider, item.id, title, content);
+  log.debug({ id: item.id, title }, "Indexed Notion page");
+  return true;
+}
+
+/** Sync a single Notion database and all its rows. */
+async function syncNotionDatabase(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  item: NotionSearchResult,
+  excludeSet: Set<string>,
+): Promise<void> {
+  const log = getLogger();
+  const dbTitle = extractTitle(item);
+  const rows = await queryDatabase(token, item.id);
+
+  for (const row of rows) {
+    if (excludeSet.has(row.id)) continue;
+
+    const rowTitle = extractTitle(row);
+    const tags = row.properties ? extractPropertyMetadata(row.properties) : [];
+    const metadataSection = tags.length > 0 ? `\n\nMetadata: ${tags.join(", ")}` : "";
+
+    const blocks = await fetchBlockChildren(token, row.id);
+    const content = convertNotionBlocks(blocks);
+    const fullContent = `# ${rowTitle}${metadataSection}\n\n${content}`;
+
+    await upsertNotionDocument(db, provider, row.id, `${dbTitle} — ${rowTitle}`, fullContent);
+  }
+
+  log.debug({ id: item.id, title: dbTitle, rows: rows.length }, "Indexed Notion database");
 }
 
 /** Sync pages and databases from Notion into the knowledge base. */
@@ -451,73 +515,11 @@ export async function syncNotion(
 
       try {
         if (item.object === "page") {
-          // Check if this page is a database row (has a database parent)
-          // Database rows are indexed when their parent database is processed
-          if (item.parent?.type === "database_id") {
-            continue;
-          }
-
-          const title = extractTitle(item);
-          const blocks = await fetchBlockChildren(config.token, item.id);
-          const content = convertNotionBlocks(blocks);
-
-          if (!content.trim()) {
-            log.debug({ id: item.id, title }, "Skipping empty page");
-            continue;
-          }
-
-          // Delete existing document for this Notion page before re-indexing
-          const existingDocs = db
-            .prepare("SELECT id FROM documents WHERE url = ?")
-            .all(`notion://page/${item.id}`) as Array<{ id: string }>;
-          for (const doc of existingDocs) {
-            deleteDocument(db, doc.id);
-          }
-
-          await indexDocument(db, provider, {
-            title,
-            content,
-            sourceType: "manual",
-            url: `notion://page/${item.id}`,
-            submittedBy: "crawler",
-          });
-
-          result.pagesIndexed++;
-          log.debug({ id: item.id, title }, "Indexed Notion page");
+          const indexed = await syncNotionPage(db, provider, config.token, item);
+          if (indexed) result.pagesIndexed++;
         } else if (item.object === "database") {
-          const dbTitle = extractTitle(item);
-          const rows = await queryDatabase(config.token, item.id);
-
-          for (const row of rows) {
-            if (excludeSet.has(row.id)) continue;
-
-            const rowTitle = extractTitle(row);
-            const tags = row.properties ? extractPropertyMetadata(row.properties) : [];
-            const metadataSection = tags.length > 0 ? `\n\nMetadata: ${tags.join(", ")}` : "";
-
-            // Fetch row page content
-            const blocks = await fetchBlockChildren(config.token, row.id);
-            const content = convertNotionBlocks(blocks);
-            const fullContent = `# ${rowTitle}${metadataSection}\n\n${content}`;
-
-            const existingDocs = db
-              .prepare("SELECT id FROM documents WHERE url = ?")
-              .all(`notion://page/${row.id}`) as Array<{ id: string }>;
-            for (const doc of existingDocs) {
-              deleteDocument(db, doc.id);
-            }
-
-            await indexDocument(db, provider, {
-              title: `${dbTitle} — ${rowTitle}`,
-              content: fullContent,
-              sourceType: "manual",
-              url: `notion://page/${row.id}`,
-              submittedBy: "crawler",
-            });
-          }
-
+          await syncNotionDatabase(db, provider, config.token, item, excludeSet);
           result.databasesIndexed++;
-          log.debug({ id: item.id, title: dbTitle, rows: rows.length }, "Indexed Notion database");
         }
       } catch (err) {
         const title = extractTitle(item);

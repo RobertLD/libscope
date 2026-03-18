@@ -309,6 +309,195 @@ async function buildThreadDocument(
   return `# Thread in #${channelName}\n\n${lines.join("\n\n---\n\n")}`;
 }
 
+/** Collect user IDs from a message's user field and @-mentions in text. */
+function collectUserIds(messages: SlackMessage[], out: Set<string>): void {
+  for (const msg of messages) {
+    if (msg.user) out.add(msg.user);
+    if (!msg.text) continue;
+    for (const match of msg.text.matchAll(/<@(U[A-Z0-9]+)>/g)) {
+      if (match[1]) out.add(match[1]);
+    }
+  }
+}
+
+/** Fetch all thread replies for a list of thread parents and collect user IDs. */
+async function fetchAllThreadReplies(
+  token: string,
+  channelId: string,
+  threadParents: SlackMessage[],
+  userIds: Set<string>,
+): Promise<Map<string, SlackMessage[]>> {
+  const threadRepliesMap = new Map<string, SlackMessage[]>();
+  for (const threadParent of threadParents) {
+    const replies = await fetchThreadReplies(token, channelId, threadParent.ts);
+    threadRepliesMap.set(threadParent.ts, replies);
+    collectUserIds(replies, userIds);
+  }
+  return threadRepliesMap;
+}
+
+/** Batch-resolve all user IDs that are not already cached. */
+async function batchResolveUsers(token: string, userIds: Set<string>): Promise<void> {
+  for (const userId of userIds) {
+    if (!userCache.has(userId)) {
+      await resolveUser(token, userId);
+    }
+  }
+}
+
+/** Index a single standalone message. Returns true if indexed. */
+async function indexStandaloneMessage(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  channelName: string,
+  msg: SlackMessage,
+): Promise<boolean> {
+  if (!msg.text) return false;
+
+  const username = msg.user ? await resolveUser(token, msg.user) : "unknown";
+  const text = convertSlackMrkdwn(await resolveUserMentions(msg.text, token));
+  const title = `#${channelName} — ${username}: ${truncateTitle(msg.text)}`;
+
+  await indexDocument(db, provider, {
+    title,
+    content: `**${username}** (${formatTimestamp(msg.ts)}):\n${text}`,
+    sourceType: "manual",
+    url: `slack://${channelName}/${msg.ts}`,
+    submittedBy: "crawler",
+  });
+  return true;
+}
+
+/** Index threads in aggregate mode: one document per thread. */
+async function indexThreadsAggregate(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  channelName: string,
+  threadParents: SlackMessage[],
+  threadRepliesMap: Map<string, SlackMessage[]>,
+): Promise<number> {
+  let threadsIndexed = 0;
+  for (const threadParent of threadParents) {
+    const replies = threadRepliesMap.get(threadParent.ts) ?? [];
+    const content = await buildThreadDocument(token, channelName, replies);
+    const parentText = threadParent.text ?? "";
+    const title = `#${channelName} thread: ${truncateTitle(parentText)}`;
+
+    await indexDocument(db, provider, {
+      title,
+      content,
+      sourceType: "manual",
+      url: `slack://${channelName}/thread/${threadParent.ts}`,
+      submittedBy: "crawler",
+    });
+    threadsIndexed++;
+  }
+  return threadsIndexed;
+}
+
+/** Index threads in separate mode: one document per reply. Returns [messagesIndexed, threadsIndexed]. */
+async function indexThreadsSeparate(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  channelName: string,
+  threadParents: SlackMessage[],
+  threadRepliesMap: Map<string, SlackMessage[]>,
+): Promise<[number, number]> {
+  let messagesIndexed = 0;
+  let threadsIndexed = 0;
+  for (const threadParent of threadParents) {
+    const replies = threadRepliesMap.get(threadParent.ts) ?? [];
+    for (const reply of replies) {
+      if (!reply.text) continue;
+
+      const username = reply.user ? await resolveUser(token, reply.user) : "unknown";
+      const text = convertSlackMrkdwn(await resolveUserMentions(reply.text, token));
+      const title = `#${channelName} thread reply — ${username}: ${truncateTitle(reply.text)}`;
+
+      await indexDocument(db, provider, {
+        title,
+        content: `**${username}** (${formatTimestamp(reply.ts)}):\n${text}`,
+        sourceType: "manual",
+        url: `slack://${channelName}/thread/${threadParent.ts}/${reply.ts}`,
+        submittedBy: "crawler",
+      });
+      messagesIndexed++;
+    }
+    threadsIndexed++;
+  }
+  return [messagesIndexed, threadsIndexed];
+}
+
+/** Classify messages into thread parents and standalone messages. */
+function classifyMessages(messages: SlackMessage[]): {
+  threadParents: SlackMessage[];
+  standaloneMessages: SlackMessage[];
+} {
+  const threadParents = messages.filter(
+    (m) => m.reply_count != null && m.reply_count > 0 && !m.subtype,
+  );
+  const standaloneMessages = messages.filter(
+    (m) => (m.reply_count == null || m.reply_count === 0) && !m.thread_ts && !m.subtype,
+  );
+  return { threadParents, standaloneMessages };
+}
+
+/** Process a single channel: fetch messages, resolve users, and index documents. */
+async function syncChannel(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: SlackConfig,
+  channel: SlackChannel,
+  result: SlackSyncResult,
+): Promise<void> {
+  const oldest = config.lastSync ?? undefined;
+  const messages = await fetchMessages(config.token, channel.id, oldest);
+
+  const { threadParents, standaloneMessages } = classifyMessages(messages);
+
+  const allUserIds = new Set<string>();
+  collectUserIds([...standaloneMessages, ...threadParents], allUserIds);
+
+  const threadRepliesMap = await fetchAllThreadReplies(
+    config.token,
+    channel.id,
+    threadParents,
+    allUserIds,
+  );
+
+  await batchResolveUsers(config.token, allUserIds);
+
+  for (const msg of standaloneMessages) {
+    const indexed = await indexStandaloneMessage(db, provider, config.token, channel.name, msg);
+    if (indexed) result.messagesIndexed++;
+  }
+
+  if (config.threadMode === "aggregate") {
+    result.threadsIndexed += await indexThreadsAggregate(
+      db,
+      provider,
+      config.token,
+      channel.name,
+      threadParents,
+      threadRepliesMap,
+    );
+  } else {
+    const [msgs, threads] = await indexThreadsSeparate(
+      db,
+      provider,
+      config.token,
+      channel.name,
+      threadParents,
+      threadRepliesMap,
+    );
+    result.messagesIndexed += msgs;
+    result.threadsIndexed += threads;
+  }
+}
+
 export async function syncSlack(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -345,110 +534,7 @@ export async function syncSlack(
     for (const channel of channels) {
       try {
         log.info({ channel: channel.name }, "Syncing channel");
-
-        const oldest = config.lastSync ?? undefined;
-        const messages = await fetchMessages(config.token, channel.id, oldest);
-
-        // Separate thread parents from standalone messages
-        const threadParents = messages.filter(
-          (m) => m.reply_count != null && m.reply_count > 0 && !m.subtype,
-        );
-        const standaloneMessages = messages.filter(
-          (m) => (m.reply_count == null || m.reply_count === 0) && !m.thread_ts && !m.subtype,
-        );
-
-        // Pre-collect all user IDs from messages and thread replies to batch-resolve
-        const allUserIds = new Set<string>();
-        for (const msg of [...standaloneMessages, ...threadParents]) {
-          if (msg.user) allUserIds.add(msg.user);
-          // Collect user mentions from message text
-          if (msg.text) {
-            for (const match of msg.text.matchAll(/<@(U[A-Z0-9]+)>/g)) {
-              if (match[1]) allUserIds.add(match[1]);
-            }
-          }
-        }
-
-        // Fetch thread replies and collect their user IDs too
-        const threadRepliesMap = new Map<string, SlackMessage[]>();
-        for (const threadParent of threadParents) {
-          const replies = await fetchThreadReplies(config.token, channel.id, threadParent.ts);
-          threadRepliesMap.set(threadParent.ts, replies);
-          for (const reply of replies) {
-            if (reply.user) allUserIds.add(reply.user);
-            if (reply.text) {
-              for (const match of reply.text.matchAll(/<@(U[A-Z0-9]+)>/g)) {
-                if (match[1]) allUserIds.add(match[1]);
-              }
-            }
-          }
-        }
-
-        // Batch resolve all user IDs upfront
-        for (const userId of allUserIds) {
-          if (!userCache.has(userId)) {
-            await resolveUser(config.token, userId);
-          }
-        }
-
-        // Index standalone messages
-        for (const msg of standaloneMessages) {
-          if (!msg.text) continue;
-
-          const username = msg.user ? await resolveUser(config.token, msg.user) : "unknown";
-          const text = convertSlackMrkdwn(await resolveUserMentions(msg.text, config.token));
-          const title = `#${channel.name} — ${username}: ${truncateTitle(msg.text)}`;
-
-          await indexDocument(db, provider, {
-            title,
-            content: `**${username}** (${formatTimestamp(msg.ts)}):\n${text}`,
-            sourceType: "manual",
-            url: `slack://${channel.name}/${msg.ts}`,
-            submittedBy: "crawler",
-          });
-          result.messagesIndexed++;
-        }
-
-        // Index threads
-        if (config.threadMode === "aggregate") {
-          for (const threadParent of threadParents) {
-            const replies = threadRepliesMap.get(threadParent.ts) ?? [];
-            const content = await buildThreadDocument(config.token, channel.name, replies);
-            const parentText = threadParent.text ?? "";
-            const title = `#${channel.name} thread: ${truncateTitle(parentText)}`;
-
-            await indexDocument(db, provider, {
-              title,
-              content,
-              sourceType: "manual",
-              url: `slack://${channel.name}/thread/${threadParent.ts}`,
-              submittedBy: "crawler",
-            });
-            result.threadsIndexed++;
-          }
-        } else {
-          // separate mode: each reply is its own document
-          for (const threadParent of threadParents) {
-            const replies = threadRepliesMap.get(threadParent.ts) ?? [];
-            for (const reply of replies) {
-              if (!reply.text) continue;
-
-              const username = reply.user ? await resolveUser(config.token, reply.user) : "unknown";
-              const text = convertSlackMrkdwn(await resolveUserMentions(reply.text, config.token));
-              const title = `#${channel.name} thread reply — ${username}: ${truncateTitle(reply.text)}`;
-
-              await indexDocument(db, provider, {
-                title,
-                content: `**${username}** (${formatTimestamp(reply.ts)}):\n${text}`,
-                sourceType: "manual",
-                url: `slack://${channel.name}/thread/${threadParent.ts}/${reply.ts}`,
-                submittedBy: "crawler",
-              });
-              result.messagesIndexed++;
-            }
-            result.threadsIndexed++;
-          }
-        }
+        await syncChannel(db, provider, config, channel, result);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         log.error({ channel: channel.name, err }, "Error syncing Slack channel");

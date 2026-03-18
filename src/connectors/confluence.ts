@@ -349,6 +349,152 @@ function extractLabels(page: ConfluencePage): string[] {
   return results.map((l) => l.name);
 }
 
+/** Check if a page version is unchanged since the last sync. Returns the existing doc if found. */
+function checkExistingVersion(
+  db: Database.Database,
+  pageUrl: string,
+  versionNumber: number,
+): { existingDoc: { id: string } | undefined; unchanged: boolean } {
+  const existingDoc = db.prepare("SELECT id, url FROM documents WHERE url = ?").get(pageUrl) as
+    | { id: string; url: string }
+    | undefined;
+
+  if (!existingDoc) return { existingDoc: undefined, unchanged: false };
+
+  const existingMeta = db
+    .prepare(
+      "SELECT id FROM document_tags dt JOIN tags t ON dt.tag_id = t.id WHERE dt.document_id = ? AND t.name = ?",
+    )
+    .get(existingDoc.id, `confluence-version:${versionNumber}`) as { id: string } | undefined;
+
+  return { existingDoc, unchanged: !!existingMeta };
+}
+
+/** Index a single Confluence page. Returns "indexed", "updated", or "skipped". */
+async function indexConfluencePage(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  page: ConfluencePage,
+  space: ConfluenceSpace,
+  topicId: string,
+  base: string,
+  urls: ApiUrls,
+  auth: string,
+): Promise<"indexed" | "updated" | "skipped"> {
+  const log = getLogger();
+  const fullPage = await confluenceFetch<ConfluencePage>(urls.pageContent(page.id), auth);
+
+  const storageHtml = fullPage.body?.storage?.value ?? "";
+  const pageUrl = fullPage._links?.webui
+    ? `${base}${fullPage._links.webui}`
+    : urls.defaultPageUrl(space.key, page.id);
+
+  const { existingDoc, unchanged } = checkExistingVersion(db, pageUrl, fullPage.version.number);
+
+  if (existingDoc && unchanged) {
+    log.debug({ pageId: page.id, title: page.title }, "Page unchanged, skipping");
+    return "skipped";
+  }
+
+  let outcome: "indexed" | "updated" = "indexed";
+  if (existingDoc) {
+    deleteDocument(db, existingDoc.id);
+    outcome = "updated";
+  }
+
+  const markdown = convertConfluenceStorage(storageHtml);
+
+  const indexed = await indexDocument(db, provider, {
+    title: fullPage.title,
+    content: markdown,
+    sourceType: "topic",
+    topicId,
+    url: pageUrl,
+    submittedBy: "crawler",
+    dedup: "force",
+  });
+
+  const labels = extractLabels(fullPage);
+  const allTags = [
+    ...labels,
+    `confluence-space:${space.key}`,
+    `confluence-version:${fullPage.version.number}`,
+  ];
+  addTagsToDocument(db, indexed.id, allTags);
+
+  log.info(
+    { pageId: page.id, title: fullPage.title, chunkCount: indexed.chunkCount },
+    "Page indexed",
+  );
+  return outcome;
+}
+
+/** Sync all pages within a single Confluence space. */
+async function syncConfluenceSpace(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  space: ConfluenceSpace,
+  confluenceType: "cloud" | "server",
+  base: string,
+  urls: ApiUrls,
+  auth: string,
+  result: ConfluenceSyncResult,
+): Promise<void> {
+  const log = getLogger();
+  const topic = createTopic(db, { name: space.name });
+
+  let pages: ConfluencePage[];
+  try {
+    const spaceRef = confluenceType === "server" ? space.key : space.id;
+    pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
+    result.errors.push({ page: `space:${space.key}`, error: msg });
+    return;
+  }
+
+  for (const page of pages) {
+    try {
+      const outcome = await indexConfluencePage(
+        db,
+        provider,
+        page,
+        space,
+        topic.id,
+        base,
+        urls,
+        auth,
+      );
+      if (outcome === "indexed") result.pagesIndexed++;
+      if (outcome === "updated") {
+        result.pagesUpdated++;
+        result.pagesIndexed++;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ pageId: page.id, title: page.title, err }, "Failed to index page");
+      result.errors.push({ page: page.title, error: msg });
+    }
+  }
+}
+
+/** Validate Confluence config and throw if invalid. */
+function validateConfluenceConfig(config: ConfluenceConfig): void {
+  if (!config.baseUrl.trim()) {
+    throw new ValidationError("Confluence baseUrl is required");
+  }
+  if (!config.token.trim()) {
+    throw new ValidationError("Confluence token is required");
+  }
+  const confluenceType = config.type ?? "cloud";
+  if (confluenceType === "cloud" && !config.email?.trim()) {
+    throw new ValidationError(
+      "Confluence email is required for Cloud. For Server/Data Center, use --type server",
+    );
+  }
+}
+
 export async function syncConfluence(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -356,20 +502,9 @@ export async function syncConfluence(
 ): Promise<ConfluenceSyncResult> {
   const log = getLogger();
 
-  if (!config.baseUrl.trim()) {
-    throw new ValidationError("Confluence baseUrl is required");
-  }
-  if (!config.token.trim()) {
-    throw new ValidationError("Confluence token is required");
-  }
+  validateConfluenceConfig(config);
 
   const confluenceType = config.type ?? "cloud";
-  if (confluenceType === "cloud" && !config.email?.trim()) {
-    throw new ValidationError(
-      "Confluence email is required for Cloud. For Server/Data Center, use --type server",
-    );
-  }
-
   const auth = buildAuthHeader(confluenceType, config.email, config.token);
   let base = config.baseUrl;
   while (base.endsWith("/")) base = base.slice(0, -1);
@@ -386,10 +521,7 @@ export async function syncConfluence(
 
     log.info({ baseUrl: base }, "Starting Confluence sync");
 
-    // Fetch all spaces
     const allSpaces = await fetchAllPages<ConfluenceSpace>(urls.spaces, base, auth);
-
-    // Filter spaces
     const excludeSet = new Set(config.excludeSpaces ?? []);
     const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
     const spacesToSync = allSpaces.filter((s) => {
@@ -401,90 +533,7 @@ export async function syncConfluence(
     log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
 
     for (const space of spacesToSync) {
-      // Create or get topic for this space
-      const topic = createTopic(db, { name: space.name });
-
-      // Fetch pages in space (Cloud uses space.id, Server uses space.key)
-      let pages: ConfluencePage[];
-      try {
-        const spaceRef = confluenceType === "server" ? space.key : space.id;
-        pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
-        result.errors.push({ page: `space:${space.key}`, error: msg });
-        continue;
-      }
-
-      for (const page of pages) {
-        try {
-          // Fetch full page content with body
-          const fullPage = await confluenceFetch<ConfluencePage>(urls.pageContent(page.id), auth);
-
-          const storageHtml = fullPage.body?.storage?.value ?? "";
-          const pageUrl = fullPage._links?.webui
-            ? `${base}${fullPage._links.webui}`
-            : urls.defaultPageUrl(space.key, page.id);
-
-          // Incremental sync: check existing doc version
-          const existingDoc = db
-            .prepare("SELECT id, url FROM documents WHERE url = ?")
-            .get(pageUrl) as { id: string; url: string } | undefined;
-
-          const existingMeta = existingDoc
-            ? (db
-                .prepare(
-                  "SELECT id FROM document_tags dt JOIN tags t ON dt.tag_id = t.id WHERE dt.document_id = ? AND t.name = ?",
-                )
-                .get(existingDoc.id, `confluence-version:${fullPage.version.number}`) as
-                | { id: string }
-                | undefined)
-            : undefined;
-
-          if (existingDoc && existingMeta) {
-            // Same version — skip
-            log.debug({ pageId: page.id, title: page.title }, "Page unchanged, skipping");
-            continue;
-          }
-
-          if (existingDoc) {
-            // Version changed — delete old doc and re-index
-            deleteDocument(db, existingDoc.id);
-            result.pagesUpdated++;
-          }
-
-          const markdown = convertConfluenceStorage(storageHtml);
-
-          const indexed = await indexDocument(db, provider, {
-            title: fullPage.title,
-            content: markdown,
-            sourceType: "topic",
-            topicId: topic.id,
-            url: pageUrl,
-            submittedBy: "crawler",
-            dedup: "force",
-          });
-
-          // Extract labels as tags + add version tag for incremental sync
-          const labels = extractLabels(fullPage);
-          const allTags = [
-            ...labels,
-            `confluence-space:${space.key}`,
-            `confluence-version:${fullPage.version.number}`,
-          ];
-          addTagsToDocument(db, indexed.id, allTags);
-
-          result.pagesIndexed++;
-          log.info(
-            { pageId: page.id, title: fullPage.title, chunkCount: indexed.chunkCount },
-            "Page indexed",
-          );
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.error({ pageId: page.id, title: page.title, err }, "Failed to index page");
-          result.errors.push({ page: page.title, error: msg });
-        }
-      }
+      await syncConfluenceSpace(db, provider, space, confluenceType, base, urls, auth, result);
     }
 
     log.info(

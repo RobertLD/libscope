@@ -393,6 +393,152 @@ function buildSourceUrl(notebook: string, section: string, pageTitle: string): s
   return `onenote://${notebook}/${section}/${pageTitle}`;
 }
 
+/** Index a single OneNote page. Returns "added", "updated", or "skipped". */
+async function indexOneNotePage(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  page: GraphPage,
+  sourceUrl: string,
+  sectionTopicId: string,
+  lastSync: string | undefined,
+): Promise<"added" | "updated" | "skipped"> {
+  if (lastSync && page.lastModifiedDateTime <= lastSync) {
+    return "skipped";
+  }
+
+  const html = await getPageContent(token, page.id);
+  const markdown = convertOneNoteHtml(html);
+
+  const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(sourceUrl) as
+    | { id: string }
+    | undefined;
+
+  let outcome: "added" | "updated";
+  if (existing) {
+    deleteDocument(db, existing.id);
+    outcome = "updated";
+  } else {
+    outcome = "added";
+  }
+
+  await indexDocument(db, provider, {
+    title: page.title,
+    content: markdown,
+    sourceType: "topic",
+    topicId: sectionTopicId,
+    url: sourceUrl,
+    submittedBy: "crawler",
+  });
+
+  return outcome;
+}
+
+/** Sync all pages within a single section. */
+async function syncOneNoteSection(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  notebookName: string,
+  section: GraphSection,
+  notebookTopicId: string,
+  config: OneNoteConfig,
+  seenSourceUrls: Set<string>,
+  result: OneNoteSyncResult,
+): Promise<void> {
+  const log = getLogger();
+  const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
+
+  let pages: GraphPage[];
+  try {
+    pages = await listPages(token, section.id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    result.errors.push({
+      page: `${notebookName}/${section.displayName}/*`,
+      error: msg,
+    });
+    return;
+  }
+
+  for (const page of pages) {
+    const sourceUrl = buildSourceUrl(notebookName, section.displayName, page.title);
+    seenSourceUrls.add(sourceUrl);
+
+    try {
+      const outcome = await indexOneNotePage(
+        db,
+        provider,
+        token,
+        page,
+        sourceUrl,
+        sectionTopicId,
+        config.lastSync,
+      );
+      if (outcome === "added") result.pagesAdded++;
+      if (outcome === "updated") result.pagesUpdated++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ page: page.title, err }, "Failed to sync page");
+      result.errors.push({ page: page.title, error: msg });
+    }
+  }
+}
+
+/** Sync all sections within a single notebook. */
+async function syncOneNoteNotebook(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  notebook: GraphNotebook,
+  config: OneNoteConfig,
+  seenSourceUrls: Set<string>,
+  result: OneNoteSyncResult,
+): Promise<void> {
+  const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
+
+  let sections: GraphSection[];
+  try {
+    sections = await listSections(token, notebook.id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    result.errors.push({ page: `${notebook.displayName}/*`, error: msg });
+    return;
+  }
+
+  const filteredSections = sections.filter((s) => !config.excludeSections.includes(s.displayName));
+  result.sections += filteredSections.length;
+
+  for (const section of filteredSections) {
+    await syncOneNoteSection(
+      db,
+      provider,
+      token,
+      notebook.displayName,
+      section,
+      notebookTopicId,
+      config,
+      seenSourceUrls,
+      result,
+    );
+  }
+}
+
+/** Delete OneNote documents whose source URLs were not seen during sync. */
+function deleteStaleOneNoteDocs(db: Database.Database, seenSourceUrls: Set<string>): number {
+  const existingDocs = db
+    .prepare("SELECT id, url FROM documents WHERE url LIKE 'onenote://%'")
+    .all() as Array<{ id: string; url: string }>;
+
+  let deleted = 0;
+  for (const doc of existingDocs) {
+    if (seenSourceUrls.has(doc.url)) continue;
+    deleteDocument(db, doc.id);
+    deleted++;
+  }
+  return deleted;
+}
+
 export async function syncOneNote(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -425,98 +571,14 @@ export async function syncOneNote(
         : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
 
     result.notebooks = targetNotebooks.length;
-
-    // Track which source URLs we see this sync for deletion detection
     const seenSourceUrls = new Set<string>();
 
     for (const notebook of targetNotebooks) {
-      const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
-
-      let sections: GraphSection[];
-      try {
-        sections = await listSections(token, notebook.id);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        result.errors.push({ page: `${notebook.displayName}/*`, error: msg });
-        continue;
-      }
-
-      const filteredSections = sections.filter(
-        (s) => !config.excludeSections.includes(s.displayName),
-      );
-
-      result.sections += filteredSections.length;
-
-      for (const section of filteredSections) {
-        const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
-
-        let pages: GraphPage[];
-        try {
-          pages = await listPages(token, section.id);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          result.errors.push({
-            page: `${notebook.displayName}/${section.displayName}/*`,
-            error: msg,
-          });
-          continue;
-        }
-
-        for (const page of pages) {
-          const sourceUrl = buildSourceUrl(notebook.displayName, section.displayName, page.title);
-          seenSourceUrls.add(sourceUrl);
-
-          // Incremental sync: skip unchanged pages
-          if (config.lastSync && page.lastModifiedDateTime <= config.lastSync) {
-            continue;
-          }
-
-          try {
-            const html = await getPageContent(token, page.id);
-            const markdown = convertOneNoteHtml(html);
-
-            // Check if page already exists (update vs add)
-            const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(sourceUrl) as
-              | { id: string }
-              | undefined;
-
-            if (existing) {
-              deleteDocument(db, existing.id);
-              result.pagesUpdated++;
-            } else {
-              result.pagesAdded++;
-            }
-
-            await indexDocument(db, provider, {
-              title: page.title,
-              content: markdown,
-              sourceType: "topic",
-              topicId: sectionTopicId,
-              url: sourceUrl,
-              submittedBy: "crawler",
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            log.error({ page: page.title, err }, "Failed to sync page");
-            result.errors.push({ page: page.title, error: msg });
-          }
-        }
-      }
+      await syncOneNoteNotebook(db, provider, token, notebook, config, seenSourceUrls, result);
     }
 
-    // Delete pages that no longer exist in OneNote
-    const existingOneNoteDocs = db
-      .prepare("SELECT id, url FROM documents WHERE url LIKE 'onenote://%'")
-      .all() as Array<{ id: string; url: string }>;
+    result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);
 
-    for (const doc of existingOneNoteDocs) {
-      if (!seenSourceUrls.has(doc.url)) {
-        deleteDocument(db, doc.id);
-        result.pagesDeleted++;
-      }
-    }
-
-    // Save sync timestamp
     const connConfig = loadConnectorConfig();
     const onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
     onenoteConf.lastSync = new Date().toISOString();

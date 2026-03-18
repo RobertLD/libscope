@@ -92,63 +92,45 @@ function findMarkdownFiles(dir: string, excludePatterns: string[]): string[] {
 /** Maximum content size (5 MB) to process through regex-heavy parsing. */
 const MAX_PARSE_SIZE = 5 * 1024 * 1024;
 
-export function parseObsidianMarkdown(
-  content: string,
-  vaultFiles: string[],
-): {
+/** Parse YAML frontmatter from the top of a markdown file. Returns the parsed object and remaining body. */
+function extractFrontmatter(content: string): {
   frontmatter: Record<string, unknown>;
   body: string;
-  tags: string[];
-  wikilinks: string[];
 } {
-  // Guard against excessively large files that could cause slow regex execution
-  const safeContent = content.length > MAX_PARSE_SIZE ? content.slice(0, MAX_PARSE_SIZE) : content;
-
-  let frontmatter: Record<string, unknown> = {};
-  let body = safeContent;
-
-  // Parse YAML frontmatter
   const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-  if (fmMatch) {
-    const fmBlock = fmMatch[1] ?? "";
-    body = content.slice((fmMatch[0] ?? "").length).trimStart();
-    try {
-      const parsed = yamlLoad(fmBlock);
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        // js-yaml parses bare YAML date literals (e.g. 2024-01-15) as Date objects per YAML 1.1.
-        // Normalise them to ISO-8601 strings so downstream code always sees strings.
-        const normalised: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-          normalised[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
-        }
-        frontmatter = normalised;
-      }
-    } catch {
-      // Malformed frontmatter — leave frontmatter as empty object and continue
-    }
-  }
+  if (!fmMatch) return { frontmatter: {}, body: content };
 
-  // Build vault file map for wikilink resolution
+  const fmBlock = fmMatch[1] ?? "";
+  const body = content.slice((fmMatch[0] ?? "").length).trimStart();
+
+  try {
+    const parsed = yamlLoad(fmBlock);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { frontmatter: {}, body };
+    }
+    // Normalise Date objects to ISO-8601 date strings
+    const normalised: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      normalised[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
+    }
+    return { frontmatter: normalised, body };
+  } catch {
+    return { frontmatter: {}, body };
+  }
+}
+
+/** Build a case-insensitive map from base filenames (without .md) to relative paths. */
+function buildVaultFileMap(vaultFiles: string[]): Map<string, string> {
   const fileMap = new Map<string, string>();
   for (const f of vaultFiles) {
     const name = basename(f, ".md");
     fileMap.set(name.toLowerCase(), f);
   }
+  return fileMap;
+}
 
-  // Resolve ![[embeds]] — inline referenced content (1 level deep)
-  body = body.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?]]/g, (_match, link: string) => {
-    const target = fileMap.get(link.toLowerCase());
-    if (!target) return `[${link}]`;
-    // Read embedded file content (no recursion)
-    try {
-      // We don't have vaultPath here, so embeds resolve via the caller
-      return `[Embedded: ${link}]`;
-    } catch {
-      return `[Embedded: ${link}]`;
-    }
-  });
-
-  // Collect wikilinks
+/** Collect all [[wikilinks]] from the body text. */
+function collectWikilinks(body: string): string[] {
   const wikilinks: string[] = [];
   const wikilinkRegex = /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g;
   let wlMatch;
@@ -156,9 +138,21 @@ export function parseObsidianMarkdown(
     const link = wlMatch[1] ?? "";
     wikilinks.push(link);
   }
+  return wikilinks;
+}
+
+/** Apply Obsidian-specific markdown transformations: embeds, wikilinks, comments, callouts. */
+function transformObsidianBody(body: string, fileMap: Map<string, string>): string {
+  let result = body;
+
+  // Resolve ![[embeds]] — inline referenced content (1 level deep)
+  result = result.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?]]/g, (_match, link: string) => {
+    const target = fileMap.get(link.toLowerCase());
+    return target ? `[Embedded: ${link}]` : `[${link}]`;
+  });
 
   // Resolve [[wikilinks]]
-  body = body.replace(
+  result = result.replace(
     /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
     (_match, link: string, display?: string) => {
       const displayText = display ?? link;
@@ -168,17 +162,19 @@ export function parseObsidianMarkdown(
   );
 
   // Strip %%comments%%
-  body = body.replace(/%%[\s\S]*?%%/g, "");
-
+  result = result.replace(/%%[\s\S]*?%%/g, "");
   // Strip dataview code blocks
-  body = body.replace(/```dataview[\s\S]*?```/g, "");
-
+  result = result.replace(/```dataview[\s\S]*?```/g, "");
   // Convert callouts to blockquotes with type prefix
-  body = body.replace(/^> \[!(\w+)]\s*(.*)$/gm, (_match, type: string, rest: string) => {
+  result = result.replace(/^> \[!(\w+)]\s*(.*)$/gm, (_match, type: string, rest: string) => {
     return `> **${type}**: ${rest}`;
   });
 
-  // Extract #tags from body
+  return result;
+}
+
+/** Extract #tags from body text and frontmatter. */
+function collectTags(body: string, frontmatter: Record<string, unknown>): string[] {
   const tagSet = new Set<string>();
   const tagRegex = /(?:^|\s)#([a-zA-Z][\w/-]*)/g;
   let tagMatch;
@@ -186,15 +182,30 @@ export function parseObsidianMarkdown(
     const tag = tagMatch[1];
     if (tag) tagSet.add(tag);
   }
-
-  // Also include tags from frontmatter
   if (Array.isArray(frontmatter.tags)) {
     for (const t of frontmatter.tags) {
       if (typeof t === "string") tagSet.add(t);
     }
   }
+  return [...tagSet];
+}
 
-  const tags = [...tagSet];
+export function parseObsidianMarkdown(
+  content: string,
+  vaultFiles: string[],
+): {
+  frontmatter: Record<string, unknown>;
+  body: string;
+  tags: string[];
+  wikilinks: string[];
+} {
+  const safeContent = content.length > MAX_PARSE_SIZE ? content.slice(0, MAX_PARSE_SIZE) : content;
+
+  const { frontmatter, body: rawBody } = extractFrontmatter(safeContent);
+  const fileMap = buildVaultFileMap(vaultFiles);
+  const wikilinks = collectWikilinks(rawBody);
+  const body = transformObsidianBody(rawBody, fileMap);
+  const tags = collectTags(body, frontmatter);
 
   return { frontmatter, body: body.trim(), tags, wikilinks };
 }
@@ -250,6 +261,137 @@ function getOrCreateTopic(db: Database.Database, topicPath: string): string {
   return topic.id;
 }
 
+/** Determine the topic ID for a file based on the topic mapping strategy. */
+function resolveTopicId(
+  db: Database.Database,
+  relPath: string,
+  parsed: { frontmatter: Record<string, unknown> },
+  topicMapping: "folder" | "frontmatter",
+): string | undefined {
+  if (topicMapping === "folder") {
+    const topicPath = folderToTopic(relPath);
+    return topicPath ? getOrCreateTopic(db, topicPath) : undefined;
+  }
+  if (topicMapping === "frontmatter") {
+    const fmTopic = parsed.frontmatter.topic;
+    return typeof fmTopic === "string" && fmTopic ? getOrCreateTopic(db, fmTopic) : undefined;
+  }
+  return undefined;
+}
+
+/** Safely delete the previous version of a document, ignoring already-deleted docs. */
+function safeDeletePrevious(db: Database.Database, docId: string | undefined): void {
+  if (!docId) return;
+  try {
+    deleteDocument(db, docId);
+  } catch {
+    // Document may have been manually deleted
+  }
+}
+
+/** Ensure tags exist and attach them to a document. */
+function applyTags(
+  db: Database.Database,
+  docId: string,
+  tags: string[],
+  log: ReturnType<typeof getLogger>,
+): void {
+  if (tags.length === 0) return;
+  for (const tag of tags) {
+    try {
+      createTag(db, tag);
+    } catch {
+      // Tag may already exist
+    }
+  }
+  try {
+    addTagsToDocument(db, docId, tags);
+  } catch (err) {
+    log.debug({ err, docId }, "Failed to add some tags");
+  }
+}
+
+/** Resolve wikilinks and create document reference links. */
+function applyWikilinks(
+  db: Database.Database,
+  docId: string,
+  wikilinks: string[],
+  log: ReturnType<typeof getLogger>,
+): void {
+  for (const pageName of wikilinks) {
+    try {
+      const targetId = resolveDocumentByTitle(db, pageName);
+      if (targetId && targetId !== docId) {
+        createLink(db, docId, targetId, "references");
+      }
+    } catch (err) {
+      log.debug({ err, pageName, docId }, "Failed to resolve wikilink");
+    }
+  }
+}
+
+/** Process a single vault file: parse, index, tag, and link. Returns the new VaultFileEntry or undefined on skip. */
+async function processVaultFile(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: ObsidianConfig,
+  relPath: string,
+  vaultFiles: string[],
+  tracked: VaultFileEntry | undefined,
+  log: ReturnType<typeof getLogger>,
+): Promise<{ entry: VaultFileEntry; isUpdate: boolean } | "unchanged"> {
+  const fullPath = join(config.vaultPath, relPath);
+  const stat = statSync(fullPath);
+  const mtime = stat.mtime.toISOString();
+
+  if (tracked?.mtime === mtime) return "unchanged";
+
+  const rawContent = readFileSync(fullPath, "utf-8");
+  const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, vaultFiles);
+  const parsed = parseObsidianMarkdown(contentWithEmbeds, vaultFiles);
+
+  const title =
+    typeof parsed.frontmatter.title === "string"
+      ? parsed.frontmatter.title
+      : basename(relPath, ".md");
+
+  const topicId = resolveTopicId(db, relPath, parsed, config.topicMapping);
+  safeDeletePrevious(db, tracked?.docId);
+
+  const indexed = await indexDocument(db, provider, {
+    title,
+    content: parsed.body,
+    sourceType: "manual",
+    topicId,
+    url: buildSource(config.vaultPath, relPath),
+    submittedBy: "crawler",
+  });
+
+  applyTags(db, indexed.id, parsed.tags, log);
+  applyWikilinks(db, indexed.id, parsed.wikilinks, log);
+
+  return { entry: { mtime, docId: indexed.id }, isUpdate: !!tracked };
+}
+
+/** Delete tracked documents whose files no longer exist on disk. */
+function deleteRemovedFiles(
+  db: Database.Database,
+  trackedFiles: Record<string, VaultFileEntry>,
+  currentFileSet: Set<string>,
+): number {
+  let deleted = 0;
+  for (const [relPath, entry] of Object.entries(trackedFiles)) {
+    if (currentFileSet.has(relPath)) continue;
+    try {
+      deleteDocument(db, entry.docId);
+      deleted++;
+    } catch {
+      // Document may have been manually deleted
+    }
+  }
+  return deleted;
+}
+
 export async function syncObsidianVault(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -273,117 +415,38 @@ export async function syncObsidianVault(
       "Syncing Obsidian vault",
     );
 
-    // Load existing vault state
     const connectorConfig = loadConnectorConfig();
     const vaultKey = `obsidian:${config.vaultPath}`;
     const existingState = connectorConfig[vaultKey] as VaultState | undefined;
     const trackedFiles = existingState?.files ?? {};
-
     const newTrackedFiles: Record<string, VaultFileEntry> = {};
     const currentFileSet = new Set(vaultFiles);
 
-    // Process each file
     for (const relPath of vaultFiles) {
-      const fullPath = join(config.vaultPath, relPath);
-      const source = buildSource(config.vaultPath, relPath);
-
       try {
-        const stat = statSync(fullPath);
-        const mtime = stat.mtime.toISOString();
-        const tracked = trackedFiles[relPath];
+        const outcome = await processVaultFile(
+          db,
+          provider,
+          config,
+          relPath,
+          vaultFiles,
+          trackedFiles[relPath],
+          log,
+        );
 
-        // Skip unchanged files during incremental sync
-        if (tracked?.mtime === mtime) {
-          newTrackedFiles[relPath] = tracked;
-          continue;
-        }
-
-        const rawContent = readFileSync(fullPath, "utf-8");
-
-        // Resolve embeds first (before main parsing)
-        const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, vaultFiles);
-
-        const parsed = parseObsidianMarkdown(contentWithEmbeds, vaultFiles);
-
-        const title =
-          typeof parsed.frontmatter.title === "string"
-            ? parsed.frontmatter.title
-            : basename(relPath, ".md");
-
-        // Determine topic
-        let topicId: string | undefined;
-        if (config.topicMapping === "folder") {
-          const topicPath = folderToTopic(relPath);
-          if (topicPath) {
-            topicId = getOrCreateTopic(db, topicPath);
-          }
-        } else if (config.topicMapping === "frontmatter") {
-          const fmTopic = parsed.frontmatter.topic;
-          if (typeof fmTopic === "string" && fmTopic) {
-            topicId = getOrCreateTopic(db, fmTopic);
-          }
-        }
-
-        // If updating, delete old document first
-        if (tracked?.docId) {
-          try {
-            deleteDocument(db, tracked.docId);
-          } catch {
-            // Document may have been manually deleted
-          }
-        }
-
-        const indexed = await indexDocument(db, provider, {
-          title,
-          content: parsed.body,
-          sourceType: "manual",
-          topicId,
-          url: source,
-          submittedBy: "crawler",
-        });
-
-        // Add tags
-        if (parsed.tags.length > 0) {
-          for (const tag of parsed.tags) {
-            try {
-              createTag(db, tag);
-            } catch {
-              // Tag may already exist
-            }
-          }
-          try {
-            addTagsToDocument(db, indexed.id, parsed.tags);
-          } catch (err) {
-            log.debug({ err, docId: indexed.id }, "Failed to add some tags");
-          }
-        }
-
-        // Store wikilinks as document references
-        if (parsed.wikilinks.length > 0) {
-          for (const pageName of parsed.wikilinks) {
-            try {
-              const targetId = resolveDocumentByTitle(db, pageName);
-              if (targetId && targetId !== indexed.id) {
-                createLink(db, indexed.id, targetId, "references");
-              }
-            } catch (err) {
-              log.debug({ err, pageName, docId: indexed.id }, "Failed to resolve wikilink");
-            }
-          }
-        }
-
-        newTrackedFiles[relPath] = { mtime, docId: indexed.id };
-
-        if (tracked) {
+        if (outcome === "unchanged") {
+          newTrackedFiles[relPath] = trackedFiles[relPath]!;
+        } else if (outcome.isUpdate) {
+          newTrackedFiles[relPath] = outcome.entry;
           result.updated++;
         } else {
+          newTrackedFiles[relPath] = outcome.entry;
           result.added++;
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         result.errors.push({ file: relPath, error: errMsg });
         log.warn({ file: relPath, err }, "Failed to sync file");
-        // Preserve old tracking if it exists
         const tracked = trackedFiles[relPath];
         if (tracked) {
           newTrackedFiles[relPath] = tracked;
@@ -391,19 +454,8 @@ export async function syncObsidianVault(
       }
     }
 
-    // Delete documents for files that no longer exist
-    for (const [relPath, entry] of Object.entries(trackedFiles)) {
-      if (!currentFileSet.has(relPath)) {
-        try {
-          deleteDocument(db, entry.docId);
-          result.deleted++;
-        } catch {
-          // Document may have been manually deleted
-        }
-      }
-    }
+    result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
 
-    // Save updated state
     connectorConfig[vaultKey] = {
       type: "obsidian",
       vaultPath: config.vaultPath,
