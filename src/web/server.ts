@@ -154,7 +154,7 @@ async function handleSearchRoute(
   res: ServerResponse,
 ): Promise<void> {
   const query = url.searchParams.get("q") ?? "";
-  const rawLimit = parseInt(url.searchParams.get("limit") ?? "10", 10);
+  const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "10", 10);
   const limit = Number.isNaN(rawLimit) ? 10 : Math.max(1, Math.min(100, rawLimit));
   const topic = url.searchParams.get("topic") ?? undefined;
 
@@ -169,7 +169,7 @@ async function handleSearchRoute(
 
 /** Handle GET /api/documents */
 function handleDocumentsListRoute(db: Database.Database, url: URL, res: ServerResponse): void {
-  const rawLimit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+  const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
   const limit = Number.isNaN(rawLimit) ? 50 : Math.max(1, Math.min(500, rawLimit));
   const topic = url.searchParams.get("topic") ?? undefined;
   const docs = listDocuments(db, { limit, topicId: topic });
