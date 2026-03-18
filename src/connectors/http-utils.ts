@@ -15,6 +15,33 @@ export interface RetryConfig {
   baseDelay?: number;
 }
 
+/** Check if a response status is retryable (429 or 5xx). */
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+/** Compute the retry delay in ms, using Retry-After header for 429 responses or exponential backoff. */
+function computeRetryDelay(response: Response, attempt: number, baseDelay: number): number {
+  if (response.status !== 429) return baseDelay * 2 ** attempt;
+
+  const retryAfter = response.headers.get("Retry-After");
+  if (!retryAfter) return baseDelay * 2 ** attempt;
+
+  const parsed = Number(retryAfter);
+  return Number.isNaN(parsed) ? baseDelay * 2 ** attempt : parsed * 1000;
+}
+
+/** Build fetch options, merging the base options with an optional TLS-bypassing dispatcher. */
+function buildFetchOptions(
+  options: RequestInit | undefined,
+  dispatcher: Agent | undefined,
+): RequestInit {
+  return {
+    ...(options ?? {}),
+    ...(dispatcher ? { dispatcher: dispatcher as unknown } : {}),
+  } as RequestInit;
+}
+
 /**
  * Fetch wrapper with retry logic for 429 (rate-limit) and 5xx responses.
  * Uses Retry-After header when available, otherwise exponential backoff.
@@ -30,43 +57,25 @@ export async function fetchWithRetry(
   const log = getLogger();
 
   const config = loadConfig();
-  // Use a per-request undici Agent when self-signed certs are allowed.
-  // This is scoped to this fetch chain and does not affect concurrent requests.
   const dispatcher = config.indexing.allowSelfSignedCerts ? getInsecureAgent() : undefined;
+  const fetchOptions = buildFetchOptions(options, dispatcher);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const fetchOptions = {
-      ...(options ?? {}),
-      ...(dispatcher ? { dispatcher: dispatcher as unknown } : {}),
-    } as RequestInit;
     const response = await fetch(url, fetchOptions);
 
-    if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
-      if (attempt >= maxRetries) {
-        const body = await response.text().catch(() => "");
-        throw new FetchError(`HTTP ${response.status} after ${maxRetries + 1} attempts: ${body}`);
-      }
+    if (!isRetryableStatus(response.status)) return response;
 
-      let delayMs = baseDelay * 2 ** attempt;
-      if (response.status === 429) {
-        const retryAfter = response.headers.get("Retry-After");
-        if (retryAfter) {
-          const parsed = Number(retryAfter);
-          if (!Number.isNaN(parsed)) {
-            delayMs = parsed * 1000;
-          }
-        }
-      }
-
-      log.warn(
-        { status: response.status, attempt: attempt + 1, delayMs },
-        "Retrying after transient error",
-      );
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      continue;
+    if (attempt >= maxRetries) {
+      const body = await response.text().catch(() => "");
+      throw new FetchError(`HTTP ${response.status} after ${maxRetries + 1} attempts: ${body}`);
     }
 
-    return response;
+    const delayMs = computeRetryDelay(response, attempt, baseDelay);
+    log.warn(
+      { status: response.status, attempt: attempt + 1, delayMs },
+      "Retrying after transient error",
+    );
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   // Unreachable, but satisfies TypeScript
