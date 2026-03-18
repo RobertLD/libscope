@@ -80,7 +80,7 @@ If you're using [workspaces](/guide/configuration#workspaces), pass the workspac
 
 ## Available Tools
 
-Once connected, your AI assistant gets access to all 26 of LibScope's MCP tools. See the [MCP Tools Reference](/reference/mcp-tools) for full parameter details.
+Once connected, your AI assistant gets access to all 31 of LibScope's MCP tools. See the [MCP Tools Reference](/reference/mcp-tools) for full parameter details.
 
 **Search & Q&A**
 - **`search-docs`** — semantic search with topic/library/version/rating filters
@@ -105,6 +105,10 @@ Once connected, your AI assistant gets access to all 26 of LibScope's MCP tools.
 - **`save-search`** — save a named query with filters
 - **`list-saved-searches`** — list saved searches
 - **`run-saved-search`** — execute a saved search
+- **`delete-saved-search`** — delete a saved search
+
+**Similar Content**
+- **`get-related`** — find chunks semantically similar to a given chunk
 
 **Connectors** — trigger syncs directly from your AI assistant:
 - **`sync-obsidian-vault`**, **`sync-notion`**, **`sync-confluence`**, **`sync-slack`**, **`sync-onenote`**

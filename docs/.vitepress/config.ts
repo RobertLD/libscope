@@ -64,9 +64,17 @@ export default defineConfig({
           ],
         },
         {
+          text: "Features",
+          items: [
+            { text: "Web Dashboard", link: "/guide/dashboard" },
+            { text: "Webhooks", link: "/guide/webhooks" },
+          ],
+        },
+        {
           text: "Deep Dives",
           items: [
             { text: "How Search Works", link: "/guide/how-search-works" },
+            { text: "Architecture", link: "/guide/architecture" },
             { text: "Troubleshooting", link: "/guide/troubleshooting" },
           ],
         },
