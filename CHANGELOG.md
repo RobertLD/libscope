@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2](https://github.com/RobertLD/libscope/compare/v1.5.1...v1.5.2) (2026-03-18)
+
+
+### Bug Fixes
+
+* accept ssh:// protocol URLs in registry URL validation ([#405](https://github.com/RobertLD/libscope/issues/405)) ([acb91b1](https://github.com/RobertLD/libscope/commit/acb91b127dbd59bea0b04ae7f197c43745bb42eb))
+* comprehensive security and robustness hardening for registry feature ([#407](https://github.com/RobertLD/libscope/issues/407)) ([cab4baf](https://github.com/RobertLD/libscope/commit/cab4bafc137f2221d7931e6ec48d7a8437f4819d))
+
 ## [1.5.1](https://github.com/RobertLD/libscope/compare/v1.5.0...v1.5.1) (2026-03-16)
 
 
