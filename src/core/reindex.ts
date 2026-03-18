@@ -122,7 +122,7 @@ export async function reindex(
       total,
       completed: completed,
       failed,
-      currentChunkId: ids[ids.length - 1],
+      currentChunkId: ids.at(-1),
     });
   }
 

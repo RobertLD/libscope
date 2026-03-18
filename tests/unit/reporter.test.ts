@@ -99,7 +99,7 @@ describe("reporter", () => {
       expect(String(stderr.mock.calls[0]![0])).toContain("something failed");
     });
 
-    it("PrettyReporter.progress writes \\r-prefixed line to stdout", () => {
+    it(String.raw`PrettyReporter.progress writes \r-prefixed line to stdout`, () => {
       const reporter = createReporter(false);
       const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 

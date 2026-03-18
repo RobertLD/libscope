@@ -40,10 +40,10 @@ function isVectorTableError(err: unknown): boolean {
 /** Escape LIKE special characters so user input is treated literally. */
 export function escapeLikePattern(input: string): string {
   return input
-    .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/\[/g, "\\[");
+    .replaceAll("\\", "\\\\")
+    .replaceAll("%", "\\%")
+    .replaceAll("_", "\\_")
+    .replaceAll("[", "\\[");
 }
 
 export interface SearchOptions {
@@ -1077,7 +1077,7 @@ function fts5Search(
 
   const needsRatingJoin = options.minRating !== undefined;
 
-  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
+  const ftsQuery = words.map((w) => `"${w.replaceAll(/"/g, '""')}"`).join(" AND ");
   const params: unknown[] = [ftsQuery];
 
   let sql = `
@@ -1133,7 +1133,7 @@ function fts5Search(
 
   // If AND returned nothing, retry with OR for recall
   if (rows.length === 0 && words.length > 1) {
-    const orQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" OR ");
+    const orQuery = words.map((w) => `"${w.replaceAll(/"/g, '""')}"`).join(" OR ");
     const orParams: unknown[] = [orQuery];
     let orSql = `
       SELECT

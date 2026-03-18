@@ -146,15 +146,15 @@ export function registerRegistryCommands(program: Command): void {
           }
           name = derived;
         }
-        const priority = parseInt(opts.priority, 10);
-        const syncInterval = parseInt(opts.syncInterval, 10);
+        const priority = Number.parseInt(opts.priority, 10);
+        const syncInterval = Number.parseInt(opts.syncInterval, 10);
 
-        if (isNaN(priority) || priority < 0) {
+        if (Number.isNaN(priority) || priority < 0) {
           console.error('Error: "--priority" must be a non-negative integer.');
           process.exit(1);
           return;
         }
-        if (isNaN(syncInterval) || syncInterval < 0) {
+        if (Number.isNaN(syncInterval) || syncInterval < 0) {
           console.error('Error: "--sync-interval" must be a non-negative integer.');
           process.exit(1);
           return;

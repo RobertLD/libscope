@@ -105,7 +105,7 @@ export function parseRepoUrl(url: string): ParsedRepoUrl {
 // ── SSRF Protection ──────────────────────────────────────────────────────────
 
 async function validateHost(hostname: string): Promise<void> {
-  const stripped = hostname.replace(/^\[|\]$/g, "");
+  const stripped = hostname.replaceAll(/^\[|\]$/g, "");
   const results = await Promise.allSettled([dns.resolve4(stripped), dns.resolve6(stripped)]);
 
   const addresses: string[] = [];
@@ -160,9 +160,11 @@ async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Pr
 
       if (
         response.status === 429 ||
-        (remaining !== null && parseInt(remaining, 10) < RATE_LIMIT_THRESHOLD)
+        (remaining !== null && Number.parseInt(remaining, 10) < RATE_LIMIT_THRESHOLD)
       ) {
-        const resetTime = resetHeader ? parseInt(resetHeader, 10) * 1000 : Date.now() + 60_000;
+        const resetTime = resetHeader
+          ? Number.parseInt(resetHeader, 10) * 1000
+          : Date.now() + 60_000;
         const waitMs = Math.max(resetTime - Date.now(), 1000);
         const log = getLogger();
         log.warn({ remaining, waitMs }, "Rate limit approaching, backing off");

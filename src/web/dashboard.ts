@@ -143,13 +143,26 @@ export function getDashboardHtml(): string {
   async function loadTopics() {
     try {
       const topics = await api('/api/topics');
-      let html = '<li class="active" data-topic="" onclick="selectTopic(this, \\'\\')">All Documents</li>';
+      let html = '<li class="active" data-topic="" onclick="selectTopic(this, \'\')">All Documents</li>';
       for (const t of topics) {
-        html += '<li data-topic="' + t.id + '" onclick="selectTopic(this, \\'' + t.id + '\\')">'
-          + '<span>' + esc(t.name) + '</span><span class="count">' + (t.documentCount || 0) + '</span></li>';
+        const id = t.id;
+        const name = esc(t.name);
+        const count = t.documentCount || 0;
+        html +=
+          '<li data-topic="' +
+          id +
+          '" onclick="selectTopic(this, \'' +
+          id +
+          '\')"><span>' +
+          name +
+          '</span><span class="count">' +
+          count +
+          '</span></li>';
       }
       $topicList.innerHTML = html;
-    } catch (e) { console.error('loadTopics failed', e); }
+    } catch (e) {
+      console.error('loadTopics failed', e);
+    }
   }
 
   function selectTopic(el, topicId) {
@@ -278,7 +291,7 @@ export function getDashboardHtml(): string {
 
   function escAttr(s) {
     if (!s) return '';
-    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return s.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll("'", '&#39;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
 
   // Event delegation for cards and delete buttons
@@ -317,7 +330,7 @@ export function getGraphPageHtml(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LibScope — Knowledge Graph</title>
-<script src="https://d3js.org/d3.v7.min.js"><\/script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
   :root {
     --bg: #fff; --bg2: #f5f5f5; --fg: #1a1a1a; --fg2: #555;
@@ -526,7 +539,7 @@ export function getGraphPageHtml(): string {
 
   loadTopics();
   loadGraph();
-<\/script>
+</script>
 </body>
 </html>`;
 }

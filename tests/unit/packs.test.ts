@@ -825,7 +825,7 @@ describe("knowledge packs", () => {
       // Should have called onProgress at least once (one batch covering both docs)
       expect(calls.length).toBeGreaterThan(0);
       // Last call should report all docs processed
-      const last = calls[calls.length - 1]!;
+      const last = calls.at(-1)!;
       expect(last.current).toBe(2);
       expect(last.total).toBe(2);
     });
@@ -1036,8 +1036,8 @@ describe("knowledge packs", () => {
       // Should have 3 progress calls (one per batch/doc with batchSize=1)
       expect(calls).toHaveLength(3);
       // Final call should report all docs processed
-      expect(calls[calls.length - 1]!.current).toBe(3);
-      expect(calls[calls.length - 1]!.total).toBe(3);
+      expect(calls.at(-1)!.current).toBe(3);
+      expect(calls.at(-1)!.total).toBe(3);
     });
 
     it("should count errors correctly when some batches fail during concurrent embedding", async () => {

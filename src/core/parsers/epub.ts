@@ -38,8 +38,8 @@ export class EpubParser implements DocumentParser {
           const html: string = await getChapter.call(epub, item.id);
           // Strip HTML tags to get plain text
           const text = html
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s+/g, " ")
+            .replaceAll(/<[^>]+>/g, " ")
+            .replaceAll(/\s+/g, " ")
             .trim();
           if (text.length > 0) {
             chapters.push(text);

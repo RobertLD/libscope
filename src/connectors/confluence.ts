@@ -329,17 +329,17 @@ export function convertConfluenceStorage(html: string): string {
   processed = replaceTagPairs(processed, "ac:parameter", () => "");
 
   // Strip remaining ac:structured-macro wrappers but keep body
-  processed = processed.replace(/<\/?ac:structured-macro[^>]*>/gi, "");
-  processed = processed.replace(/<\/?ac:rich-text-body>/gi, "");
-  processed = processed.replace(/<\/?ac:plain-text-body>/gi, "");
+  processed = processed.replaceAll(/<\/?ac:structured-macro[^>]*>/gi, "");
+  processed = processed.replaceAll(/<\/?ac:rich-text-body>/gi, "");
+  processed = processed.replaceAll(/<\/?ac:plain-text-body>/gi, "");
 
   // Convert remaining HTML to markdown
   let markdown = NodeHtmlMarkdown.translate(processed);
 
   // Un-escape bracket patterns that NHM escaped
-  markdown = markdown.replace(/\\\[JIRA: ([^\]]+)\\\]/g, "[JIRA: $1]");
-  markdown = markdown.replace(/\\\[image\\\]/g, "[image]");
-  markdown = markdown.replace(/\\\[attached: ([^\]]+)\\\]/g, "[attached: $1]");
+  markdown = markdown.replaceAll(/\\\[JIRA: ([^\]]+)\\\]/g, "[JIRA: $1]");
+  markdown = markdown.replaceAll(/\\\[image\\\]/g, "[image]");
+  markdown = markdown.replaceAll(/\\\[attached: ([^\]]+)\\\]/g, "[attached: $1]");
 
   return markdown;
 }

@@ -31,8 +31,8 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
   const id =
     input.name
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || randomUUID();
+      .replaceAll(/[^a-z0-9]+/g, "-")
+      .replaceAll(/^-|-$/g, "") || randomUUID();
 
   // Verify parent exists if provided
   if (input.parentId) {

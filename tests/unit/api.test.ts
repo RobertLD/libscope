@@ -466,7 +466,7 @@ describe("API routes", () => {
 
       expect(events.length).toBeGreaterThanOrEqual(2);
       expect(events[0]).toHaveProperty("token");
-      expect(events[events.length - 1]).toMatchObject({ done: true });
+      expect(events.at(-1)).toMatchObject({ done: true });
 
       vi.mocked(configModule.loadConfig).mockRestore();
       vi.mocked(searchModule.searchDocuments).mockRestore();

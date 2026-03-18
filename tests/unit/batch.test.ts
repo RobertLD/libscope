@@ -82,7 +82,7 @@ describe("batchImport", () => {
     });
 
     expect(progressCalls.length).toBe(2);
-    const lastCall = progressCalls[progressCalls.length - 1];
+    const lastCall = progressCalls.at(-1)!;
     expect(lastCall.completed + lastCall.failed).toBe(2);
   });
 

@@ -175,7 +175,7 @@ describe("analytics", () => {
       const trends = getSearchTrends(db, 7);
       expect(trends.length).toBeGreaterThanOrEqual(1);
 
-      const today = trends[trends.length - 1]!;
+      const today = trends.at(-1)!;
       expect(today.count).toBe(2);
       expect(today.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });

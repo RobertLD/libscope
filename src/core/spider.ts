@@ -260,7 +260,7 @@ function stripTags(input: string): string {
     pos = scanPastTag(input, open + 1);
   }
   // Collapse whitespace left behind by removed tags
-  return result.replace(/\s+/g, " ");
+  return result.replaceAll(/\s+/g, " ");
 }
 
 function extractTitle(html: string, url: string): string {
@@ -277,7 +277,7 @@ function extractTitle(html: string, url: string): string {
     const parsed = new URL(url);
     const path = parsed.pathname.replace(/\/$/, "");
     const last = path.split("/").pop();
-    if (last) return last.replace(/[-_]/g, " ").replace(/\.\w+$/, "");
+    if (last) return last.replaceAll(/[-_]/g, " ").replace(/\.\w+$/, "");
     return parsed.hostname;
   } catch {
     return url;
@@ -481,7 +481,7 @@ function extractTextTitle(text: string, url: string): string {
     const parsed = new URL(url);
     const path = parsed.pathname.replace(/\/$/, "");
     const last = path.split("/").pop();
-    if (last) return last.replace(/[-_]/g, " ").replace(/\.\w+$/, "");
+    if (last) return last.replaceAll(/[-_]/g, " ").replace(/\.\w+$/, "");
     return parsed.hostname;
   } catch {
     return url;

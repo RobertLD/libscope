@@ -85,7 +85,7 @@ async function validateUrl(url: string, allowPrivateUrls = false): Promise<strin
   }
 
   // Resolve hostname and check every returned address
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  const hostname = parsed.hostname.replaceAll(/^\[|\]$/g, ""); // strip IPv6 brackets
   const { resolve4, resolve6 } = dns;
   const results = await Promise.allSettled([resolve4(hostname), resolve6(hostname)]);
 
@@ -202,7 +202,7 @@ async function _fetchWithRedirects(
     // Re-validate the connected IP hasn't changed (DNS rebinding defense)
     // Re-resolve and confirm it still matches the pinned set
     const parsed = new URL(current);
-    const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+    const hostname = parsed.hostname.replaceAll(/^\[|\]$/g, "");
     const recheck = await Promise.allSettled([dns.resolve4(hostname), dns.resolve6(hostname)]);
     const currentAddresses: string[] = [];
     for (const r of recheck) {
@@ -366,7 +366,7 @@ function titleFromUrl(url: string): string {
     const path = parsed.pathname.replace(/\/$/, "");
     const last = path.split("/").pop();
     if (last) {
-      return last.replace(/[-_]/g, " ").replace(/\.\w+$/, "");
+      return last.replaceAll(/[-_]/g, " ").replace(/\.\w+$/, "");
     }
     return parsed.hostname;
   } catch {

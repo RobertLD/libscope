@@ -136,7 +136,7 @@ export function parseObsidianMarkdown(
   }
 
   // Resolve ![[embeds]] — inline referenced content (1 level deep)
-  body = body.replace(/!\[\[([^\]|]+)(?:\|[^\]]*)?]]/g, (_match, link: string) => {
+  body = body.replaceAll(/!\[\[([^\]|]+)(?:\|[^\]]*)?]]/g, (_match, link: string) => {
     const target = fileMap.get(link.toLowerCase());
     if (!target) return `[${link}]`;
     // Read embedded file content (no recursion)
@@ -158,23 +158,23 @@ export function parseObsidianMarkdown(
   }
 
   // Resolve [[wikilinks]]
-  body = body.replace(
+  body = body.replaceAll(
     /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
     (_match, link: string, display?: string) => {
       const displayText = display ?? link;
-      const slug = link.toLowerCase().replace(/\s+/g, "-");
+      const slug = link.toLowerCase().replaceAll(/\s+/g, "-");
       return `[${displayText}](${slug})`;
     },
   );
 
   // Strip %%comments%%
-  body = body.replace(/%%[\s\S]*?%%/g, "");
+  body = body.replaceAll(/%%[\s\S]*?%%/g, "");
 
   // Strip dataview code blocks
-  body = body.replace(/```dataview[\s\S]*?```/g, "");
+  body = body.replaceAll(/```dataview[\s\S]*?```/g, "");
 
   // Convert callouts to blockquotes with type prefix
-  body = body.replace(/^> \[!(\w+)]\s*(.*)$/gm, (_match, type: string, rest: string) => {
+  body = body.replaceAll(/^> \[!(\w+)]\s*(.*)$/gm, (_match, type: string, rest: string) => {
     return `> **${type}**: ${rest}`;
   });
 

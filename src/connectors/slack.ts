@@ -129,41 +129,41 @@ export function convertSlackMrkdwn(text: string): string {
 
   // Preserve code blocks — replace with placeholders
   const codeBlocks: string[] = [];
-  result = result.replace(/```[\s\S]*?```/g, (match) => {
+  result = result.replaceAll(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match);
     return `__CODEBLOCK_${String(codeBlocks.length - 1)}__`;
   });
 
   const inlineCodes: string[] = [];
-  result = result.replace(/`[^`]+`/g, (match) => {
+  result = result.replaceAll(/`[^`]+`/g, (match) => {
     inlineCodes.push(match);
     return `__INLINECODE_${String(inlineCodes.length - 1)}__`;
   });
 
   // Channel links: <#C1234|channel> → #channel
-  result = result.replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1");
+  result = result.replaceAll(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1");
 
   // URL links: <url|text> → [text](url)
-  result = result.replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, "[$2]($1)");
+  result = result.replaceAll(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, "[$2]($1)");
 
   // Plain URLs: <url> → url
-  result = result.replace(/<(https?:\/\/[^>]+)>/g, "$1");
+  result = result.replaceAll(/<(https?:\/\/[^>]+)>/g, "$1");
 
   // Bold: *text* → **text** (but not inside words)
-  result = result.replace(/(^|[\s(])\*([^*\n]+)\*([\s).,!?]|$)/g, "$1**$2**$3");
+  result = result.replaceAll(/(^|[\s(])\*([^*\n]+)\*([\s).,!?]|$)/g, "$1**$2**$3");
 
   // Italic: _text_ → *text*
-  result = result.replace(/(^|[\s(])_([^_\n]+)_([\s).,!?]|$)/g, "$1*$2*$3");
+  result = result.replaceAll(/(^|[\s(])_([^_\n]+)_([\s).,!?]|$)/g, "$1*$2*$3");
 
   // Strikethrough: ~text~ → ~~text~~
-  result = result.replace(/(^|[\s(])~([^~\n]+)~([\s).,!?]|$)/g, "$1~~$2~~$3");
+  result = result.replaceAll(/(^|[\s(])~([^~\n]+)~([\s).,!?]|$)/g, "$1~~$2~~$3");
 
   // Restore code blocks
-  result = result.replace(
+  result = result.replaceAll(
     /__CODEBLOCK_(\d+)__/g,
     (_match, idx: string) => codeBlocks[Number(idx)] ?? "",
   );
-  result = result.replace(
+  result = result.replaceAll(
     /__INLINECODE_(\d+)__/g,
     (_match, idx: string) => inlineCodes[Number(idx)] ?? "",
   );
@@ -289,7 +289,7 @@ function formatTimestamp(ts: string): string {
 }
 
 function truncateTitle(text: string, maxLen: number = 80): string {
-  const cleaned = text.replace(/\n/g, " ").trim();
+  const cleaned = text.replaceAll(/\n/g, " ").trim();
   if (cleaned.length <= maxLen) return cleaned;
   return cleaned.slice(0, maxLen - 3) + "...";
 }

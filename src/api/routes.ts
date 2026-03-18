@@ -613,7 +613,7 @@ export async function handleRequest(
       const connectorName = url.searchParams.get("name") ?? undefined;
       const history = url.searchParams.get("history");
       const limitRaw = url.searchParams.get("limit");
-      const limitParsed = limitRaw ? parseInt(limitRaw, 10) : NaN;
+      const limitParsed = limitRaw ? Number.parseInt(limitRaw, 10) : Number.NaN;
       const limit = Number.isNaN(limitParsed)
         ? undefined
         : Math.max(1, Math.min(limitParsed, 1000));

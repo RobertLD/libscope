@@ -96,8 +96,8 @@ function validateSemver(version: string): void {
 function bumpPatchVersion(version: string): string {
   const parts = version.split(".");
   if (parts.length !== 3) return "1.0.1";
-  const patch = parseInt(parts[2]!, 10);
-  return `${parts[0]}.${parts[1]}.${isNaN(patch) ? 1 : patch + 1}`;
+  const patch = Number.parseInt(parts[2]!, 10);
+  return `${parts[0]}.${parts[1]}.${Number.isNaN(patch) ? 1 : patch + 1}`;
 }
 
 /** Gzip magic number: first two bytes of a gzip stream. */
