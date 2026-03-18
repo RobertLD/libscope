@@ -1,13 +1,4 @@
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  existsSync,
-  chmodSync,
-  openSync,
-  closeSync,
-  fdatasyncSync,
-} from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError } from "../errors.js";
@@ -38,18 +29,14 @@ function restrictPermissions(filePath: string, mode: number): void {
 }
 
 /**
- * Write sensitive config data with restrictive permissions from the start.
- * Opens with O_WRONLY|O_CREAT|O_TRUNC at mode 0o600 to avoid a window
- * where the file exists with default umask permissions.
+ * Write sensitive config data and ensure restrictive permissions.
+ * Uses writeFileSync with mode 0o600 for new files, then calls
+ * restrictPermissions() to also fix permissions on existing files
+ * (writeFileSync mode is only applied at creation time on POSIX).
  */
 function writeRestrictedFile(filePath: string, data: string): void {
-  const fd = openSync(filePath, "w", 0o600);
-  try {
-    writeFileSync(fd, data, "utf-8");
-    fdatasyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
+  writeFileSync(filePath, data, { encoding: "utf-8", mode: 0o600 });
+  restrictPermissions(filePath, 0o600);
 }
 
 export interface ConnectorConfig {

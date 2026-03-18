@@ -136,8 +136,14 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
     if (Array.isArray(parsed.webhooks) && parsed.webhooks.length > 0) {
       try {
         insertWebhook = db.prepare(
-          `INSERT OR REPLACE INTO webhooks (id, url, events, active, created_at, last_triggered_at, failure_count)
-           VALUES (@id, @url, @events, @active, @created_at, @last_triggered_at, @failure_count)`,
+          `INSERT INTO webhooks (id, url, events, active, created_at, last_triggered_at, failure_count)
+           VALUES (@id, @url, @events, @active, @created_at, @last_triggered_at, @failure_count)
+           ON CONFLICT(id) DO UPDATE SET
+             url = excluded.url,
+             events = excluded.events,
+             active = excluded.active,
+             last_triggered_at = excluded.last_triggered_at,
+             failure_count = excluded.failure_count`,
         );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
