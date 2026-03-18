@@ -1222,7 +1222,7 @@ function findFiles(dir: string, extensions: Set<string>): string[] {
   }
 
   walk(dir);
-  return results.sort();
+  return results.sort((a, b) => a.localeCompare(b));
 }
 
 // watch
@@ -2015,6 +2015,55 @@ packCmd
     },
   );
 
+/** Perform device-code auth for OneNote and persist credentials. */
+async function onenoteDeviceAuth(
+  onenoteConf: Record<string, unknown>,
+  connConfig: Record<string, unknown>,
+): Promise<{ token: string; conf: Record<string, unknown> }> {
+  const clientId = (onenoteConf.clientId as string | undefined) ?? process.env.ONENOTE_CLIENT_ID;
+  if (!clientId) {
+    console.error("Error: No client ID. Set ONENOTE_CLIENT_ID env var or provide --token.");
+    process.exit(1);
+  }
+  const tenantId =
+    (onenoteConf.tenantId as string | undefined) ?? process.env.ONENOTE_TENANT_ID ?? "common";
+
+  console.log("Starting device code authentication...");
+  const auth = await authenticateDeviceCode(clientId, tenantId);
+  const updated = {
+    ...onenoteConf,
+    clientId,
+    tenantId,
+    accessToken: auth.accessToken,
+    refreshToken: auth.refreshToken,
+    tokenExpiry: auth.expiresAt,
+  };
+  connConfig.onenote = updated;
+  saveConnectorConfig(connConfig);
+  console.log("\u2713 Authenticated successfully");
+  return { token: auth.accessToken, conf: updated };
+}
+
+/** Refresh an existing OneNote access token and persist credentials. */
+async function onenoteRefreshAuth(
+  onenoteConf: Record<string, unknown>,
+  connConfig: Record<string, unknown>,
+): Promise<string | undefined> {
+  const clientId = onenoteConf.clientId as string | undefined;
+  const refreshTok = onenoteConf.refreshToken as string | undefined;
+  if (!clientId || !refreshTok) {
+    return onenoteConf.accessToken as string | undefined;
+  }
+  const tenantId = (onenoteConf.tenantId as string | undefined) ?? "common";
+  const auth = await refreshAccessToken(clientId, refreshTok, tenantId);
+  onenoteConf.accessToken = auth.accessToken;
+  onenoteConf.refreshToken = auth.refreshToken;
+  onenoteConf.tokenExpiry = auth.expiresAt;
+  connConfig.onenote = onenoteConf;
+  saveConnectorConfig(connConfig);
+  return auth.accessToken;
+}
+
 // connect onenote
 const connectCmd = program.command("connect").description("Connect external services");
 
@@ -2047,47 +2096,13 @@ connectCmd
       let accessToken = opts.token;
 
       if (!accessToken && !opts.sync) {
-        const clientId =
-          (onenoteConf.clientId as string | undefined) ?? process.env.ONENOTE_CLIENT_ID;
-        if (!clientId) {
-          console.error("Error: No client ID. Set ONENOTE_CLIENT_ID env var or provide --token.");
-          process.exit(1);
-        }
-        const tenantId =
-          (onenoteConf.tenantId as string | undefined) ?? process.env.ONENOTE_TENANT_ID ?? "common";
-
-        console.log("Starting device code authentication...");
-        const auth = await authenticateDeviceCode(clientId, tenantId);
-        accessToken = auth.accessToken;
-        onenoteConf = {
-          ...onenoteConf,
-          clientId,
-          tenantId,
-          accessToken: auth.accessToken,
-          refreshToken: auth.refreshToken,
-          tokenExpiry: auth.expiresAt,
-        };
-        connConfig.onenote = onenoteConf;
-        saveConnectorConfig(connConfig);
-        console.log("✓ Authenticated successfully");
+        const result = await onenoteDeviceAuth(onenoteConf, connConfig);
+        accessToken = result.token;
+        onenoteConf = result.conf;
       }
 
       if (opts.sync && !accessToken) {
-        // Try to refresh token
-        const clientId = onenoteConf.clientId as string | undefined;
-        const refreshTok = onenoteConf.refreshToken as string | undefined;
-        if (clientId && refreshTok) {
-          const tenantId = (onenoteConf.tenantId as string | undefined) ?? "common";
-          const auth = await refreshAccessToken(clientId, refreshTok, tenantId);
-          accessToken = auth.accessToken;
-          onenoteConf.accessToken = auth.accessToken;
-          onenoteConf.refreshToken = auth.refreshToken;
-          onenoteConf.tokenExpiry = auth.expiresAt;
-          connConfig.onenote = onenoteConf;
-          saveConnectorConfig(connConfig);
-        } else {
-          accessToken = onenoteConf.accessToken as string | undefined;
-        }
+        accessToken = await onenoteRefreshAuth(onenoteConf, connConfig);
       }
 
       if (!accessToken) {

@@ -285,6 +285,9 @@ describe("integration: registry lifecycle", () => {
     // Search across both
     const { results } = searchRegistries("pack");
     expect(results.length).toBe(2);
-    expect(results.map((r) => r.pack.name).sort()).toEqual(["pack-from-reg1", "pack-from-reg2"]);
+    expect(results.map((r) => r.pack.name).sort((a, b) => a.localeCompare(b))).toEqual([
+      "pack-from-reg1",
+      "pack-from-reg2",
+    ]);
   });
 });

@@ -54,6 +54,24 @@ const rateLimitMap = new Map<string, RateLimitEntry>();
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 120;
 
+/** Evict expired and oldest entries from the rate limit map when it reaches capacity. */
+function evictRateLimitEntries(now: number): void {
+  // First pass: delete expired entries
+  for (const [key, val] of rateLimitMap) {
+    if (now - val.windowStart >= RATE_LIMIT_WINDOW_MS) {
+      rateLimitMap.delete(key);
+    }
+  }
+  // If still over limit, evict oldest entries
+  if (rateLimitMap.size >= MAX_RATE_LIMIT_ENTRIES) {
+    const sorted = [...rateLimitMap.entries()].sort((a, b) => a[1].windowStart - b[1].windowStart);
+    const toDelete = sorted.slice(0, 1000);
+    for (const [key] of toDelete) {
+      rateLimitMap.delete(key);
+    }
+  }
+}
+
 /** Check rate limit for a given IP. Returns true if request is allowed. */
 export function checkRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -62,10 +80,7 @@ export function checkRateLimit(ip: string): boolean {
   if (entry) {
     if (now - entry.windowStart < RATE_LIMIT_WINDOW_MS) {
       entry.count++;
-      if (entry.count > RATE_LIMIT_MAX_REQUESTS) {
-        return false;
-      }
-      return true;
+      return entry.count <= RATE_LIMIT_MAX_REQUESTS;
     }
     // Window expired — reset
     entry.count = 1;
@@ -75,22 +90,7 @@ export function checkRateLimit(ip: string): boolean {
 
   // New IP — evict expired/oldest entries if map is full
   if (rateLimitMap.size >= MAX_RATE_LIMIT_ENTRIES) {
-    // First pass: delete expired entries
-    for (const [key, val] of rateLimitMap) {
-      if (now - val.windowStart >= RATE_LIMIT_WINDOW_MS) {
-        rateLimitMap.delete(key);
-      }
-    }
-    // If still over limit, evict oldest entries
-    if (rateLimitMap.size >= MAX_RATE_LIMIT_ENTRIES) {
-      const sorted = [...rateLimitMap.entries()].sort(
-        (a, b) => a[1].windowStart - b[1].windowStart,
-      );
-      const toDelete = sorted.slice(0, 1000);
-      for (const [key] of toDelete) {
-        rateLimitMap.delete(key);
-      }
-    }
+    evictRateLimitEntries(now);
   }
 
   rateLimitMap.set(ip, { count: 1, windowStart: now });

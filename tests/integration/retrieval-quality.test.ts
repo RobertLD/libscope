@@ -50,7 +50,7 @@ class TfIdfEmbeddingProvider implements EmbeddingProvider {
     for (const text of corpusTexts) {
       for (const w of this.tokenize(text)) wordSet.add(w);
     }
-    const sorted = [...wordSet].sort();
+    const sorted = [...wordSet].sort((a, b) => a.localeCompare(b));
     this.vocab = new Map(sorted.map((w, i) => [w, i]));
     this.dimensions = sorted.length;
   }

@@ -1,10 +1,17 @@
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { corsMiddleware, checkRateLimit, checkApiKey } from "./middleware.js";
 import { handleRequest } from "./routes.js";
 import { ConnectorScheduler, loadScheduleEntries } from "../core/scheduler.js";
+
+/** Close an HTTP server, returning a promise that resolves when done. */
+function closeHttpServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
+}
 
 export interface ApiServerOptions {
   port?: number | undefined;
@@ -71,9 +78,7 @@ export async function startApiServer(
       resolve({
         close: async () => {
           await scheduler?.stop();
-          await new Promise<void>((resolveClose, rejectClose) => {
-            server.close((err) => (err ? rejectClose(err) : resolveClose()));
-          });
+          await closeHttpServer(server);
         },
         port,
         scheduler,
