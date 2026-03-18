@@ -5,6 +5,10 @@
 [![License: Source Available](https://img.shields.io/badge/License-Source%20Available-orange.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![Website](https://img.shields.io/badge/docs-libscope.com-blue)](https://libscope.com)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=RobertLD_libscope&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=RobertLD_libscope)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=RobertLD_libscope&metric=coverage)](https://sonarcloud.io/summary/new_code?id=RobertLD_libscope)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=RobertLD_libscope&metric=bugs)](https://sonarcloud.io/summary/new_code?id=RobertLD_libscope)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=RobertLD_libscope&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=RobertLD_libscope)
 
 LibScope is a local knowledge base that makes your documentation searchable by AI assistants. Point it at markdown files, URLs, or connect it to Obsidian/Notion/Confluence/Slack, and it chunks, embeds, and indexes everything into a local SQLite database. Your AI tools query it through [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) or a REST API.
 
