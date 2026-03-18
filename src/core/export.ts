@@ -131,6 +131,30 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
        VALUES (@id, @document_id, @chunk_id, @rating, @feedback, @suggested_correction, @rated_by, @created_at)`,
     );
 
+    // Webhooks are optional in backups (added later, secrets are redacted on export)
+    let insertWebhook: ReturnType<Database.Database["prepare"]> | null = null;
+    if (Array.isArray(parsed.webhooks) && parsed.webhooks.length > 0) {
+      try {
+        insertWebhook = db.prepare(
+          `INSERT INTO webhooks (id, url, events, active, created_at, last_triggered_at, failure_count)
+           VALUES (@id, @url, @events, @active, @created_at, @last_triggered_at, @failure_count)
+           ON CONFLICT(id) DO UPDATE SET
+             url = excluded.url,
+             events = excluded.events,
+             active = excluded.active,
+             last_triggered_at = excluded.last_triggered_at,
+             failure_count = excluded.failure_count`,
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("no such table")) {
+          log.debug({ err }, "Webhooks table not present, skipping webhook import");
+        } else {
+          log.warn({ err }, "Failed to prepare webhook import statement, skipping webhooks");
+        }
+      }
+    }
+
     const importAll = db.transaction(() => {
       for (const topic of parsed.topics) insertTopic.run(topic);
       for (const doc of parsed.documents) {
@@ -140,6 +164,17 @@ export function importFromBackup(db: Database.Database, backupPath: string): Exp
       }
       for (const chunk of parsed.chunks) insertChunk.run(chunk);
       for (const rating of parsed.ratings) insertRating.run(rating);
+
+      // Import webhooks (without secrets — they are redacted on export)
+      if (insertWebhook && parsed.webhooks) {
+        for (const webhook of parsed.webhooks) {
+          // Strip redacted secret — pass all fields except secret
+          const cleaned = Object.fromEntries(
+            Object.entries(webhook).filter(([key]) => key !== "secret"),
+          );
+          insertWebhook.run(cleaned);
+        }
+      }
     });
 
     importAll();

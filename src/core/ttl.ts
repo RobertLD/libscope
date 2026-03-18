@@ -34,8 +34,13 @@ export function pruneExpiredDocuments(db: Database.Database): PruneResult {
            SELECT id FROM chunks WHERE document_id IN (${placeholders})
          )`,
       ).run(...ids);
-    } catch {
-      // chunk_embeddings may not exist (sqlite-vec not loaded)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("no such table")) {
+        log.debug({ err }, "chunk_embeddings table not present, skipping cleanup");
+      } else {
+        log.warn({ err }, "Unexpected error cleaning up chunk_embeddings during TTL prune");
+      }
     }
 
     // Remove chunks
@@ -44,8 +49,13 @@ export function pruneExpiredDocuments(db: Database.Database): PruneResult {
     // Remove document tags
     try {
       db.prepare(`DELETE FROM document_tags WHERE document_id IN (${placeholders})`).run(...ids);
-    } catch {
-      // document_tags may not exist in all schema versions
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("no such table")) {
+        log.debug({ err }, "document_tags table not present, skipping cleanup");
+      } else {
+        log.warn({ err }, "Unexpected error cleaning up document_tags during TTL prune");
+      }
     }
 
     // Remove documents

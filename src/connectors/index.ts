@@ -1,9 +1,43 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError } from "../errors.js";
 import type Database from "better-sqlite3";
 import { getLogger } from "../logger.js";
+
+/** Error codes for platforms/filesystems that don't support chmod. */
+const CHMOD_UNSUPPORTED_CODES = new Set(["ENOTSUP", "ENOSYS"]);
+
+/**
+ * Best-effort chmod with error discrimination.
+ * Silently tolerates known unsupported-platform cases (ENOTSUP, ENOSYS).
+ * Logs a warning for unexpected failures (permissions, I/O errors).
+ */
+function restrictPermissions(filePath: string, mode: number): void {
+  try {
+    chmodSync(filePath, mode);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code && CHMOD_UNSUPPORTED_CODES.has(code)) {
+      return; // Platform doesn't support chmod — nothing we can do
+    }
+    getLogger().warn(
+      { err, filePath, mode: mode.toString(8) },
+      "Failed to set restrictive permissions — config path may be world-readable",
+    );
+  }
+}
+
+/**
+ * Write sensitive config data and ensure restrictive permissions.
+ * Uses writeFileSync with mode 0o600 for new files, then calls
+ * restrictPermissions() to also fix permissions on existing files
+ * (writeFileSync mode is only applied at creation time on POSIX).
+ */
+function writeRestrictedFile(filePath: string, data: string): void {
+  writeFileSync(filePath, data, { encoding: "utf-8", mode: 0o600 });
+  restrictPermissions(filePath, 0o600);
+}
 
 export interface ConnectorConfig {
   type: string;
@@ -13,8 +47,9 @@ export interface ConnectorConfig {
 function getConfigPath(): string {
   const dir = join(homedir(), ".libscope");
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
+  restrictPermissions(dir, 0o700);
   return join(dir, "connectors.json");
 }
 
@@ -34,7 +69,7 @@ export function loadConnectorConfig(): Record<string, unknown> {
 export function saveConnectorConfig(config: Record<string, unknown>): void {
   const configPath = getConfigPath();
   try {
-    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    writeRestrictedFile(configPath, JSON.stringify(config, null, 2));
   } catch (err) {
     throw new ConfigError("Failed to save connector config", err);
   }
@@ -77,7 +112,15 @@ const CONNECTORS_DIR = join(homedir(), ".libscope", "connectors");
 
 function ensureConnectorsDir(): void {
   if (!existsSync(CONNECTORS_DIR)) {
-    mkdirSync(CONNECTORS_DIR, { recursive: true });
+    mkdirSync(CONNECTORS_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    // Remediate existing directories that may have permissive permissions
+    restrictPermissions(CONNECTORS_DIR, 0o700);
+  }
+  try {
+    chmodSync(CONNECTORS_DIR, 0o700);
+  } catch {
+    // chmod may fail in test environments or non-POSIX systems
   }
 }
 
@@ -92,7 +135,7 @@ export function saveNamedConnectorConfig(name: string, config: object): void {
   validateConnectorName(name);
   ensureConnectorsDir();
   const filePath = join(CONNECTORS_DIR, `${name}.json`);
-  writeFileSync(filePath, JSON.stringify(config, null, 2), "utf-8");
+  writeRestrictedFile(filePath, JSON.stringify(config, null, 2));
   getLogger().info({ connector: name }, "Connector config saved");
 }
 
