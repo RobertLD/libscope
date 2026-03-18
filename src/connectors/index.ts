@@ -116,6 +116,11 @@ function ensureConnectorsDir(): void {
     // Remediate existing directories that may have permissive permissions
     restrictPermissions(CONNECTORS_DIR, 0o700);
   }
+  try {
+    chmodSync(CONNECTORS_DIR, 0o700);
+  } catch {
+    // chmod may fail in test environments or non-POSIX systems
+  }
 }
 
 function validateConnectorName(name: string): void {
