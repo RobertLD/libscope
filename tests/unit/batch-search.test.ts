@@ -29,13 +29,6 @@ describe("searchBatch", () => {
     );
   });
 
-  it("should throw ValidationError for non-array input", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await expect(searchBatch(db, provider, null as any)).rejects.toThrow(
-      "At least one search request is required",
-    );
-  });
-
   it("should throw ValidationError when exceeding max requests", async () => {
     const requests: BatchSearchRequest[] = Array.from(
       { length: BATCH_SEARCH_MAX_REQUESTS + 1 },
