@@ -306,6 +306,39 @@ function applyTitleBoost(results: SearchResult[], query: string): SearchResult[]
   });
 }
 
+/** Compute the maximum similarity between a candidate and the already-selected set. */
+function maxSimilarityToSelected(candidate: SearchResult, selected: SearchResult[]): number {
+  let maxSim = 0;
+  for (const sel of selected) {
+    const sim = 1 - Math.abs(candidate.score - sel.score);
+    if (sim > maxSim) maxSim = sim;
+  }
+  return maxSim;
+}
+
+/** Find the index of the candidate with the best MMR score. */
+function findBestMMRCandidate(
+  remaining: SearchResult[],
+  selected: SearchResult[],
+  lambda: number,
+): number {
+  let bestIdx = 0;
+  let bestMmrScore = -Infinity;
+
+  for (let i = 0; i < remaining.length; i++) {
+    const candidate = remaining[i];
+    if (candidate === undefined) continue;
+    const maxSim = maxSimilarityToSelected(candidate, selected);
+    const mmrScore = lambda * candidate.score - (1 - lambda) * maxSim;
+    if (mmrScore > bestMmrScore) {
+      bestMmrScore = mmrScore;
+      bestIdx = i;
+    }
+  }
+
+  return bestIdx;
+}
+
 /**
  * Rerank results using Maximal Marginal Relevance for diversity.
  * @param results - Pre-sorted results (highest score first)
@@ -322,24 +355,7 @@ function applyMMR(results: SearchResult[], diversity: number): SearchResult[] {
   selected.push(first);
 
   while (remaining.length > 0) {
-    let bestIdx = 0;
-    let bestMmrScore = -Infinity;
-
-    for (let i = 0; i < remaining.length; i++) {
-      const candidate = remaining[i];
-      if (candidate === undefined) continue;
-      let maxSim = 0;
-      for (const sel of selected) {
-        const sim = 1 - Math.abs(candidate.score - sel.score);
-        if (sim > maxSim) maxSim = sim;
-      }
-      const mmrScore = lambda * candidate.score - (1 - lambda) * maxSim;
-      if (mmrScore > bestMmrScore) {
-        bestMmrScore = mmrScore;
-        bestIdx = i;
-      }
-    }
-
+    const bestIdx = findBestMMRCandidate(remaining, selected, lambda);
     const picked = remaining.splice(bestIdx, 1)[0];
     if (picked === undefined) break;
     selected.push(picked);
@@ -426,6 +442,62 @@ function lazyCount(
   );
 }
 
+/** Apply common post-processing: title boost, re-sort, MMR, dedup. */
+function postProcessResults(results: SearchResult[], options: SearchOptions): SearchResult[] {
+  let processed = applyTitleBoost(results, options.query);
+  processed.sort((a, b) => b.score - a.score);
+
+  if (options.diversity !== undefined && options.diversity > 0) {
+    processed = applyMMR(processed, options.diversity);
+  }
+
+  if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
+    processed = deduplicateByDocument(processed, options.maxChunksPerDocument);
+  }
+
+  return processed;
+}
+
+/** Record search analytics if enabled. */
+function recordAnalytics(
+  db: Database.Database,
+  options: SearchOptions,
+  response: SearchResponse,
+  method: SearchMethod,
+  startTime: number,
+  analyticsEnabled: boolean,
+): void {
+  if (!analyticsEnabled) return;
+  logSearch(db, {
+    query: options.query,
+    searchMethod: method,
+    resultCount: response.totalCount,
+    latencyMs: performance.now() - startTime,
+    documentIds: response.results.map((r) => r.documentId),
+  });
+  recordSearchQuery(db, {
+    query: options.query,
+    resultCount: response.results.length,
+    topScore: response.results[0]?.score ?? null,
+    searchType: method,
+  });
+}
+
+/** Finalize a response: attach ratings (if no min filter) and context chunks. */
+function finalizeResponse(
+  db: Database.Database,
+  response: SearchResponse,
+  options: SearchOptions,
+): SearchResponse {
+  if (options.minRating === undefined) {
+    response.results = attachRatings(db, response.results);
+  }
+  if (options.contextChunks) {
+    response.results = attachContext(db, response.results, options.contextChunks);
+  }
+  return response;
+}
+
 /** Perform semantic search across indexed documents. */
 export async function searchDocuments(
   db: Database.Database,
@@ -435,23 +507,18 @@ export async function searchDocuments(
   const log = withCorrelationId({ operation: "searchDocuments" });
   const limit = Math.max(1, Math.min(options.limit ?? 10, 1000));
   const offset = Math.max(0, options.offset ?? 0);
-
   const analyticsEnabled = options.analyticsEnabled ?? true;
   const startTime = performance.now();
 
   log.info({ query: options.query, limit, offset }, "Searching documents");
 
-  // Generate query embedding
   const queryEmbedding = await provider.embed(options.query);
   const vecBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
 
-  // Try hybrid search: vector + FTS5 merged via RRF
-  // Over-fetch from each source by 3x (capped) to compensate for overlap
-  // between vector and FTS5 lists — RRF deduplicates shared chunks, so the
-  // fused unique set is often smaller than the sum of both lists.
   const overfetchFactor = 3;
   const maxCandidateLimit = 5000;
   const candidateLimit = Math.min((offset + limit) * overfetchFactor, maxCandidateLimit);
+
   try {
     const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit, 0);
     let ftsResults: SearchResult[] | null = null;
@@ -462,129 +529,35 @@ export async function searchDocuments(
       ftsResults = ftsResponse.results;
       ftsTotalCount = ftsResponse.totalCount;
     } catch {
-      // FTS5 not available — proceed with vector-only results
+      // FTS5 not available
     }
 
-    let mergedResults: SearchResult[];
-    let searchMethod: SearchMethod;
+    const isHybrid = ftsResults !== null && ftsResults.length > 0;
+    const mergedResults = isHybrid
+      ? reciprocalRankFusion(vectorResults.results, ftsResults!)
+      : vectorResults.results;
+    const searchMethod: SearchMethod = isHybrid ? "hybrid" : "vector";
 
-    if (ftsResults && ftsResults.length > 0) {
-      // Hybrid: merge vector + FTS5 via RRF
-      mergedResults = reciprocalRankFusion(vectorResults.results, ftsResults);
-      searchMethod = "hybrid";
-    } else {
-      mergedResults = vectorResults.results;
-      searchMethod = "vector";
-    }
+    const processed = postProcessResults(mergedResults, options);
+    const paginatedResults = processed.slice(offset, offset + limit);
 
-    // Apply title boost
-    mergedResults = applyTitleBoost(mergedResults, options.query);
-    // Re-sort after boost
-    mergedResults.sort((a, b) => b.score - a.score);
+    const totalCount = isHybrid
+      ? Math.max(processed.length, vectorResults.totalCount, ftsTotalCount)
+      : vectorResults.totalCount;
 
-    // Apply MMR diversity reranking if requested
-    if (options.diversity !== undefined && options.diversity > 0) {
-      mergedResults = applyMMR(mergedResults, options.diversity);
-    }
-
-    // Apply per-document deduplication on the full ranked list BEFORE
-    // pagination so that page sizes stay stable and later pages aren't
-    // short-changed by dedup removing items from within the page.
-    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
-      mergedResults = deduplicateByDocument(mergedResults, options.maxChunksPerDocument);
-    }
-
-    // Apply pagination to merged (and possibly deduped) results
-    let paginatedResults = mergedResults.slice(offset, offset + limit);
-
-    // Attach ratings post-pagination (deferred from search queries for perf)
-    if (options.minRating === undefined) {
-      paginatedResults = attachRatings(db, paginatedResults);
-    }
-
-    // totalCount: the fused unique set is the best lower bound we have.
-    // For hybrid searches, the true match count is at least as large as
-    // the unique items after fusion; use the max of that and each source's
-    // reported count so we never under-report.
-    const totalCount =
-      searchMethod === "hybrid"
-        ? Math.max(mergedResults.length, vectorResults.totalCount, ftsTotalCount)
-        : vectorResults.totalCount;
-
-    const response: SearchResponse = {
-      totalCount,
-      results: paginatedResults,
-    };
-
-    if (analyticsEnabled) {
-      logSearch(db, {
-        query: options.query,
-        searchMethod,
-        resultCount: response.totalCount,
-        latencyMs: performance.now() - startTime,
-        documentIds: response.results.map((r) => r.documentId),
-      });
-      recordSearchQuery(db, {
-        query: options.query,
-        resultCount: response.results.length,
-        topScore: response.results[0]?.score ?? null,
-        searchType: searchMethod,
-      });
-    }
-
-    if (options.contextChunks) {
-      response.results = attachContext(db, response.results, options.contextChunks);
-    }
-
-    return response;
+    const response: SearchResponse = { totalCount, results: paginatedResults };
+    recordAnalytics(db, options, response, searchMethod, startTime, analyticsEnabled);
+    return finalizeResponse(db, response, options);
   } catch (err) {
-    if (!isVectorTableError(err)) {
-      throw err;
-    }
+    if (!isVectorTableError(err)) throw err;
+
     log.warn({ err }, "Vector table missing, falling back to keyword search");
     const response = keywordSearch(db, options, limit, offset);
+    response.results = postProcessResults(response.results, options);
 
-    // Attach ratings post-query when minRating filter is not active
-    if (options.minRating === undefined) {
-      response.results = attachRatings(db, response.results);
-    }
-
-    // Apply title boost to fallback results
-    response.results = applyTitleBoost(response.results, options.query);
-    response.results.sort((a, b) => b.score - a.score);
-
-    // Apply MMR diversity reranking if requested
-    if (options.diversity !== undefined && options.diversity > 0) {
-      response.results = applyMMR(response.results, options.diversity);
-    }
-
-    if (analyticsEnabled) {
-      const method = response.results[0]?.scoreExplanation.method ?? "keyword";
-      logSearch(db, {
-        query: options.query,
-        searchMethod: method,
-        resultCount: response.totalCount,
-        latencyMs: performance.now() - startTime,
-        documentIds: response.results.map((r) => r.documentId),
-      });
-      recordSearchQuery(db, {
-        query: options.query,
-        resultCount: response.results.length,
-        topScore: response.results[0]?.score ?? null,
-        searchType: method,
-      });
-    }
-
-    // Deduplicate by document — keep top N chunks per document
-    if (options.maxChunksPerDocument !== undefined && options.maxChunksPerDocument > 0) {
-      response.results = deduplicateByDocument(response.results, options.maxChunksPerDocument);
-    }
-
-    if (options.contextChunks) {
-      response.results = attachContext(db, response.results, options.contextChunks);
-    }
-
-    return response;
+    const method = response.results[0]?.scoreExplanation.method ?? "keyword";
+    recordAnalytics(db, options, response, method, startTime, analyticsEnabled);
+    return finalizeResponse(db, response, options);
   }
 }
 
