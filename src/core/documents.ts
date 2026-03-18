@@ -81,7 +81,10 @@ export function deleteDocument(db: Database.Database, documentId: string): void 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("no such table")) {
-      getLogger().debug({ err, documentId }, "chunk_embeddings table not present, skipping cleanup");
+      getLogger().debug(
+        { err, documentId },
+        "chunk_embeddings table not present, skipping cleanup",
+      );
     } else {
       getLogger().warn({ err, documentId }, "Unexpected error cleaning up chunk_embeddings");
     }

@@ -49,10 +49,7 @@ describe("searchBatch", () => {
   });
 
   it("should return results keyed by query string", async () => {
-    const requests: BatchSearchRequest[] = [
-      { query: "TypeScript" },
-      { query: "JavaScript" },
-    ];
+    const requests: BatchSearchRequest[] = [{ query: "TypeScript" }, { query: "JavaScript" }];
     const result = await searchBatch(db, provider, requests);
 
     expect(result.results).toHaveProperty("TypeScript");
