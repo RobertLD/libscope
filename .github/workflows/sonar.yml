@@ -1,0 +1,151 @@
+name: SonarCloud Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Fetch full history so SonarCloud can compute blame information and
+          # new-code detection works correctly on PRs.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
+
+      # This step only runs on pull requests and posts a summary comment with
+      # the Quality Gate outcome. It runs even if the scan step fails so that
+      # reviewers always see feedback.
+      - name: Comment PR with Quality Gate result
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: RobertLD_libscope
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const token = process.env.SONAR_TOKEN;
+            const projectKey = process.env.SONAR_PROJECT_KEY;
+            const hostUrl = process.env.SONAR_HOST_URL;
+
+            // Fetch Quality Gate status from SonarCloud API
+            let status = 'UNKNOWN';
+            let conditions = [];
+            let dashboardUrl = `${hostUrl}/dashboard?id=${projectKey}`;
+
+            try {
+              const prNumber = context.payload.pull_request.number;
+              const branch = context.payload.pull_request.head.ref;
+
+              // SonarCloud uses the PR number for pull_request events
+              const apiUrl =
+                `${hostUrl}/api/qualitygates/project_status` +
+                `?projectKey=${encodeURIComponent(projectKey)}` +
+                `&pullRequest=${prNumber}`;
+
+              const response = await fetch(apiUrl, {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
+              });
+
+              if (response.ok) {
+                const data = await response.json();
+                status = data.projectStatus?.status ?? 'UNKNOWN';
+                conditions = data.projectStatus?.conditions ?? [];
+                dashboardUrl = `${hostUrl}/dashboard?id=${projectKey}&pullRequest=${prNumber}`;
+              } else {
+                console.log(`SonarCloud API returned ${response.status}: ${await response.text()}`);
+              }
+            } catch (err) {
+              console.log('Failed to fetch Quality Gate status:', err.message);
+            }
+
+            // Build a human-readable conditions table
+            const severityOrder = { BLOCKER: 0, CRITICAL: 1, MAJOR: 2, MINOR: 3, INFO: 4 };
+            const failingConditions = conditions
+              .filter((c) => c.status === 'ERROR')
+              .sort((a, b) => (severityOrder[a.metricKey] ?? 99) - (severityOrder[b.metricKey] ?? 99));
+
+            const statusEmoji = status === 'OK' ? '✅' : status === 'WARN' ? '⚠️' : '❌';
+            const statusLabel =
+              status === 'OK' ? 'Passed' : status === 'WARN' ? 'Warning' : status === 'ERROR' ? 'Failed' : 'Unknown';
+
+            let body = `## ${statusEmoji} SonarCloud Quality Gate — ${statusLabel}\n\n`;
+
+            if (failingConditions.length > 0) {
+              body += `### Failing Conditions\n\n`;
+              body += `| Metric | Value | Threshold |\n`;
+              body += `|--------|-------|-----------|\n`;
+              for (const c of failingConditions) {
+                body += `| ${c.metricKey} | ${c.actualValue ?? 'n/a'} | ${c.errorThreshold ?? 'n/a'} |\n`;
+              }
+              body += `\n`;
+            }
+
+            body += `[View full report on SonarCloud](${dashboardUrl})`;
+
+            // Find and update an existing bot comment, or create a new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+
+            const botComment = comments.find(
+              (c) => c.user?.login === 'github-actions[bot]' && c.body?.includes('SonarCloud Quality Gate'),
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            }
