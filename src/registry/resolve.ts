@@ -234,7 +234,11 @@ export async function verifyResolvedPackChecksum(resolved: ResolvedPack): Promis
   const versionEntry = manifest.versions.find((v) => v.version === resolved.version);
   if (!versionEntry) {
     log.warn(
-      { registryName: resolved.registryName, packName: resolved.packName, version: resolved.version },
+      {
+        registryName: resolved.registryName,
+        packName: resolved.packName,
+        version: resolved.version,
+      },
       "Version entry not found in manifest — skipping checksum verification",
     );
     return;

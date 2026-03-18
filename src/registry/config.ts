@@ -18,7 +18,9 @@ function getUserConfigPath(): string {
 /** Sanitize a URL for safe display in logs — masks any embedded credentials. */
 export function sanitizeUrl(url: string): string {
   // Replace password in https://user:pass@host or https://token@host patterns
-  return url.replace(/(https?:\/\/)[^:@/]+:[^@/]+@/, "$1***:***@").replace(/(https?:\/\/)[^:@/]+@/, "$1***@");
+  return url
+    .replace(/(https?:\/\/)[^:@/]+:[^@/]+@/, "$1***:***@")
+    .replace(/(https?:\/\/)[^:@/]+@/, "$1***@");
 }
 
 /** Validate a registry name (alphanumeric, hyphens, underscores; 2–64 chars). */

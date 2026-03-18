@@ -262,10 +262,7 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
     if (versionDirCreated && existsSync(versionDir)) {
       try {
         rmSync(versionDir, { recursive: true, force: true });
-        log.warn(
-          { versionDir },
-          "Rolled back version directory after publish failure",
-        );
+        log.warn({ versionDir }, "Rolled back version directory after publish failure");
       } catch (cleanupErr) {
         log.warn(
           { err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },

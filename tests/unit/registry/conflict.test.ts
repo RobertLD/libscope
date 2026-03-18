@@ -17,10 +17,15 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-const { findPackInRegistries, resolvePackFromRegistries, parsePackSpecifier, verifyResolvedPackChecksum } =
-  await import("../../../src/registry/resolve.js");
+const {
+  findPackInRegistries,
+  resolvePackFromRegistries,
+  parsePackSpecifier,
+  verifyResolvedPackChecksum,
+} = await import("../../../src/registry/resolve.js");
 const { saveRegistries } = await import("../../../src/registry/config.js");
-const { getRegistryCacheDir, getPackDataPath, getPackManifestPath } = await import("../../../src/registry/types.js");
+const { getRegistryCacheDir, getPackDataPath, getPackManifestPath } =
+  await import("../../../src/registry/types.js");
 const { clearIndexCache } = await import("../../../src/registry/git.js");
 
 function makeEntry(name: string, overrides: Partial<RegistryEntry> = {}): RegistryEntry {

@@ -41,7 +41,8 @@ vi.mock("node:os", async (importOriginal) => {
 
 const { publishPack } = await import("../../../src/registry/publish.js");
 const { loadRegistries, saveRegistries } = await import("../../../src/registry/config.js");
-const { getRegistryCacheDir, INDEX_FILE, PACKS_DIR } = await import("../../../src/registry/types.js");
+const { getRegistryCacheDir, INDEX_FILE, PACKS_DIR } =
+  await import("../../../src/registry/types.js");
 
 // ------------------------------------------------------------------
 // Helpers
@@ -77,7 +78,11 @@ function addTestRegistry(entry: RegistryEntry): void {
 }
 
 /** Minimal valid KnowledgePack JSON for a pack file. */
-function makePackJson(name: string, version = "1.0.0", overrides: Record<string, unknown> = {}): object {
+function makePackJson(
+  name: string,
+  version = "1.0.0",
+  overrides: Record<string, unknown> = {},
+): object {
   return {
     name,
     version,
@@ -155,9 +160,9 @@ describe("registry publish", () => {
       const packFile = join(tempDir, "evil.json");
       writeFileSync(packFile, JSON.stringify(makePackJson("../evil")), "utf-8");
 
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile }),
-      ).rejects.toThrow(/path separators|"\.\."/i);
+      await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
+        /path separators|"\.\."/i,
+      );
     });
 
     it("should reject a pack with name containing a forward slash", async () => {
@@ -168,9 +173,9 @@ describe("registry publish", () => {
       const packFile = join(tempDir, "slash.json");
       writeFileSync(packFile, JSON.stringify(makePackJson("foo/bar")), "utf-8");
 
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile }),
-      ).rejects.toThrow(/path separators/i);
+      await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
+        /path separators/i,
+      );
     });
 
     it("should reject a pack with name containing a backslash", async () => {
@@ -181,9 +186,9 @@ describe("registry publish", () => {
       const packFile = join(tempDir, "backslash.json");
       writeFileSync(packFile, JSON.stringify(makePackJson("foo\\bar")), "utf-8");
 
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile }),
-      ).rejects.toThrow(/path separators/i);
+      await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
+        /path separators/i,
+      );
     });
 
     it("should reject a pack with name containing a null byte", async () => {
@@ -194,9 +199,9 @@ describe("registry publish", () => {
       const packFile = join(tempDir, "null.json");
       writeFileSync(packFile, JSON.stringify(makePackJson("foo\0bar")), "utf-8");
 
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile }),
-      ).rejects.toThrow(/path separators|null bytes/i);
+      await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
+        /path separators|null bytes/i,
+      );
     });
 
     it("should reject a pack with an empty name", async () => {
@@ -208,9 +213,9 @@ describe("registry publish", () => {
       writeFileSync(packFile, JSON.stringify(makePackJson("")), "utf-8");
 
       // Empty name fails the "must have name" check before validatePathSegment
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile }),
-      ).rejects.toThrow(/name.*version|must not be empty/i);
+      await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
+        /name.*version|must not be empty/i,
+      );
     });
   });
 
@@ -510,9 +515,9 @@ describe("registry publish", () => {
       const packFile = join(tempDir, "pack.json");
       writeFileSync(packFile, JSON.stringify(makePackJson("my-pack", "1.0.0")), "utf-8");
 
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile }),
-      ).rejects.toThrow(/no local cache|sync/i);
+      await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
+        /no local cache|sync/i,
+      );
     });
 
     it("should throw when pack file does not exist", async () => {

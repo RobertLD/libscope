@@ -166,11 +166,7 @@ describe("registry git helpers", () => {
         author: "me",
         updatedAt: "2026-01-01",
       };
-      writeFileSync(
-        join(tempDir, "index.json"),
-        JSON.stringify([null, validEntry, null]),
-        "utf-8",
-      );
+      writeFileSync(join(tempDir, "index.json"), JSON.stringify([null, validEntry, null]), "utf-8");
 
       const result = readIndex(tempDir);
       expect(result).toHaveLength(1);
