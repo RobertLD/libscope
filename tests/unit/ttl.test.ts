@@ -62,27 +62,31 @@ describe("pruneExpiredDocuments", () => {
   it("should cascade delete chunk_embeddings when table exists", () => {
     const dbVec = createTestDbWithVec();
 
-    dbVec
-      .prepare(
-        `INSERT INTO documents (id, title, content, source_type, submitted_by, expires_at)
+    try {
+      dbVec
+        .prepare(
+          `INSERT INTO documents (id, title, content, source_type, submitted_by, expires_at)
        VALUES (?, ?, ?, 'manual', 'manual', ?)`,
-      )
-      .run("doc-exp", "Doc", "Content", "2000-01-01 00:00:00");
-    dbVec
-      .prepare(
-        `INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, 'text', 0)`,
-      )
-      .run("chunk-1", "doc-exp");
-    dbVec
-      .prepare(`INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)`)
-      .run("chunk-1", Buffer.from(new Float32Array([1, 0, 0, 0]).buffer));
+        )
+        .run("doc-exp", "Doc", "Content", "2000-01-01 00:00:00");
+      dbVec
+        .prepare(
+          `INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, 'text', 0)`,
+        )
+        .run("chunk-1", "doc-exp");
+      dbVec
+        .prepare(`INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)`)
+        .run("chunk-1", Buffer.from(new Float32Array([1, 0, 0, 0]).buffer));
 
-    pruneExpiredDocuments(dbVec);
+      pruneExpiredDocuments(dbVec);
 
-    const embeddings = dbVec.prepare("SELECT COUNT(*) as cnt FROM chunk_embeddings").get() as {
-      cnt: number;
-    };
-    expect(embeddings.cnt).toBe(0);
+      const embeddings = dbVec.prepare("SELECT COUNT(*) as cnt FROM chunk_embeddings").get() as {
+        cnt: number;
+      };
+      expect(embeddings.cnt).toBe(0);
+    } finally {
+      dbVec.close();
+    }
   });
 
   it("should handle case where chunk_embeddings table does not exist", () => {
