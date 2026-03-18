@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
@@ -21,6 +21,10 @@ describe("searchBatch", () => {
     // Seed a document with a chunk so searches have something to find
     seedTestDocument(db, "doc-1", { title: "TypeScript Guide", content: "TypeScript basics" });
     insertChunk(db, "chunk-1", "doc-1", "TypeScript is a typed superset of JavaScript", 0);
+  });
+
+  afterEach(() => {
+    db.close();
   });
 
   it("should throw ValidationError for empty request array", async () => {
