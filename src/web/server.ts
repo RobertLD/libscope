@@ -82,114 +82,161 @@ async function handleRequest(
     return;
   }
 
-  // Route: GET /
-  if (method === "GET" && pathname === "/") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(getDashboardHtml());
-    return;
+  if (method === "GET") {
+    const handled = await handleGetRoute(db, provider, pathname, url, res, req);
+    if (handled) return;
   }
 
-  // Route: GET /graph
-  if (method === "GET" && pathname === "/graph") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(getGraphPageHtml());
-    return;
-  }
-
-  // Route: GET /api/graph
-  if (method === "GET" && pathname === "/api/graph") {
-    await handleGraphRequest(db, req, res);
-    return;
-  }
-
-  // Route: GET /api/search
-  if (method === "GET" && pathname === "/api/search") {
-    const query = url.searchParams.get("q") ?? "";
-    const rawLimit = parseInt(url.searchParams.get("limit") ?? "10", 10);
-    const limit = Number.isNaN(rawLimit) ? 10 : Math.max(1, Math.min(100, rawLimit));
-    const topic = url.searchParams.get("topic") ?? undefined;
-
-    if (!query) {
-      sendJson(res, 400, { error: "Missing query parameter 'q'" });
-      return;
-    }
-
-    const results = await searchDocuments(db, provider, { query, limit, topic });
-    sendJson(res, 200, results);
-    return;
-  }
-
-  // Route: GET /api/documents
-  if (method === "GET" && pathname === "/api/documents") {
-    const rawLimit2 = parseInt(url.searchParams.get("limit") ?? "50", 10);
-    const limit = Number.isNaN(rawLimit2) ? 50 : Math.max(1, Math.min(500, rawLimit2));
-    const topic = url.searchParams.get("topic") ?? undefined;
-    const docs = listDocuments(db, { limit, topicId: topic });
-    sendJson(res, 200, docs);
-    return;
-  }
-
-  // Route: GET/DELETE /api/documents/:id
   const docMatch = pathname.match(/^\/api\/documents\/([^/]+)$/);
   if (docMatch) {
     const id = decodeURIComponent(docMatch[1]!);
-
-    if (method === "GET") {
-      try {
-        const doc = getDocument(db, id);
-        sendJson(res, 200, doc);
-      } catch (err) {
-        if (err instanceof DocumentNotFoundError) {
-          sendJson(res, 404, { error: "Document not found" });
-        } else {
-          throw err;
-        }
-      }
-      return;
-    }
-
-    if (method === "DELETE") {
-      try {
-        deleteDocument(db, id);
-        sendJson(res, 200, { success: true });
-      } catch (err) {
-        if (err instanceof DocumentNotFoundError) {
-          sendJson(res, 404, { error: "Document not found" });
-        } else {
-          throw err;
-        }
-      }
-      return;
-    }
+    const handled = handleDocumentByIdRoute(db, method, id, res);
+    if (handled) return;
   }
 
-  // Route: GET /api/topics
-  if (method === "GET" && pathname === "/api/topics") {
-    const topics = getTopicStats(db);
-    sendJson(res, 200, topics);
-    return;
-  }
-
-  // Route: GET /api/stats
-  if (method === "GET" && pathname === "/api/stats") {
-    const docCount = validateCountRow(
-      db.prepare("SELECT COUNT(*) AS cnt FROM documents").get(),
-      "document count",
-    );
-    const topicCount = validateCountRow(
-      db.prepare("SELECT COUNT(*) AS cnt FROM topics").get(),
-      "topic count",
-    );
-    const chunkCount = validateCountRow(
-      db.prepare("SELECT COUNT(*) AS cnt FROM chunks").get(),
-      "chunk count",
-    );
-    sendJson(res, 200, { documentCount: docCount, topicCount, chunkCount });
-    return;
-  }
-
-  // 404
   sendJson(res, 404, { error: "Not found" });
+}
+
+/** Handle all GET routes. Returns true if a route matched. */
+async function handleGetRoute(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  pathname: string,
+  url: URL,
+  res: ServerResponse,
+  req: IncomingMessage,
+): Promise<boolean> {
+  if (pathname === "/") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(getDashboardHtml());
+    return true;
+  }
+
+  if (pathname === "/graph") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(getGraphPageHtml());
+    return true;
+  }
+
+  if (pathname === "/api/graph") {
+    await handleGraphRequest(db, req, res);
+    return true;
+  }
+
+  if (pathname === "/api/search") {
+    await handleSearchRoute(db, provider, url, res);
+    return true;
+  }
+
+  if (pathname === "/api/documents") {
+    handleDocumentsListRoute(db, url, res);
+    return true;
+  }
+
+  if (pathname === "/api/topics") {
+    sendJson(res, 200, getTopicStats(db));
+    return true;
+  }
+
+  if (pathname === "/api/stats") {
+    handleStatsRoute(db, res);
+    return true;
+  }
+
+  return false;
+}
+
+/** Handle GET /api/search */
+async function handleSearchRoute(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  url: URL,
+  res: ServerResponse,
+): Promise<void> {
+  const query = url.searchParams.get("q") ?? "";
+  const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "10", 10);
+  const limit = Number.isNaN(rawLimit) ? 10 : Math.max(1, Math.min(100, rawLimit));
+  const topic = url.searchParams.get("topic") ?? undefined;
+
+  if (!query) {
+    sendJson(res, 400, { error: "Missing query parameter 'q'" });
+    return;
+  }
+
+  const results = await searchDocuments(db, provider, { query, limit, topic });
+  sendJson(res, 200, results);
+}
+
+/** Handle GET /api/documents */
+function handleDocumentsListRoute(db: Database.Database, url: URL, res: ServerResponse): void {
+  const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
+  const limit = Number.isNaN(rawLimit) ? 50 : Math.max(1, Math.min(500, rawLimit));
+  const topic = url.searchParams.get("topic") ?? undefined;
+  const docs = listDocuments(db, { limit, topicId: topic });
+  sendJson(res, 200, docs);
+}
+
+/** Handle GET/DELETE /api/documents/:id. Returns true if method matched. */
+function handleDocumentByIdRoute(
+  db: Database.Database,
+  method: string,
+  id: string,
+  res: ServerResponse,
+): boolean {
+  if (method === "GET") {
+    handleGetDocumentById(db, id, res);
+    return true;
+  }
+  if (method === "DELETE") {
+    handleDeleteDocumentById(db, id, res);
+    return true;
+  }
+  return false;
+}
+
+/** Handle GET /api/documents/:id */
+function handleGetDocumentById(db: Database.Database, id: string, res: ServerResponse): void {
+  try {
+    const doc = getDocument(db, id);
+    sendJson(res, 200, doc);
+  } catch (err) {
+    if (err instanceof DocumentNotFoundError) {
+      sendJson(res, 404, { error: "Document not found" });
+    } else {
+      throw err;
+    }
+  }
+}
+
+/** Handle DELETE /api/documents/:id */
+function handleDeleteDocumentById(db: Database.Database, id: string, res: ServerResponse): void {
+  try {
+    deleteDocument(db, id);
+    sendJson(res, 200, { success: true });
+  } catch (err) {
+    if (err instanceof DocumentNotFoundError) {
+      sendJson(res, 404, { error: "Document not found" });
+    } else {
+      throw err;
+    }
+  }
+}
+
+/** Handle GET /api/stats */
+function handleStatsRoute(db: Database.Database, res: ServerResponse): void {
+  const docCount = validateCountRow(
+    db.prepare("SELECT COUNT(*) AS cnt FROM documents").get(),
+    "document count",
+  );
+  const topicCount = validateCountRow(
+    db.prepare("SELECT COUNT(*) AS cnt FROM topics").get(),
+    "topic count",
+  );
+  const chunkCount = validateCountRow(
+    db.prepare("SELECT COUNT(*) AS cnt FROM chunks").get(),
+    "chunk count",
+  );
+  sendJson(res, 200, { documentCount: docCount, topicCount, chunkCount });
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
