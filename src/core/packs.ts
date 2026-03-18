@@ -157,64 +157,63 @@ function validateRegistryUrl(url: string): void {
   }
 }
 
+/** Validate that a value is a non-empty string, throwing with the given message if not. */
+function requireString(value: unknown, message: string, allowEmpty = false): void {
+  if (typeof value !== "string") throw new ValidationError(message);
+  if (!allowEmpty && !value) throw new ValidationError(message);
+}
+
+/** Validate a single document entry within a pack. */
+function validatePackDocument(doc: unknown, index: number): void {
+  if (typeof doc !== "object" || doc === null) {
+    throw new ValidationError(`Invalid pack format: document at index ${index} is not an object`);
+  }
+  const d = doc as Record<string, unknown>;
+  requireString(
+    d["title"],
+    `Invalid pack format: document at index ${index} missing or invalid 'title'`,
+  );
+  requireString(
+    d["content"],
+    `Invalid pack format: document at index ${index} missing or invalid 'content'`,
+  );
+  requireString(
+    d["source"],
+    `Invalid pack format: document at index ${index} missing or invalid 'source'`,
+    true,
+  );
+}
+
+/** Validate the metadata block of a pack. */
+function validatePackMetadata(metadata: unknown): void {
+  if (typeof metadata !== "object" || metadata === null) {
+    throw new ValidationError("Invalid pack format: missing or invalid 'metadata'");
+  }
+  const meta = metadata as Record<string, unknown>;
+  requireString(meta["author"], "Invalid pack format: metadata missing 'author'", true);
+  requireString(meta["license"], "Invalid pack format: metadata missing 'license'", true);
+  requireString(meta["createdAt"], "Invalid pack format: metadata missing 'createdAt'", true);
+}
+
 function validatePack(data: unknown): KnowledgePack {
   if (typeof data !== "object" || data === null) {
     throw new ValidationError("Invalid pack format: expected an object");
   }
 
   const obj = data as Record<string, unknown>;
+  requireString(obj["name"], "Invalid pack format: missing or invalid 'name'");
+  requireString(obj["version"], "Invalid pack format: missing or invalid 'version'");
+  requireString(obj["description"], "Invalid pack format: missing or invalid 'description'", true);
 
-  if (typeof obj["name"] !== "string" || !obj["name"]) {
-    throw new ValidationError("Invalid pack format: missing or invalid 'name'");
-  }
-  if (typeof obj["version"] !== "string" || !obj["version"]) {
-    throw new ValidationError("Invalid pack format: missing or invalid 'version'");
-  }
-  if (typeof obj["description"] !== "string") {
-    throw new ValidationError("Invalid pack format: missing or invalid 'description'");
-  }
   if (!Array.isArray(obj["documents"])) {
     throw new ValidationError("Invalid pack format: 'documents' must be an array");
   }
 
-  const documents = obj["documents"] as unknown[];
-  for (let i = 0; i < documents.length; i++) {
-    const doc = documents[i];
-    if (typeof doc !== "object" || doc === null) {
-      throw new ValidationError(`Invalid pack format: document at index ${i} is not an object`);
-    }
-    const d = doc as Record<string, unknown>;
-    if (typeof d["title"] !== "string" || !d["title"]) {
-      throw new ValidationError(
-        `Invalid pack format: document at index ${i} missing or invalid 'title'`,
-      );
-    }
-    if (typeof d["content"] !== "string" || !d["content"]) {
-      throw new ValidationError(
-        `Invalid pack format: document at index ${i} missing or invalid 'content'`,
-      );
-    }
-    if (typeof d["source"] !== "string") {
-      throw new ValidationError(
-        `Invalid pack format: document at index ${i} missing or invalid 'source'`,
-      );
-    }
+  for (let i = 0; i < (obj["documents"] as unknown[]).length; i++) {
+    validatePackDocument((obj["documents"] as unknown[])[i], i);
   }
 
-  const metadata = obj["metadata"];
-  if (typeof metadata !== "object" || metadata === null) {
-    throw new ValidationError("Invalid pack format: missing or invalid 'metadata'");
-  }
-  const meta = metadata as Record<string, unknown>;
-  if (typeof meta["author"] !== "string") {
-    throw new ValidationError("Invalid pack format: metadata missing 'author'");
-  }
-  if (typeof meta["license"] !== "string") {
-    throw new ValidationError("Invalid pack format: metadata missing 'license'");
-  }
-  if (typeof meta["createdAt"] !== "string") {
-    throw new ValidationError("Invalid pack format: metadata missing 'createdAt'");
-  }
+  validatePackMetadata(obj["metadata"]);
 
   return data as KnowledgePack;
 }
@@ -258,71 +257,56 @@ export async function listAvailablePacks(registryUrl?: string): Promise<PackInfo
   }
 }
 
-/** Install a pack from a local JSON file path or registry name. */
-export async function installPack(
-  db: Database.Database,
-  provider: EmbeddingProvider,
+/** Load a pack from a local file path. */
+function loadPackFromFile(packNameOrPath: string): KnowledgePack {
+  const resolved = pathResolve(packNameOrPath);
+  if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
+    throw new ValidationError("Pack file path must be within the current working directory");
+  }
+  try {
+    const raw = readPackFile(resolved);
+    const parsed: unknown = JSON.parse(raw);
+    return validatePack(parsed);
+  } catch (err) {
+    if (err instanceof ValidationError) throw err;
+    throw new ValidationError(
+      `Failed to read pack file "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/** Load a pack from a remote registry. */
+async function loadPackFromRegistry(
   packNameOrPath: string,
-  options?: InstallOptions,
-): Promise<InstallResult> {
-  const log = getLogger();
-  let pack: KnowledgePack;
-
-  // Try loading as a local file first (supports .json and .json.gz)
-  if (packNameOrPath.endsWith(".json") || packNameOrPath.endsWith(".json.gz")) {
-    const resolved = pathResolve(packNameOrPath);
-    // Prevent path traversal: if a relative path is given, ensure it resolves within CWD
-    if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
-      throw new ValidationError("Pack file path must be within the current working directory");
+  registryUrl: string,
+): Promise<KnowledgePack> {
+  validateRegistryUrl(registryUrl);
+  const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
+  const packUrl = `${baseUrl}/${packNameOrPath}.json`;
+  try {
+    const response = await fetch(packUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) {
+      throw new FetchError(`Pack fetch returned ${response.status}: ${response.statusText}`);
     }
-    try {
-      const raw = readPackFile(resolved);
-      const parsed: unknown = JSON.parse(raw);
-      pack = validatePack(parsed);
-    } catch (err) {
-      if (err instanceof ValidationError) throw err;
-      throw new ValidationError(
-        `Failed to read pack file "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  } else {
-    // Fetch from registry
-    const registryUrl = options?.registryUrl ?? DEFAULT_REGISTRY_URL;
-
-    validateRegistryUrl(registryUrl);
-    const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
-    const packUrl = `${baseUrl}/${packNameOrPath}.json`;
-    try {
-      const response = await fetch(packUrl, { signal: AbortSignal.timeout(30_000) });
-      if (!response.ok) {
-        throw new FetchError(`Pack fetch returned ${response.status}: ${response.statusText}`);
-      }
-      const data: unknown = await response.json();
-      pack = validatePack(data);
-    } catch (err) {
-      if (err instanceof ValidationError) throw err;
-      if (err instanceof FetchError) throw err;
-      throw new FetchError(
-        `Failed to fetch pack "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    const data: unknown = await response.json();
+    return validatePack(data);
+  } catch (err) {
+    if (err instanceof ValidationError) throw err;
+    if (err instanceof FetchError) throw err;
+    throw new FetchError(
+      `Failed to fetch pack "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+}
 
-  // Check if already installed
-  const existing = db.prepare("SELECT name FROM packs WHERE name = ?").get(pack.name) as
-    | { name: string }
-    | undefined;
-
-  if (existing) {
-    log.info({ pack: pack.name }, "Pack already installed");
-    return { packName: pack.name, documentsInstalled: 0, alreadyInstalled: true, errors: 0 };
-  }
-
+/** Validate install options and return normalized values. */
+function validateInstallOptions(
+  options: InstallOptions | undefined,
+  total: number,
+): { batchSize: number; concurrency: number; resumeFrom: number } {
   const batchSize = options?.batchSize ?? 10;
   const concurrency = options?.concurrency ?? 4;
   const resumeFrom = options?.resumeFrom ?? 0;
-  const onProgress = options?.onProgress;
-  const total = pack.documents.length;
 
   if (!Number.isInteger(batchSize) || batchSize <= 0) {
     throw new ValidationError("batchSize must be a positive integer");
@@ -339,6 +323,115 @@ export async function installPack(
     );
   }
 
+  return { batchSize, concurrency, resumeFrom };
+}
+
+type DocChunkInfo = {
+  doc: PackDocument;
+  docId: string;
+  contentHash: string;
+  chunks: string[];
+  chunkOffset: number;
+};
+type ResolvedBatch = {
+  docInfos: DocChunkInfo[];
+  allChunks: string[];
+};
+
+/** Chunk a batch's documents on demand, right before embedding. */
+function resolveBatch(batchDocs: PackDocument[]): ResolvedBatch {
+  const docInfos: DocChunkInfo[] = [];
+  const allChunks: string[] = [];
+  for (const doc of batchDocs) {
+    const contentHash = createHash("sha256").update(doc.content).digest("hex");
+    const useStreaming = doc.content.length > STREAMING_THRESHOLD;
+    const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
+    docInfos.push({
+      doc,
+      docId: randomUUID(),
+      contentHash,
+      chunks,
+      chunkOffset: allChunks.length,
+    });
+    allChunks.push(...chunks);
+  }
+  return { docInfos, allChunks };
+}
+
+/** Insert a single resolved batch into the database. Returns number of documents installed. */
+function insertBatchIntoDb(
+  db: Database.Database,
+  batch: ResolvedBatch,
+  embeddings: number[][],
+  packName: string,
+  insertDoc: Database.Statement,
+  insertChunk: Database.Statement,
+  insertEmbedding: Database.Statement,
+): number {
+  const log = getLogger();
+  let batchInstalled = 0;
+  const doInsert = db.transaction(() => {
+    batchInstalled = 0;
+    for (const info of batch.docInfos) {
+      insertDoc.run(
+        info.docId,
+        "library",
+        info.doc.title,
+        info.doc.content,
+        info.doc.source || null,
+        "manual",
+        info.contentHash,
+        packName,
+      );
+      for (let j = 0; j < info.chunks.length; j++) {
+        const chunkId = randomUUID();
+        const chunkText = info.chunks[j] ?? "";
+        const embedding = embeddings[info.chunkOffset + j] ?? [];
+        insertChunk.run(chunkId, info.docId, chunkText, j);
+        try {
+          const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
+          insertEmbedding.run(chunkId, vecBuffer);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!message.includes("no such table")) {
+            log.warn({ chunkId, err }, "Failed to insert vector embedding");
+          }
+        }
+      }
+      batchInstalled++;
+    }
+  });
+  doInsert();
+  return batchInstalled;
+}
+
+/** Install a pack from a local JSON file path or registry name. */
+export async function installPack(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  packNameOrPath: string,
+  options?: InstallOptions,
+): Promise<InstallResult> {
+  const log = getLogger();
+
+  const isLocalFile = packNameOrPath.endsWith(".json") || packNameOrPath.endsWith(".json.gz");
+  const pack = isLocalFile
+    ? loadPackFromFile(packNameOrPath)
+    : await loadPackFromRegistry(packNameOrPath, options?.registryUrl ?? DEFAULT_REGISTRY_URL);
+
+  // Check if already installed
+  const existing = db.prepare("SELECT name FROM packs WHERE name = ?").get(pack.name) as
+    | { name: string }
+    | undefined;
+
+  if (existing) {
+    log.info({ pack: pack.name }, "Pack already installed");
+    return { packName: pack.name, documentsInstalled: 0, alreadyInstalled: true, errors: 0 };
+  }
+
+  const total = pack.documents.length;
+  const { batchSize, concurrency, resumeFrom } = validateInstallOptions(options, total);
+  const onProgress = options?.onProgress;
   const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
 
   log.info(
@@ -346,14 +439,12 @@ export async function installPack(
     "Installing pack",
   );
 
-  // Insert the pack record first (documents.pack_name has FK to packs.name)
   db.prepare("INSERT INTO packs (name, version, description, doc_count) VALUES (?, ?, ?, 0)").run(
     pack.name,
     pack.version,
     pack.description,
   );
 
-  // Prepare statements once (reused across all batches)
   const insertDoc = db.prepare(`
     INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -367,51 +458,12 @@ export async function installPack(
     VALUES (?, ?)
   `);
 
-  // Slice docs into batches by index only — chunks are computed lazily when each
-  // batch is scheduled, so we never hold all chunks in memory simultaneously.
-  type DocChunkInfo = {
-    doc: PackDocument;
-    docId: string;
-    contentHash: string;
-    chunks: string[];
-    chunkOffset: number; // offset into allChunks for this batch
-  };
-  type BatchData = {
-    batchDocs: PackDocument[];
-  };
-  type ResolvedBatch = {
-    docInfos: DocChunkInfo[];
-    allChunks: string[];
-  };
-
+  type BatchData = { batchDocs: PackDocument[] };
   const batches: BatchData[] = [];
   for (let batchStart = 0; batchStart < docs.length; batchStart += batchSize) {
     batches.push({ batchDocs: docs.slice(batchStart, batchStart + batchSize) });
   }
 
-  /** Chunk a batch's documents on demand, right before embedding. */
-  function resolveBatch(batch: BatchData): ResolvedBatch {
-    const docInfos: DocChunkInfo[] = [];
-    const allChunks: string[] = [];
-    for (const doc of batch.batchDocs) {
-      const contentHash = createHash("sha256").update(doc.content).digest("hex");
-      const useStreaming = doc.content.length > STREAMING_THRESHOLD;
-      const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
-      docInfos.push({
-        doc,
-        docId: randomUUID(),
-        contentHash,
-        chunks,
-        chunkOffset: allChunks.length,
-      });
-      allChunks.push(...chunks);
-    }
-    return { docInfos, allChunks };
-  }
-
-  // Phase 2 & 3: Embed batches concurrently (up to `concurrency` at a time),
-  // inserting each batch into the DB in order as embeddings complete.
-  // This maximises provider throughput while keeping inserts serialised (SQLite requirement).
   let installed = 0;
   let errors = 0;
   let processedCount = resumeFrom;
@@ -427,46 +479,20 @@ export async function installPack(
     while (nextInsertIdx < batches.length && embedResults[nextInsertIdx] !== undefined) {
       const i = nextInsertIdx++;
       const { resolved: batch, embeddings, success } = embedResults[i]!;
-      const result = { embeddings, success };
 
-      if (!result.success) {
+      if (!success) {
         errors += batch.docInfos.length;
       } else {
-        let batchInstalled = 0;
-        const doInsert = db.transaction(() => {
-          batchInstalled = 0;
-          for (const info of batch.docInfos) {
-            insertDoc.run(
-              info.docId,
-              "library",
-              info.doc.title,
-              info.doc.content,
-              info.doc.source || null,
-              "manual",
-              info.contentHash,
-              pack.name,
-            );
-            for (let j = 0; j < info.chunks.length; j++) {
-              const chunkId = randomUUID();
-              const chunkText = info.chunks[j] ?? "";
-              const embedding = result.embeddings[info.chunkOffset + j] ?? [];
-              insertChunk.run(chunkId, info.docId, chunkText, j);
-              try {
-                const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-                insertEmbedding.run(chunkId, vecBuffer);
-              } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                if (!message.includes("no such table")) {
-                  log.warn({ chunkId, err }, "Failed to insert vector embedding");
-                }
-              }
-            }
-            batchInstalled++;
-          }
-        });
         try {
-          doInsert();
-          installed += batchInstalled;
+          installed += insertBatchIntoDb(
+            db,
+            batch,
+            embeddings,
+            pack.name,
+            insertDoc,
+            insertChunk,
+            insertEmbedding,
+          );
         } catch (err) {
           log.warn(
             { err, pack: pack.name, batchIndex: i },
@@ -485,7 +511,7 @@ export async function installPack(
     }
   }
 
-  // Semaphore-based concurrent embedding: up to `concurrency` embedBatch calls in flight at once.
+  // Semaphore-based concurrent embedding
   await new Promise<void>((resolve) => {
     if (batches.length === 0) {
       resolve();
@@ -498,11 +524,9 @@ export async function installPack(
     function scheduleNext(): void {
       while (activeCount < concurrency && scheduleIdx < batches.length) {
         const i = scheduleIdx++;
-        const resolved = resolveBatch(batches[i]!);
+        const resolved = resolveBatch(batches[i]!.batchDocs);
         activeCount++;
 
-        // Wrap in try/catch so synchronous throws from embedBatch don't leave
-        // the surrounding Promise permanently pending.
         let embedPromise: Promise<number[][]>;
         if (resolved.allChunks.length > 0) {
           try {
@@ -540,7 +564,6 @@ export async function installPack(
     scheduleNext();
   });
 
-  // Update doc count
   db.prepare("UPDATE packs SET doc_count = ? WHERE name = ?").run(installed, pack.name);
 
   log.info({ pack: pack.name, installed, errors }, "Pack installed");
@@ -730,6 +753,71 @@ function isUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
+/** Collect all files from filesystem source paths, resolving directories. */
+function collectAllSourceFiles(
+  fileSources: string[],
+  recursive: boolean,
+  extensions: Set<string>,
+  excludePatterns: string[],
+): string[] {
+  const allFiles: string[] = [];
+  for (const src of fileSources) {
+    const resolved = pathResolve(src);
+    let stat;
+    try {
+      stat = statSync(resolved);
+    } catch (err) {
+      throw new ValidationError(
+        `Source path "${src}" does not exist or is not accessible: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (stat.isDirectory()) {
+      allFiles.push(...collectFiles(resolved, resolved, recursive, extensions, excludePatterns));
+    } else if (stat.isFile()) {
+      allFiles.push(resolved);
+    } else {
+      throw new ValidationError(`Source path "${src}" is not a file or directory`);
+    }
+  }
+  return allFiles;
+}
+
+/** Parse a single file into a PackDocument, returning null if it should be skipped. */
+async function parseFileToPackDoc(filePath: string): Promise<PackDocument | null> {
+  const log = getLogger();
+  const parser = getParserForFile(filePath);
+  if (!parser) {
+    log.debug({ file: filePath }, "No parser for file, skipping");
+    return null;
+  }
+
+  const buffer = readFileSync(filePath);
+  const content = await parser.parse(buffer);
+  const trimmed = content.trimEnd();
+  if (trimmed.length === 0) {
+    log.debug({ file: filePath }, "Empty content after parsing, skipping");
+    return null;
+  }
+
+  const title = basename(filePath).replace(/\.[^.]+$/, "");
+  const tags = suggestTagsFromText(title, trimmed);
+  return { title, content: trimmed, source: pathToFileURL(filePath).href, tags };
+}
+
+/** Fetch a URL and convert to a PackDocument, returning null if content is empty. */
+async function fetchUrlToPackDoc(url: string): Promise<PackDocument | null> {
+  const log = getLogger();
+  const fetched = await fetchAndConvert(url);
+  if (!fetched.content.trim()) {
+    log.debug({ url }, "Empty content from URL, skipping");
+    return null;
+  }
+
+  const tags = suggestTagsFromText(fetched.title, fetched.content.trimEnd());
+  return { title: fetched.title, content: fetched.content.trimEnd(), source: url, tags };
+}
+
 /** Create a pack directly from filesystem paths and/or URLs (no database needed). */
 export async function createPackFromSource(
   options: CreatePackFromSourceOptions,
@@ -754,68 +842,21 @@ export async function createPackFromSource(
   const documents: PackDocument[] = [];
   const errors: Array<{ source: string; error: string }> = [];
 
-  // Separate URLs from file paths
   const urls: string[] = [];
   const fileSources: string[] = [];
   for (const src of options.from) {
-    if (isUrl(src)) {
-      urls.push(src);
-    } else {
-      fileSources.push(src);
-    }
+    (isUrl(src) ? urls : fileSources).push(src);
   }
 
-  // Collect all files from filesystem sources
-  const allFiles: string[] = [];
-  for (const src of fileSources) {
-    const resolved = pathResolve(src);
-    let stat;
-    try {
-      stat = statSync(resolved);
-    } catch (err) {
-      throw new ValidationError(
-        `Source path "${src}" does not exist or is not accessible: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  const allFiles = collectAllSourceFiles(fileSources, recursive, extensions, excludePatterns);
 
-    if (stat.isDirectory()) {
-      allFiles.push(...collectFiles(resolved, resolved, recursive, extensions, excludePatterns));
-    } else if (stat.isFile()) {
-      allFiles.push(resolved);
-    } else {
-      throw new ValidationError(`Source path "${src}" is not a file or directory`);
-    }
-  }
-
-  // Parse filesystem files
   const totalCount = allFiles.length + urls.length;
   for (let i = 0; i < allFiles.length; i++) {
     const filePath = allFiles[i]!;
     options.onProgress?.({ file: filePath, index: i, total: totalCount });
-
-    const parser = getParserForFile(filePath);
-    if (!parser) {
-      log.debug({ file: filePath }, "No parser for file, skipping");
-      continue;
-    }
-
     try {
-      const buffer = readFileSync(filePath);
-      const content = await parser.parse(buffer);
-      const trimmed = content.trimEnd();
-      if (trimmed.length === 0) {
-        log.debug({ file: filePath }, "Empty content after parsing, skipping");
-        continue;
-      }
-
-      const title = basename(filePath).replace(/\.[^.]+$/, "");
-      const tags = suggestTagsFromText(title, trimmed);
-      documents.push({
-        title,
-        content: trimmed,
-        source: pathToFileURL(filePath).href,
-        tags,
-      });
+      const doc = await parseFileToPackDoc(filePath);
+      if (doc) documents.push(doc);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn({ file: filePath, err: msg }, "Failed to parse file, skipping");
@@ -823,25 +864,12 @@ export async function createPackFromSource(
     }
   }
 
-  // Fetch URLs
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i]!;
     options.onProgress?.({ file: url, index: allFiles.length + i, total: totalCount });
-
     try {
-      const fetched = await fetchAndConvert(url);
-      if (!fetched.content.trim()) {
-        log.debug({ url }, "Empty content from URL, skipping");
-        continue;
-      }
-
-      const tags = suggestTagsFromText(fetched.title, fetched.content.trimEnd());
-      documents.push({
-        title: fetched.title,
-        content: fetched.content.trimEnd(),
-        source: url,
-        tags,
-      });
+      const doc = await fetchUrlToPackDoc(url);
+      if (doc) documents.push(doc);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn({ url, err: msg }, "Failed to fetch URL, skipping");

@@ -127,6 +127,64 @@ export async function checkDuplicate(
   return { isDuplicate: false };
 }
 
+/** Find exact duplicate groups by content hash. */
+function findExactDuplicateGroups(db: Database.Database): DuplicateGroup[] {
+  const hashGroups = db
+    .prepare(
+      `SELECT content_hash, GROUP_CONCAT(id) AS ids, GROUP_CONCAT(title, '|||') AS titles
+       FROM documents
+       WHERE content_hash IS NOT NULL
+       GROUP BY content_hash
+       HAVING COUNT(*) > 1`,
+    )
+    .all() as Array<{ content_hash: string; ids: string; titles: string }>;
+
+  return hashGroups.map((row) => ({
+    contentHash: row.content_hash,
+    matchType: "exact" as const,
+    documentIds: row.ids.split(","),
+    titles: row.titles.split("|||"),
+  }));
+}
+
+/** Cluster documents by pairwise embedding similarity, returning groups with > 1 member. */
+function clusterBySimilarity(
+  remaining: Array<{ id: string; title: string }>,
+  embeddings: number[][],
+  threshold: number,
+): DuplicateGroup[] {
+  const matched = new Set<string>();
+  const groups: DuplicateGroup[] = [];
+
+  for (let i = 0; i < remaining.length; i++) {
+    if (matched.has(remaining[i]!.id)) continue;
+    const group: string[] = [remaining[i]!.id];
+    const groupTitles: string[] = [remaining[i]!.title];
+
+    for (let j = i + 1; j < remaining.length; j++) {
+      if (matched.has(remaining[j]!.id)) continue;
+      const sim = cosineSimilarity(embeddings[i]!, embeddings[j]!);
+      if (sim >= threshold) {
+        group.push(remaining[j]!.id);
+        groupTitles.push(remaining[j]!.title);
+        matched.add(remaining[j]!.id);
+      }
+    }
+
+    if (group.length > 1) {
+      matched.add(remaining[i]!.id);
+      groups.push({
+        contentHash: null,
+        matchType: "similar",
+        documentIds: group,
+        titles: groupTitles,
+      });
+    }
+  }
+
+  return groups;
+}
+
 /**
  * Scan all documents and return groups of duplicates.
  *
@@ -143,74 +201,27 @@ export async function findDuplicates(
   const log = getLogger();
   const groups: DuplicateGroup[] = [];
 
-  // --- Phase 1: exact hash groups ---
   if (strategy === "exact" || strategy === "both") {
-    const hashGroups = db
-      .prepare(
-        `SELECT content_hash, GROUP_CONCAT(id) AS ids, GROUP_CONCAT(title, '|||') AS titles
-         FROM documents
-         WHERE content_hash IS NOT NULL
-         GROUP BY content_hash
-         HAVING COUNT(*) > 1`,
-      )
-      .all() as Array<{ content_hash: string; ids: string; titles: string }>;
-
-    for (const row of hashGroups) {
-      groups.push({
-        contentHash: row.content_hash,
-        matchType: "exact",
-        documentIds: row.ids.split(","),
-        titles: row.titles.split("|||"),
-      });
-    }
-
-    log.info({ exactGroups: hashGroups.length }, "Exact duplicate scan complete");
+    const exactGroups = findExactDuplicateGroups(db);
+    groups.push(...exactGroups);
+    log.info({ exactGroups: exactGroups.length }, "Exact duplicate scan complete");
   }
 
-  // --- Phase 2: semantic near-duplicate detection ---
   if (strategy === "semantic" || strategy === "both") {
     const exactDocIds = new Set(groups.flatMap((g) => g.documentIds));
-
     const docs = db.prepare("SELECT id, title, content FROM documents").all() as Array<{
       id: string;
       title: string;
       content: string;
     }>;
-
     const remaining = docs.filter((d) => !exactDocIds.has(d.id));
 
     if (remaining.length > 1) {
       try {
         const samples = remaining.map((d) => d.content.slice(0, SAMPLE_SIZE));
         const embeddings = await provider.embedBatch(samples);
-        const matched = new Set<string>();
-
-        for (let i = 0; i < remaining.length; i++) {
-          if (matched.has(remaining[i]!.id)) continue;
-          const group: string[] = [remaining[i]!.id];
-          const groupTitles: string[] = [remaining[i]!.title];
-
-          for (let j = i + 1; j < remaining.length; j++) {
-            if (matched.has(remaining[j]!.id)) continue;
-            const sim = cosineSimilarity(embeddings[i]!, embeddings[j]!);
-            if (sim >= threshold) {
-              group.push(remaining[j]!.id);
-              groupTitles.push(remaining[j]!.title);
-              matched.add(remaining[j]!.id);
-            }
-          }
-
-          if (group.length > 1) {
-            matched.add(remaining[i]!.id);
-            groups.push({
-              contentHash: null,
-              matchType: "similar",
-              documentIds: group,
-              titles: groupTitles,
-            });
-          }
-        }
-
+        const semanticGroups = clusterBySimilarity(remaining, embeddings, threshold);
+        groups.push(...semanticGroups);
         log.info({ semanticGroups: groups.length }, "Semantic near-duplicate scan complete");
       } catch {
         log.debug("Semantic duplicate scan skipped (vector operations unavailable)");

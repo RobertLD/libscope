@@ -41,34 +41,35 @@ export const DEFAULT_FETCH_OPTIONS: Required<FetchOptions> = {
   allowSelfSignedCerts: false,
 } as const;
 
+/** Check whether an IPv6 address belongs to a private/reserved range. */
+function isPrivateIPv6(addr: string): boolean {
+  const lower = addr.toLowerCase();
+  if (lower === "::1") return true;
+  if (/^f[cd]/i.test(lower)) return true;
+  if (/^fe[89ab]/i.test(lower)) return true;
+  return false;
+}
+
+/** Check whether an IPv4 address belongs to a private/reserved range. */
+function isPrivateIPv4(addr: string): boolean {
+  const parts = addr.split(".").map(Number);
+  if (parts.length !== 4) return false;
+  const [a, b] = parts as [number, number, number, number];
+  if (a === 127) return true;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 0) return true;
+  return false;
+}
+
 /** Check whether an IP address belongs to a private/reserved range. */
 export function isPrivateIP(ip: string): boolean {
-  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) — extract the IPv4 part
   const v4Mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
   const normalized = v4Mapped ? v4Mapped[1]! : ip;
 
-  // IPv6 checks
-  if (normalized.includes(":")) {
-    const lower = normalized.toLowerCase();
-    if (lower === "::1") return true;
-    // fc00::/7 → fc.. or fd..
-    if (/^f[cd]/i.test(lower)) return true;
-    // fe80::/10 → link-local
-    if (/^fe[89ab]/i.test(lower)) return true;
-    return false;
-  }
-
-  // IPv4 checks
-  const parts = normalized.split(".").map(Number);
-  if (parts.length !== 4) return false;
-  const [a, b] = parts as [number, number, number, number];
-  if (a === 127) return true; // 127.0.0.0/8
-  if (a === 10) return true; // 10.0.0.0/8
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-  if (a === 169 && b === 254) return true; // 169.254.0.0/16
-  if (a === 0) return true; // 0.0.0.0/8
-  return false;
+  return normalized.includes(":") ? isPrivateIPv6(normalized) : isPrivateIPv4(normalized);
 }
 
 /**
@@ -174,6 +175,32 @@ async function fetchWithRedirects(
   return _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls, dispatcher);
 }
 
+/** Re-resolve DNS after a fetch to detect DNS rebinding attacks. */
+async function checkDnsRebinding(hostname: string, allowPrivateUrls: boolean): Promise<void> {
+  const recheck = await Promise.allSettled([dns.resolve4(hostname), dns.resolve6(hostname)]);
+  const currentAddresses: string[] = [];
+  for (const r of recheck) {
+    if (r.status === "fulfilled") currentAddresses.push(...r.value);
+  }
+
+  if (currentAddresses.length === 0) {
+    const log = getLogger();
+    log.warn({ hostname }, "DNS rebinding check: re-resolution returned no addresses");
+    throw new FetchError(
+      `DNS rebinding check failed: ${hostname} no longer resolves to any address`,
+    );
+  }
+
+  if (allowPrivateUrls) return;
+  for (const addr of currentAddresses) {
+    if (isPrivateIP(addr)) {
+      throw new FetchError(
+        `DNS rebinding detected: ${hostname} now resolves to private IP ${addr}`,
+      );
+    }
+  }
+}
+
 async function _fetchWithRedirects(
   url: string,
   timeout: number,
@@ -183,11 +210,8 @@ async function _fetchWithRedirects(
 ): Promise<Response> {
   let current = url;
   for (let i = 0; i < maxRedirects; i++) {
-    // Validate and resolve DNS before fetching (SSRF protection)
     await validateUrl(current, allowPrivateUrls);
 
-    // SSRF protection: validateUrl() above resolves DNS and blocks private/internal IPs.
-    // Redirect following is manual with per-hop validation. DNS rebinding is checked post-fetch.
     // codeql[js/request-forgery] -- URL scheme and destination validated by validateUrl() above
     const response = await fetch(current, {
       headers: {
@@ -199,29 +223,9 @@ async function _fetchWithRedirects(
       ...(dispatcher ? { dispatcher: dispatcher as unknown } : {}),
     } as RequestInit);
 
-    // Re-validate the connected IP hasn't changed (DNS rebinding defense)
-    // Re-resolve and confirm it still matches the pinned set
     const parsed = new URL(current);
     const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
-    const recheck = await Promise.allSettled([dns.resolve4(hostname), dns.resolve6(hostname)]);
-    const currentAddresses: string[] = [];
-    for (const r of recheck) {
-      if (r.status === "fulfilled") currentAddresses.push(...r.value);
-    }
-    if (currentAddresses.length === 0) {
-      const log = getLogger();
-      log.warn({ hostname }, "DNS rebinding check: re-resolution returned no addresses");
-      throw new FetchError(
-        `DNS rebinding check failed: ${hostname} no longer resolves to any address`,
-      );
-    }
-    for (const addr of currentAddresses) {
-      if (!allowPrivateUrls && isPrivateIP(addr)) {
-        throw new FetchError(
-          `DNS rebinding detected: ${hostname} now resolves to private IP ${addr}`,
-        );
-      }
-    }
+    await checkDnsRebinding(hostname, allowPrivateUrls);
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");

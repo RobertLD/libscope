@@ -134,10 +134,11 @@ interface FetchWithRetryOptions {
   accept?: string | undefined;
 }
 
-async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Promise<Response> {
-  const parsed = new URL(url);
-  await validateHost(parsed.hostname);
-
+/** Build request headers for GitHub/GitLab API calls. */
+function buildApiHeaders(
+  token: string | undefined,
+  accept: string | undefined,
+): Record<string, string> {
   const headers: Record<string, string> = {
     "User-Agent": "LibScope/0.1.0 (repository-indexer)",
     Accept: accept ?? "application/vnd.github+json",
@@ -145,45 +146,57 @@ async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Pr
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  return headers;
+}
 
+/** Handle rate limit headers: back off if approaching the limit. Returns true if should retry (429). */
+async function handleRateLimit(response: Response): Promise<boolean> {
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const resetHeader = response.headers.get("x-ratelimit-reset");
+
+  const isRateLimited = response.status === 429;
+  const isApproaching = remaining !== null && parseInt(remaining, 10) < RATE_LIMIT_THRESHOLD;
+
+  if (!isRateLimited && !isApproaching) return false;
+
+  const resetTime = resetHeader ? parseInt(resetHeader, 10) * 1000 : Date.now() + 60_000;
+  const waitMs = Math.max(resetTime - Date.now(), 1000);
+  const log = getLogger();
+  log.warn({ remaining, waitMs }, "Rate limit approaching, backing off");
+  await sleep(Math.min(waitMs, 60_000));
+
+  return isRateLimited;
+}
+
+/** Check response status and throw appropriate errors for non-OK responses. */
+function checkResponseStatus(response: Response, url: string): void {
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  if (response.status === 403 && remaining === "0") {
+    throw new FetchError("GitHub API rate limit exceeded. Provide a token with --token.");
+  }
+  if (!response.ok) {
+    throw new FetchError(`HTTP ${response.status}: ${response.statusText} for ${url}`);
+  }
+}
+
+async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Promise<Response> {
+  const parsed = new URL(url);
+  await validateHost(parsed.hostname);
+
+  const headers = buildApiHeaders(token, accept);
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(url, {
-        headers,
-        signal: AbortSignal.timeout(30_000),
-      });
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) });
+      const shouldRetry = await handleRateLimit(response);
+      if (shouldRetry) continue;
 
-      const remaining = response.headers.get("x-ratelimit-remaining");
-      const resetHeader = response.headers.get("x-ratelimit-reset");
-
-      if (
-        response.status === 429 ||
-        (remaining !== null && parseInt(remaining, 10) < RATE_LIMIT_THRESHOLD)
-      ) {
-        const resetTime = resetHeader ? parseInt(resetHeader, 10) * 1000 : Date.now() + 60_000;
-        const waitMs = Math.max(resetTime - Date.now(), 1000);
-        const log = getLogger();
-        log.warn({ remaining, waitMs }, "Rate limit approaching, backing off");
-        await sleep(Math.min(waitMs, 60_000));
-
-        if (response.status === 429) continue;
-      }
-
-      if (response.status === 403 && remaining === "0") {
-        throw new FetchError("GitHub API rate limit exceeded. Provide a token with --token.");
-      }
-
-      if (!response.ok) {
-        throw new FetchError(`HTTP ${response.status}: ${response.statusText} for ${url}`);
-      }
-
+      checkResponseStatus(response, url);
       return response;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (err instanceof FetchError) throw err;
-
       if (attempt < MAX_RETRIES - 1) {
         await sleep(RETRY_DELAY_MS * Math.pow(2, attempt));
       }

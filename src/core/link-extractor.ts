@@ -59,6 +59,43 @@ export function extractLinks(html: string, baseUrl: string): string[] {
   return links;
 }
 
+/** Check if the character before href is valid whitespace (attribute boundary). */
+function isAttributeBoundary(ch: string): boolean {
+  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+}
+
+/** Skip whitespace characters starting from pos. */
+function skipWhitespace(tag: string, pos: number): number {
+  let i = pos;
+  while (i < tag.length && (tag[i] === " " || tag[i] === "\t")) i++;
+  return i;
+}
+
+/** Extract an attribute value starting at valStart (quoted or unquoted). Returns null on failure. */
+function extractAttributeValue(tag: string, valStart: number): string | null {
+  if (valStart >= tag.length) return null;
+
+  const quote = tag[valStart];
+  if (quote === '"' || quote === "'") {
+    const closeQuote = tag.indexOf(quote, valStart + 1);
+    if (closeQuote === -1) return null;
+    return tag.slice(valStart + 1, closeQuote);
+  }
+
+  // Unquoted attribute value — ends at whitespace or >
+  let end = valStart;
+  while (
+    end < tag.length &&
+    tag[end] !== " " &&
+    tag[end] !== "\t" &&
+    tag[end] !== ">" &&
+    tag[end] !== "\n"
+  ) {
+    end++;
+  }
+  return tag.slice(valStart, end);
+}
+
 /**
  * Extract the href attribute value from an <a ...> tag string.
  * Returns null if no href found or href is empty.
@@ -71,52 +108,23 @@ function extractHref(tag: string): string | null {
     const hrefIdx = lowerTag.indexOf("href", searchPos);
     if (hrefIdx === -1) return null;
 
-    // Require an attribute boundary before "href" to avoid matching data-href, aria-href, etc.
-    // The character immediately preceding "href" must be whitespace (or it's at position 0,
-    // which can't happen in a valid <a> tag and so we skip it).
-    const charBefore = hrefIdx > 0 ? lowerTag[hrefIdx - 1] : "";
-    if (charBefore !== " " && charBefore !== "\t" && charBefore !== "\n" && charBefore !== "\r") {
+    const charBefore = hrefIdx > 0 ? (lowerTag[hrefIdx - 1] ?? "") : "";
+    if (!isAttributeBoundary(charBefore)) {
       searchPos = hrefIdx + 4;
       continue;
     }
 
-    // Skip whitespace before =
-    let eqIdx = hrefIdx + 4;
-    while (eqIdx < tag.length && (tag[eqIdx] === " " || tag[eqIdx] === "\t")) eqIdx++;
-
+    const eqIdx = skipWhitespace(tag, hrefIdx + 4);
     if (tag[eqIdx] !== "=") {
       searchPos = hrefIdx + 4;
       continue;
     }
 
-    // Skip whitespace after =
-    let valStart = eqIdx + 1;
-    while (valStart < tag.length && (tag[valStart] === " " || tag[valStart] === "\t")) valStart++;
+    const valStart = skipWhitespace(tag, eqIdx + 1);
+    const raw = extractAttributeValue(tag, valStart);
+    if (raw === null) return null;
 
-    if (valStart >= tag.length) return null;
-
-    let href: string;
-    const quote = tag[valStart];
-    if (quote === '"' || quote === "'") {
-      const closeQuote = tag.indexOf(quote, valStart + 1);
-      if (closeQuote === -1) return null;
-      href = tag.slice(valStart + 1, closeQuote);
-    } else {
-      // Unquoted attribute value — ends at whitespace or >
-      let end = valStart;
-      while (
-        end < tag.length &&
-        tag[end] !== " " &&
-        tag[end] !== "\t" &&
-        tag[end] !== ">" &&
-        tag[end] !== "\n"
-      ) {
-        end++;
-      }
-      href = tag.slice(valStart, end);
-    }
-
-    href = href.trim();
+    const href = raw.trim();
     return href.length > 0 ? href : null;
   }
 

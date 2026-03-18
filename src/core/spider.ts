@@ -286,6 +286,118 @@ function extractTitle(html: string, url: string): string {
 
 // ── Spider engine ────────────────────────────────────────────────────────────
 
+interface SpiderConfig {
+  maxPages: number;
+  maxDepth: number;
+  sameDomain: boolean;
+  pathPrefix: string;
+  excludePatterns: string[];
+  requestDelay: number;
+  fetchOptions: SpiderOptions["fetchOptions"];
+  seedHostname: string;
+  seedOrigin: string;
+}
+
+function resolveSpiderConfig(seedUrl: string, options: SpiderOptions): SpiderConfig {
+  let seedHostname: string;
+  let seedOrigin: string;
+  try {
+    const parsed = new URL(seedUrl);
+    seedHostname = parsed.hostname;
+    seedOrigin = parsed.origin;
+  } catch {
+    throw new FetchError("Invalid seed URL: " + seedUrl);
+  }
+
+  return {
+    maxPages: Math.min(options.maxPages ?? 25, HARD_MAX_PAGES),
+    maxDepth: Math.min(options.maxDepth ?? 2, HARD_MAX_DEPTH),
+    sameDomain: options.sameDomain ?? true,
+    pathPrefix: options.pathPrefix ?? "",
+    excludePatterns: options.excludePatterns ?? [],
+    requestDelay: options.requestDelay ?? DEFAULT_REQUEST_DELAY_MS,
+    fetchOptions: options.fetchOptions,
+    seedHostname,
+    seedOrigin,
+  };
+}
+
+/** Check whether a URL should be skipped based on domain, path, exclude, and robots rules. */
+function shouldSkipUrl(url: string, config: SpiderConfig, robotsRules: Set<string>): string | null {
+  if (config.sameDomain && !isSameDomain(url, config.seedHostname)) {
+    return "Spider: skipping cross-domain link";
+  }
+  if (config.pathPrefix && !hasPathPrefix(url, config.pathPrefix)) {
+    return "Spider: skipping link outside path prefix";
+  }
+  if (config.excludePatterns.length > 0 && isExcluded(url, config.excludePatterns)) {
+    return "Spider: skipping excluded URL";
+  }
+  if (isDisallowedByRobots(url, robotsRules)) {
+    return "Spider: skipping URL disallowed by robots.txt";
+  }
+  return null;
+}
+
+/** Resolve the origin for a URL, falling back to the seed origin on parse failure. */
+function safeParseOrigin(url: string, fallback: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Ensure the robots.txt for a given origin is cached; returns the cached rules. */
+async function ensureRobotsLoaded(
+  origin: string,
+  cache: Map<string, Set<string>>,
+  fetchOptions: SpiderOptions["fetchOptions"],
+): Promise<Set<string>> {
+  const existing = cache.get(origin);
+  if (existing) return existing;
+
+  const rules = await fetchRobotsTxt(origin, fetchOptions);
+  cache.set(origin, rules);
+  const log = getLogger();
+  log.debug({ origin, rules: rules.size }, "Loaded robots.txt rules for new origin");
+  return rules;
+}
+
+/** Convert a raw fetched page to a SpiderResult. */
+function convertPage(
+  raw: Awaited<ReturnType<typeof fetchRaw>>,
+  url: string,
+  depth: number,
+): SpiderResult {
+  const canonicalUrl = raw.finalUrl || url;
+  const isHtml = raw.contentType.includes("text/html");
+  const content = isHtml ? htmlToMarkdown(raw.body) : raw.body;
+  const title = isHtml
+    ? extractTitle(raw.body, canonicalUrl)
+    : extractTextTitle(raw.body, canonicalUrl);
+  return { url: canonicalUrl, title, content, depth };
+}
+
+/** Extract child links from an HTML page and enqueue unvisited ones. */
+function enqueueChildLinks(
+  raw: Awaited<ReturnType<typeof fetchRaw>>,
+  canonicalUrl: string,
+  depth: number,
+  visited: Set<string>,
+  queue: Array<{ url: string; depth: number }>,
+): void {
+  if (!raw.contentType.includes("text/html")) return;
+  const links = extractLinks(raw.body, canonicalUrl);
+  for (const link of links) {
+    if (!visited.has(link)) {
+      queue.push({ url: link, depth: depth + 1 });
+    }
+  }
+  const log = getLogger();
+  log.debug({ url: canonicalUrl, linksFound: links.length }, "Spider: extracted links");
+}
+
 /**
  * Spider a seed URL, yielding each successfully fetched page as a SpiderResult.
  * Performs BFS up to maxDepth hops and maxPages total.
@@ -300,26 +412,7 @@ export async function* spiderUrl(
   options: SpiderOptions = {},
 ): AsyncGenerator<SpiderResult, SpiderStats, unknown> {
   const log = getLogger();
-
-  // Resolve effective limits
-  const maxPages = Math.min(options.maxPages ?? 25, HARD_MAX_PAGES);
-  const maxDepth = Math.min(options.maxDepth ?? 2, HARD_MAX_DEPTH);
-  const sameDomain = options.sameDomain ?? true;
-  const pathPrefix = options.pathPrefix ?? "";
-  const excludePatterns = options.excludePatterns ?? [];
-  const requestDelay = options.requestDelay ?? DEFAULT_REQUEST_DELAY_MS;
-  const fetchOptions = options.fetchOptions;
-
-  // Parse seed URL for domain filtering
-  let seedHostname: string;
-  let seedOrigin: string;
-  try {
-    const parsed = new URL(seedUrl);
-    seedHostname = parsed.hostname;
-    seedOrigin = parsed.origin;
-  } catch {
-    throw new FetchError("Invalid seed URL: " + seedUrl);
-  }
+  const config = resolveSpiderConfig(seedUrl, options);
 
   const stats: SpiderStats = {
     pagesFetched: 0,
@@ -328,92 +421,53 @@ export async function* spiderUrl(
     errors: [],
   };
 
-  // Per-origin robots.txt cache — fetched lazily as new origins are encountered.
-  // Pre-populate with the seed origin so we don't re-fetch it on the first page.
   const robotsCache = new Map<string, Set<string>>();
-  const seedRobots = await fetchRobotsTxt(seedOrigin, fetchOptions);
-  robotsCache.set(seedOrigin, seedRobots);
-  log.debug({ origin: seedOrigin, rules: seedRobots.size }, "Loaded robots.txt rules");
+  const seedRobots = await fetchRobotsTxt(config.seedOrigin, config.fetchOptions);
+  robotsCache.set(config.seedOrigin, seedRobots);
+  log.debug({ origin: config.seedOrigin, rules: seedRobots.size }, "Loaded robots.txt rules");
 
   const visited = new Set<string>();
-  // BFS queue entries
   type QueueEntry = { url: string; depth: number };
   const queue: QueueEntry[] = [{ url: seedUrl, depth: 0 }];
-
   const deadline = Date.now() + HARD_TOTAL_TIMEOUT_MS;
 
-  while (queue.length > 0 && stats.pagesFetched < maxPages) {
-    // Check total timeout
+  while (queue.length > 0 && stats.pagesFetched < config.maxPages) {
     if (Date.now() > deadline) {
       log.warn({ pagesFetched: stats.pagesFetched }, "Spider total timeout reached");
       stats.abortReason = "timeout";
       break;
     }
 
-    const entry = queue.shift()!;
-    const { url, depth } = entry;
-
-    // Skip already-visited
+    const { url, depth } = queue.shift()!;
     if (visited.has(url)) continue;
     visited.add(url);
 
-    // Apply filters (except for seed URL at depth 0 — always fetch it)
     if (depth > 0) {
-      if (sameDomain && !isSameDomain(url, seedHostname)) {
-        log.debug({ url }, "Spider: skipping cross-domain link");
-        stats.pagesSkipped++;
-        continue;
-      }
-      if (pathPrefix && !hasPathPrefix(url, pathPrefix)) {
-        log.debug({ url, pathPrefix }, "Spider: skipping link outside path prefix");
-        stats.pagesSkipped++;
-        continue;
-      }
-      if (excludePatterns.length > 0 && isExcluded(url, excludePatterns)) {
-        log.debug({ url }, "Spider: skipping excluded URL");
-        stats.pagesSkipped++;
-        continue;
-      }
-      // Fetch robots.txt for new origins (cross-domain crawl when sameDomain is false)
-      let urlOrigin: string;
-      try {
-        urlOrigin = new URL(url).origin;
-      } catch {
-        urlOrigin = seedOrigin;
-      }
-      if (!robotsCache.has(urlOrigin)) {
-        const rules = await fetchRobotsTxt(urlOrigin, fetchOptions);
-        robotsCache.set(urlOrigin, rules);
-        log.debug(
-          { origin: urlOrigin, rules: rules.size },
-          "Loaded robots.txt rules for new origin",
-        );
-      }
-      if (isDisallowedByRobots(url, robotsCache.get(urlOrigin)!)) {
-        log.debug({ url }, "Spider: skipping URL disallowed by robots.txt");
+      const urlOrigin = safeParseOrigin(url, config.seedOrigin);
+      const robotsRules = await ensureRobotsLoaded(urlOrigin, robotsCache, config.fetchOptions);
+      const skipReason = shouldSkipUrl(url, config, robotsRules);
+      if (skipReason) {
+        log.debug({ url }, skipReason);
         stats.pagesSkipped++;
         continue;
       }
     }
 
-    // Check maxPages before fetching
-    if (stats.pagesFetched >= maxPages) {
+    if (stats.pagesFetched >= config.maxPages) {
       stats.abortReason = "maxPages";
       break;
     }
 
-    // Delay between requests (skip delay before first request)
-    if (stats.pagesCrawled > 0 && requestDelay > 0) {
-      await sleep(requestDelay);
+    if (stats.pagesCrawled > 0 && config.requestDelay > 0) {
+      await sleep(config.requestDelay);
     }
 
-    // Fetch the page
     log.info({ url, depth }, "Spider: fetching page");
     stats.pagesCrawled++;
 
     let raw: Awaited<ReturnType<typeof fetchRaw>>;
     try {
-      raw = await fetchRaw(url, fetchOptions);
+      raw = await fetchRaw(url, config.fetchOptions);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn({ url, err: msg }, "Spider: fetch failed, skipping");
@@ -421,40 +475,18 @@ export async function* spiderUrl(
       continue;
     }
 
-    // Normalize to the final URL after any redirects.
-    // This ensures the visited set, yielded URL, and link-extraction base are all consistent.
-    const canonicalUrl = raw.finalUrl || url;
-    if (canonicalUrl !== url) {
-      visited.add(canonicalUrl);
-    }
-
-    // Convert to markdown
-    const isHtml = raw.contentType.includes("text/html");
-    const content = isHtml ? htmlToMarkdown(raw.body) : raw.body;
-    const title = isHtml
-      ? extractTitle(raw.body, canonicalUrl)
-      : extractTextTitle(raw.body, canonicalUrl);
+    const result = convertPage(raw, url, depth);
+    if (result.url !== url) visited.add(result.url);
 
     stats.pagesFetched++;
-    yield { url: canonicalUrl, title, content, depth };
+    yield result;
 
-    // Extract and enqueue child links if we haven't hit maxDepth
-    if (depth < maxDepth) {
-      if (isHtml) {
-        const links = extractLinks(raw.body, canonicalUrl);
-        for (const link of links) {
-          if (!visited.has(link)) {
-            queue.push({ url: link, depth: depth + 1 });
-          }
-        }
-        log.debug({ url, linksFound: links.length }, "Spider: extracted links");
-      }
+    if (depth < config.maxDepth) {
+      enqueueChildLinks(raw, result.url, depth, visited, queue);
     }
   }
 
-  // If the loop exited via the outer while condition hitting maxPages (not via
-  // an explicit break with abortReason already set), record the reason now.
-  if (!stats.abortReason && queue.length > 0 && stats.pagesFetched >= maxPages) {
+  if (!stats.abortReason && queue.length > 0 && stats.pagesFetched >= config.maxPages) {
     stats.abortReason = "maxPages";
   }
 
