@@ -229,3 +229,16 @@ export {
   getApiUrls,
 } from "./confluence.js";
 export type { ConfluenceConfig, ConfluenceSyncResult } from "./confluence.js";
+
+export {
+  syncDocSite,
+  disconnectDocSite,
+  detectDocSiteType,
+  extractDocLinks,
+  extractDocTitle,
+  extractMainContent,
+  extractElementByPattern,
+  extractSitemapUrls,
+  normalizeUrl,
+} from "./docs.js";
+export type { DocSiteConfig, DocSiteSyncResult, DocSiteType } from "./docs.js";
