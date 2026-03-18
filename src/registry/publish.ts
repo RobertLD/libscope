@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import type {
@@ -70,12 +71,20 @@ function bumpPatchVersion(version: string): string {
   return `${parts[0]}.${parts[1]}.${isNaN(patch) ? 1 : patch + 1}`;
 }
 
+/** Gzip magic number: first two bytes of a gzip stream. */
+const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
+
 /**
- * Read a pack JSON file (plain or gzip).
+ * Read a pack JSON file (plain or gzip-compressed).
+ * Auto-detects gzip by checking for magic bytes.
  */
 function readPackJson(filePath: string): KnowledgePack {
-  const raw = readFileSync(filePath, "utf-8");
-  return JSON.parse(raw) as KnowledgePack;
+  const raw = readFileSync(filePath);
+  const text =
+    raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]
+      ? gunzipSync(raw).toString("utf-8")
+      : raw.toString("utf-8");
+  return JSON.parse(text) as KnowledgePack;
 }
 
 /**
