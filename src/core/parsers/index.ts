@@ -46,5 +46,5 @@ export function getParserForFile(filename: string): DocumentParser | null {
 
 /** Get all file extensions supported by the parsers. */
 export function getSupportedExtensions(): string[] {
-  return [...extensionMap.keys()].sort();
+  return [...extensionMap.keys()].sort((a, b) => a.localeCompare(b));
 }

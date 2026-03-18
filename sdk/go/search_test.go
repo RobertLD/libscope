@@ -15,7 +15,7 @@ func TestSearch(t *testing.T) {
 		if r.URL.Query().Get("limit") != "5" {
 			t.Errorf("expected limit=5, got %q", r.URL.Query().Get("limit"))
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":{"results":[{"document":{"id":"doc-1","title":"Go Concurrency"},"score":0.95,"chunk_text":"goroutines are..."}],"total":1,"query":"goroutines"}}`))
 	}))
 	defer srv.Close()
@@ -23,7 +23,7 @@ func TestSearch(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	result, err := c.Search(context.Background(), "goroutines", WithLimit(5))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if result.Total != 1 {
 		t.Errorf("expected 1 result, got %d", result.Total)
@@ -38,7 +38,7 @@ func TestSearchWithTopic(t *testing.T) {
 		if r.URL.Query().Get("topic") != "golang" {
 			t.Errorf("expected topic=golang, got %q", r.URL.Query().Get("topic"))
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":{"results":[],"total":0,"query":"test"}}`))
 	}))
 	defer srv.Close()
@@ -46,7 +46,7 @@ func TestSearchWithTopic(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	result, err := c.Search(context.Background(), "test", WithTopic("golang"))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if result.Total != 0 {
 		t.Errorf("expected 0 results, got %d", result.Total)
@@ -58,7 +58,7 @@ func TestSearchWithTags(t *testing.T) {
 		if r.URL.Query().Get("tag") != "tutorial" {
 			t.Errorf("expected tag=tutorial, got %q", r.URL.Query().Get("tag"))
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":{"results":[],"total":0,"query":"test"}}`))
 	}))
 	defer srv.Close()
@@ -66,13 +66,13 @@ func TestSearchWithTags(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	_, err := c.Search(context.Background(), "test", WithTags("tutorial"))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 }
 
 func TestSearchWithMinScore(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":{"results":[{"document":{"id":"d1","title":"High"},"score":0.9,"chunk_text":"high"},{"document":{"id":"d2","title":"Low"},"score":0.3,"chunk_text":"low"}],"total":2,"query":"test"}}`))
 	}))
 	defer srv.Close()
@@ -80,7 +80,7 @@ func TestSearchWithMinScore(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	result, err := c.Search(context.Background(), "test", WithMinScore(0.5))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if len(result.Results) != 1 {
 		t.Errorf("expected 1 result after min score filter, got %d", len(result.Results))
@@ -92,7 +92,7 @@ func TestSearchWithMinScore(t *testing.T) {
 
 func TestSearchError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.WriteHeader(400)
 		w.Write([]byte(`{"error":{"code":"VALIDATION_ERROR","message":"Query parameter 'q' is required"}}`))
 	}))

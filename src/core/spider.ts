@@ -91,28 +91,39 @@ async function fetchRobotsTxt(
  * only those groups apply (ignoring wildcard). Otherwise wildcard groups apply.
  * This matches the robots.txt spec — a specific UA rule overrides the wildcard.
  */
+type RobotsGroup = { agents: string[]; disallows: string[] };
+
+/** Parse a single robots.txt line into groups, updating the current group state. */
+function processRobotsLine(
+  line: string,
+  groups: RobotsGroup[],
+  current: RobotsGroup | null,
+): RobotsGroup | null {
+  const lower = line.toLowerCase();
+  if (lower.startsWith("user-agent:")) {
+    const agent = line.slice("user-agent:".length).trim();
+    if (current === null || current.disallows.length > 0) {
+      current = { agents: [], disallows: [] };
+      groups.push(current);
+    }
+    current.agents.push(agent.toLowerCase());
+    return current;
+  }
+  if (lower.startsWith("disallow:") && current !== null) {
+    const path = line.slice("disallow:".length).trim();
+    if (path.length > 0) current.disallows.push(path);
+  }
+  return current;
+}
+
 function parseRobotsTxt(text: string): Set<string> {
-  type RobotsGroup = { agents: string[]; disallows: string[] };
   const groups: RobotsGroup[] = [];
   let current: RobotsGroup | null = null;
 
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith("#") || line.length === 0) continue;
-
-    const lower = line.toLowerCase();
-    if (lower.startsWith("user-agent:")) {
-      const agent = line.slice("user-agent:".length).trim();
-      // Start a new group only if current has already collected Disallow lines
-      if (current === null || current.disallows.length > 0) {
-        current = { agents: [], disallows: [] };
-        groups.push(current);
-      }
-      current.agents.push(agent.toLowerCase());
-    } else if (lower.startsWith("disallow:") && current !== null) {
-      const path = line.slice("disallow:".length).trim();
-      if (path.length > 0) current.disallows.push(path);
-    }
+    current = processRobotsLine(line, groups, current);
   }
 
   // Prefer explicit "libscope" group over the wildcard group
@@ -212,6 +223,26 @@ function htmlToMarkdown(html: string): string {
 }
 
 /**
+ * Scan past a single HTML tag starting after the opening '<'.
+ * Returns the index immediately after the closing '>'.
+ * Respects quoted attribute values so '>' inside them doesn't end the tag early.
+ */
+function scanPastTag(input: string, start: number): number {
+  let i = start;
+  while (i < input.length) {
+    const ch = input[i];
+    if (ch === ">") return i + 1;
+    if (ch === '"' || ch === "'") {
+      const close = input.indexOf(ch, i + 1);
+      i = close === -1 ? input.length : close + 1;
+    } else {
+      i++;
+    }
+  }
+  return i;
+}
+
+/**
  * Remove all HTML tags from a string using indexOf-based scanning.
  * Handles tags that span multiple lines and tags with > inside attribute values.
  * This avoids regex-based tag stripping which can be bypassed by newlines in tags.
@@ -226,23 +257,7 @@ function stripTags(input: string): string {
       break;
     }
     result += input.slice(pos, open);
-    // Scan for the closing > of this tag, respecting quoted attribute values
-    let i = open + 1;
-    while (i < input.length) {
-      const ch = input[i];
-      if (ch === ">") {
-        i++;
-        break;
-      }
-      // Skip quoted attribute values so > inside them doesn't end the tag early
-      if (ch === '"' || ch === "'") {
-        const close = input.indexOf(ch, i + 1);
-        i = close === -1 ? input.length : close + 1;
-      } else {
-        i++;
-      }
-    }
-    pos = i;
+    pos = scanPastTag(input, open + 1);
   }
   // Collapse whitespace left behind by removed tags
   return result.replace(/\s+/g, " ");

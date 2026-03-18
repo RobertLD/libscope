@@ -78,7 +78,7 @@ describe("getSupportedExtensions", () => {
     expect(exts).toContain(".html");
     expect(exts).toContain(".htm");
     // Should be sorted
-    const sorted = [...exts].sort();
+    const sorted = [...exts].sort((a, b) => a.localeCompare(b));
     expect(exts).toEqual(sorted);
   });
 });

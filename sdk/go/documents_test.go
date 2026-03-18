@@ -8,13 +8,21 @@ import (
 	"testing"
 )
 
+const (
+	errUnexpectedPath  = "unexpected path: %s"
+	headerContentType  = "Content-Type"
+	mimeJSON           = "application/json"
+	errUnexpected      = "unexpected error: %v"
+	testGoDevDocURL    = "https://go.dev/doc/"
+)
+
 func TestAddText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
 		if r.URL.Path != "/api/v1/documents" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
+			t.Errorf(errUnexpectedPath, r.URL.Path)
 		}
 
 		var body map[string]interface{}
@@ -26,7 +34,7 @@ func TestAddText(t *testing.T) {
 			t.Errorf("expected content 'hello world', got %v", body["content"])
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.WriteHeader(201)
 		w.Write([]byte(`{"data":{"id":"doc-1","title":"Test Doc","source":"manual"}}`))
 	}))
@@ -35,7 +43,7 @@ func TestAddText(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	doc, err := c.AddText(context.Background(), "Test Doc", "hello world")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if doc.ID != "doc-1" {
 		t.Errorf("expected id doc-1, got %q", doc.ID)
@@ -54,7 +62,7 @@ func TestAddTextWithOptions(t *testing.T) {
 			t.Errorf("expected 2 tags, got %v", body["tags"])
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.WriteHeader(201)
 		w.Write([]byte(`{"data":{"id":"doc-2","title":"Go Guide","topic":"golang","tags":["go","tutorial"]}}`))
 	}))
@@ -66,7 +74,7 @@ func TestAddTextWithOptions(t *testing.T) {
 		WithTextTags("go", "tutorial"),
 	)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if doc.Topic != "golang" {
 		t.Errorf("expected topic golang, got %q", doc.Topic)
@@ -76,26 +84,26 @@ func TestAddTextWithOptions(t *testing.T) {
 func TestAddDocument(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/documents/url" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
+			t.Errorf(errUnexpectedPath, r.URL.Path)
 		}
 		var body map[string]interface{}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["url"] != "https://go.dev/doc/" {
+		if body["url"] != testGoDevDocURL {
 			t.Errorf("expected url, got %v", body["url"])
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.WriteHeader(201)
-		w.Write([]byte(`{"data":{"id":"doc-3","title":"Go Documentation","url":"https://go.dev/doc/"}}`))
+		w.Write([]byte(`{"data":{"id":"doc-3","title":"Go Documentation","url":"` + testGoDevDocURL + `"}}`))
 	}))
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	doc, err := c.AddDocument(context.Background(), "https://go.dev/doc/")
+	doc, err := c.AddDocument(context.Background(), testGoDevDocURL)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
-	if doc.URL != "https://go.dev/doc/" {
+	if doc.URL != testGoDevDocURL {
 		t.Errorf("expected url, got %q", doc.URL)
 	}
 }
@@ -103,9 +111,9 @@ func TestAddDocument(t *testing.T) {
 func TestGetDocument(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/documents/doc-1" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
+			t.Errorf(errUnexpectedPath, r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":{"id":"doc-1","title":"Test"}}`))
 	}))
 	defer srv.Close()
@@ -113,7 +121,7 @@ func TestGetDocument(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	doc, err := c.GetDocument(context.Background(), "doc-1")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if doc.ID != "doc-1" {
 		t.Errorf("expected doc-1, got %q", doc.ID)
@@ -122,7 +130,7 @@ func TestGetDocument(t *testing.T) {
 
 func TestGetDocumentNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.WriteHeader(404)
 		w.Write([]byte(`{"error":{"code":"NOT_FOUND","message":"Document not found"}}`))
 	}))
@@ -150,7 +158,7 @@ func TestListDocuments(t *testing.T) {
 		if r.URL.Query().Get("limit") != "10" {
 			t.Errorf("expected limit=10, got %q", r.URL.Query().Get("limit"))
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":[{"id":"doc-1","title":"Doc 1"},{"id":"doc-2","title":"Doc 2"}]}`))
 	}))
 	defer srv.Close()
@@ -158,7 +166,7 @@ func TestListDocuments(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	docs, err := c.ListDocuments(context.Background(), WithListTopic("go"), WithListLimit(10))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 	if len(docs) != 2 {
 		t.Errorf("expected 2 docs, got %d", len(docs))
@@ -171,9 +179,9 @@ func TestDeleteDocument(t *testing.T) {
 			t.Errorf("expected DELETE, got %s", r.Method)
 		}
 		if r.URL.Path != "/api/v1/documents/doc-1" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
+			t.Errorf(errUnexpectedPath, r.URL.Path)
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, mimeJSON)
 		w.Write([]byte(`{"data":{"deleted":true}}`))
 	}))
 	defer srv.Close()
@@ -181,6 +189,6 @@ func TestDeleteDocument(t *testing.T) {
 	c := NewClient(WithBaseURL(srv.URL))
 	err := c.DeleteDocument(context.Background(), "doc-1")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(errUnexpected, err)
 	}
 }

@@ -28,6 +28,8 @@ from pylibscope.models import (
 )
 
 _API = "/api/v1"
+_PATH_DOCUMENTS = "/documents"
+_PATH_TOPICS = "/topics"
 
 
 def _raise_for_error(response: httpx.Response) -> None:
@@ -215,7 +217,7 @@ class LibscopeClient:
             payload["topic"] = topic
         if tags:
             payload["tags"] = tags
-        resp = self._request("POST", "/documents", json=payload)
+        resp = self._request("POST", _PATH_DOCUMENTS, json=payload)
         return _parse_document(_extract_data(resp))
 
     def get_document(self, doc_id: str) -> Document:
@@ -234,7 +236,7 @@ class LibscopeClient:
         params: Dict[str, Any] = {"limit": limit, "offset": offset}
         if topic is not None:
             params["topic"] = topic
-        resp = self._request("GET", "/documents", params=params)
+        resp = self._request("GET", _PATH_DOCUMENTS, params=params)
         data = _extract_data(resp)
         if isinstance(data, list):
             return [_parse_document(d) for d in data]
@@ -248,7 +250,7 @@ class LibscopeClient:
 
     def list_topics(self) -> List[Topic]:
         """List all topics."""
-        resp = self._request("GET", "/topics")
+        resp = self._request("GET", _PATH_TOPICS)
         data = _extract_data(resp)
         if isinstance(data, list):
             return [_parse_topic(t) for t in data]
@@ -259,7 +261,7 @@ class LibscopeClient:
         payload: Dict[str, Any] = {"name": name}
         if parent_id is not None:
             payload["parentId"] = parent_id
-        resp = self._request("POST", "/topics", json=payload)
+        resp = self._request("POST", _PATH_TOPICS, json=payload)
         return _parse_topic(_extract_data(resp))
 
     # -- tag operations ------------------------------------------------------
@@ -442,7 +444,7 @@ class AsyncLibscopeClient:
             payload["topic"] = topic
         if tags:
             payload["tags"] = tags
-        resp = await self._request("POST", "/documents", json=payload)
+        resp = await self._request("POST", _PATH_DOCUMENTS, json=payload)
         return _parse_document(_extract_data(resp))
 
     async def get_document(self, doc_id: str) -> Document:
@@ -459,7 +461,7 @@ class AsyncLibscopeClient:
         params: Dict[str, Any] = {"limit": limit, "offset": offset}
         if topic is not None:
             params["topic"] = topic
-        resp = await self._request("GET", "/documents", params=params)
+        resp = await self._request("GET", _PATH_DOCUMENTS, params=params)
         data = _extract_data(resp)
         if isinstance(data, list):
             return [_parse_document(d) for d in data]
@@ -471,7 +473,7 @@ class AsyncLibscopeClient:
     # -- topic operations ----------------------------------------------------
 
     async def list_topics(self) -> List[Topic]:
-        resp = await self._request("GET", "/topics")
+        resp = await self._request("GET", _PATH_TOPICS)
         data = _extract_data(resp)
         if isinstance(data, list):
             return [_parse_topic(t) for t in data]
@@ -481,7 +483,7 @@ class AsyncLibscopeClient:
         payload: Dict[str, Any] = {"name": name}
         if parent_id is not None:
             payload["parentId"] = parent_id
-        resp = await self._request("POST", "/topics", json=payload)
+        resp = await self._request("POST", _PATH_TOPICS, json=payload)
         return _parse_topic(_extract_data(resp))
 
     # -- tag operations ------------------------------------------------------

@@ -205,11 +205,8 @@ export function loadConfig(): LibScopeConfig {
   return config;
 }
 
-/** Validate config and log warnings for any issues found. */
-export function validateConfig(config: LibScopeConfig): string[] {
-  const warnings: string[] = [];
-
-  // Check OpenAI API key for embedding provider
+/** Check embedding and LLM provider configuration for missing keys/URLs. */
+function validateProviderConfig(config: LibScopeConfig, warnings: string[]): void {
   if (config.embedding.provider === "openai") {
     const hasKey = config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
     if (!hasKey) {
@@ -218,15 +215,9 @@ export function validateConfig(config: LibScopeConfig): string[] {
       );
     }
   }
-
-  // Check Ollama base URL for embedding provider
-  if (config.embedding.provider === "ollama") {
-    if (!config.embedding.ollamaUrl) {
-      warnings.push('embedding.provider is "ollama" but embedding.ollamaUrl is not set.');
-    }
+  if (config.embedding.provider === "ollama" && !config.embedding.ollamaUrl) {
+    warnings.push('embedding.provider is "ollama" but embedding.ollamaUrl is not set.');
   }
-
-  // Check OpenAI API key for LLM provider
   if (config.llm?.provider === "openai") {
     const hasKey =
       config.llm.openaiApiKey ?? config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
@@ -236,26 +227,35 @@ export function validateConfig(config: LibScopeConfig): string[] {
       );
     }
   }
+}
 
-  // Validate database path is writable (or parent directory is writable/creatable)
-  const dbPath = config.database.path;
-  const dbDir = dirname(dbPath);
+/** Check that the database directory is writable or can be created. */
+function validateDatabasePath(config: LibScopeConfig, warnings: string[]): void {
+  const dbDir = dirname(config.database.path);
   try {
     if (existsSync(dbDir)) {
       accessSync(dbDir, constants.W_OK);
-    } else {
-      // Walk up to find the first existing ancestor and check writability
-      let ancestor = dirname(dbDir);
-      while (!existsSync(ancestor) && ancestor !== dirname(ancestor)) {
-        ancestor = dirname(ancestor);
-      }
-      if (existsSync(ancestor)) {
-        accessSync(ancestor, constants.W_OK);
-      }
+      return;
+    }
+    // Walk up to find the first existing ancestor and check writability
+    let ancestor = dirname(dbDir);
+    while (!existsSync(ancestor) && ancestor !== dirname(ancestor)) {
+      ancestor = dirname(ancestor);
+    }
+    if (existsSync(ancestor)) {
+      accessSync(ancestor, constants.W_OK);
     }
   } catch {
     warnings.push(`database.path directory "${dbDir}" is not writable or cannot be created.`);
   }
+}
+
+/** Validate config and log warnings for any issues found. */
+export function validateConfig(config: LibScopeConfig): string[] {
+  const warnings: string[] = [];
+
+  validateProviderConfig(config, warnings);
+  validateDatabasePath(config, warnings);
 
   const logger = getLogger();
   for (const warning of warnings) {

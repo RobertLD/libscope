@@ -68,12 +68,24 @@ class PrettyReporter implements CliReporter {
 
 /** No-op reporter: used in verbose/JSON mode where pino logs handle output. */
 class SilentReporter implements CliReporter {
-  log(_msg: string): void {}
-  success(_msg: string): void {}
-  warn(_msg: string): void {}
-  error(_msg: string): void {}
-  progress(_current: number, _total: number, _label: string): void {}
-  clearProgress(): void {}
+  log(_msg: string): void {
+    // intentionally empty — silent reporter
+  }
+  success(_msg: string): void {
+    // intentionally empty — silent reporter
+  }
+  warn(_msg: string): void {
+    // intentionally empty — silent reporter
+  }
+  error(_msg: string): void {
+    // intentionally empty — silent reporter
+  }
+  progress(_current: number, _total: number, _label: string): void {
+    // intentionally empty — silent reporter
+  }
+  clearProgress(): void {
+    // intentionally empty — silent reporter
+  }
 }
 
 /** Returns true if verbose mode is active (flag or env var). */

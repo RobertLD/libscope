@@ -124,7 +124,10 @@ describe("integration: full workflow", () => {
     // Children of Infrastructure
     const children = listTopics(db, infra.id);
     expect(children.length).toBe(2);
-    expect(children.map((c) => c.name).sort()).toEqual(["Docker", "Kubernetes"]);
+    expect(children.map((c) => c.name).sort((a, b) => a.localeCompare(b))).toEqual([
+      "Docker",
+      "Kubernetes",
+    ]);
   });
 
   it("should allow model to rate and suggest corrections", async () => {

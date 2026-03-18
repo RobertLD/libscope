@@ -30,7 +30,11 @@ export async function computeChecksum(filePath: string): Promise<string> {
  * Sorts keys to ensure deterministic output regardless of property order.
  */
 export function computePackChecksum(packData: unknown): string {
-  const json = JSON.stringify(packData, Object.keys(packData as object).sort(), 0);
+  const json = JSON.stringify(
+    packData,
+    Object.keys(packData as object).sort((a, b) => a.localeCompare(b)),
+    0,
+  );
   return createHash("sha256").update(json, "utf-8").digest("hex");
 }
 

@@ -130,6 +130,14 @@ function isValidPackSummary(entry: unknown): entry is PackSummary {
   );
 }
 
+/** Extract a display name from a potentially malformed index entry. */
+function extractEntryName(entry: unknown): string {
+  if (typeof entry === "object" && entry !== null && "name" in entry) {
+    return String((entry as Record<string, unknown>)["name"]);
+  }
+  return JSON.stringify(entry);
+}
+
 /** Read and parse the index.json from a local registry cache. */
 export function readIndex(cachedPath: string): PackSummary[] {
   const cached = indexCache.get(cachedPath);
@@ -152,16 +160,13 @@ export function readIndex(cachedPath: string): PackSummary[] {
     for (const entry of data) {
       if (isValidPackSummary(entry)) {
         valid.push(entry);
-      } else {
-        const name =
-          typeof entry === "object" && entry !== null && "name" in entry
-            ? String((entry as Record<string, unknown>)["name"])
-            : JSON.stringify(entry);
-        log.warn(
-          { entry: name },
-          "Skipping invalid index.json entry: missing or wrong-typed required fields",
-        );
+        continue;
       }
+      const name = extractEntryName(entry);
+      log.warn(
+        { entry: name },
+        "Skipping invalid index.json entry: missing or wrong-typed required fields",
+      );
     }
 
     indexCache.set(cachedPath, valid);

@@ -50,6 +50,43 @@ function scoreMatch(pack: PackSummary, query: string): number {
   return score;
 }
 
+/** Resolve which registries to search, returning them or adding a warning if not found. */
+function resolveRegistries(
+  registryName: string | undefined,
+  warnings: string[],
+): RegistryEntry[] | null {
+  if (!registryName) return loadRegistries();
+  const all = loadRegistries();
+  const entry = all.find((r) => r.name === registryName);
+  if (!entry) {
+    warnings.push(`Registry "${registryName}" not found.`);
+    return null;
+  }
+  return [entry];
+}
+
+/** Read packs from a single registry, appending warnings on failure. */
+function readRegistryPacks(entry: RegistryEntry, warnings: string[]): PackSummary[] | null {
+  const cacheDir = getRegistryCacheDir(entry.name);
+  if (!existsSync(cacheDir)) {
+    warnings.push(
+      `Registry "${entry.name}" has never been synced. Run: libscope registry sync ${entry.name}`,
+    );
+    return null;
+  }
+  try {
+    return readIndex(cacheDir);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warnings.push(`Failed to read index for "${entry.name}": ${msg}`);
+    getLogger().warn(
+      { registry: entry.name, err: msg },
+      "Failed to read registry index during search",
+    );
+    return null;
+  }
+}
+
 /**
  * Search for packs across all (or a specific) registry.
  * Returns results sorted by relevance score (highest first).
@@ -58,50 +95,20 @@ export function searchRegistries(
   query: string,
   options?: { registryName?: string | undefined },
 ): { results: RegistrySearchResult[]; warnings: string[] } {
-  const log = getLogger();
   const warnings: string[] = [];
   const results: RegistrySearchResult[] = [];
 
-  let registries: RegistryEntry[];
-  if (options?.registryName) {
-    const all = loadRegistries();
-    const entry = all.find((r) => r.name === options.registryName);
-    if (!entry) {
-      warnings.push(`Registry "${options.registryName}" not found.`);
-      return { results, warnings };
-    }
-    registries = [entry];
-  } else {
-    registries = loadRegistries();
-  }
+  const registries = resolveRegistries(options?.registryName, warnings);
+  if (!registries) return { results, warnings };
 
   for (const entry of registries) {
-    const cacheDir = getRegistryCacheDir(entry.name);
-    if (!existsSync(cacheDir)) {
-      warnings.push(
-        `Registry "${entry.name}" has never been synced. Run: libscope registry sync ${entry.name}`,
-      );
-      continue;
-    }
-
-    let packs: PackSummary[];
-    try {
-      packs = readIndex(cacheDir);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      warnings.push(`Failed to read index for "${entry.name}": ${msg}`);
-      log.warn({ registry: entry.name, err: msg }, "Failed to read registry index during search");
-      continue;
-    }
+    const packs = readRegistryPacks(entry, warnings);
+    if (!packs) continue;
 
     for (const pack of packs) {
       const score = scoreMatch(pack, query);
       if (score > 0) {
-        results.push({
-          registryName: entry.name,
-          pack,
-          score,
-        });
+        results.push({ registryName: entry.name, pack, score });
       }
     }
   }

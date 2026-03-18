@@ -27,6 +27,35 @@ import { commitAndPush, fetchRegistry, git, clearIndexCache } from "./git.js";
 import { computeChecksum, writeChecksumFile } from "./checksum.js";
 import type { KnowledgePack } from "../core/packs.js";
 
+/** Remove an entire pack directory and its entry from the index. */
+function removeEntirePack(packDir: string, cacheDir: string, packName: string): void {
+  rmSync(packDir, { recursive: true, force: true });
+  const indexPath = join(cacheDir, INDEX_FILE);
+  if (!existsSync(indexPath)) return;
+  const index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
+  const filtered = index.filter((p) => p.name !== packName);
+  writeFileSync(indexPath, JSON.stringify(filtered, null, 2), "utf-8");
+}
+
+/** Write updated manifest and update the index entry to reflect the new latest version. */
+function updateManifestAndIndex(
+  manifestPath: string,
+  manifest: PackManifest,
+  cacheDir: string,
+  packName: string,
+): void {
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+  const indexPath = join(cacheDir, INDEX_FILE);
+  if (!existsSync(indexPath)) return;
+  const index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
+  const indexEntry = index.find((p) => p.name === packName);
+  if (indexEntry && manifest.versions[0]) {
+    indexEntry.latestVersion = manifest.versions[0].version;
+    indexEntry.updatedAt = new Date().toISOString();
+  }
+  writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
+}
+
 /** Maximum pack data size (50 MB). */
 const MAX_PACK_SIZE_BYTES = 50 * 1024 * 1024;
 
@@ -397,31 +426,9 @@ export async function unpublishPack(options: UnpublishOptions): Promise<void> {
   manifest.versions.splice(versionIdx, 1);
 
   if (manifest.versions.length === 0) {
-    // Remove entire pack
-    rmSync(packDir, { recursive: true, force: true });
-
-    // Remove from index
-    const indexPath = join(cacheDir, INDEX_FILE);
-    if (existsSync(indexPath)) {
-      const index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
-      const filtered = index.filter((p) => p.name !== packName);
-      writeFileSync(indexPath, JSON.stringify(filtered, null, 2), "utf-8");
-    }
+    removeEntirePack(packDir, cacheDir, packName);
   } else {
-    // Update manifest with remaining versions
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
-
-    // Update index with new latest version
-    const indexPath = join(cacheDir, INDEX_FILE);
-    if (existsSync(indexPath)) {
-      const index = JSON.parse(readFileSync(indexPath, "utf-8")) as PackSummary[];
-      const indexEntry = index.find((p) => p.name === packName);
-      if (indexEntry && manifest.versions[0]) {
-        indexEntry.latestVersion = manifest.versions[0].version;
-        indexEntry.updatedAt = new Date().toISOString();
-      }
-      writeFileSync(indexPath, JSON.stringify(index, null, 2), "utf-8");
-    }
+    updateManifestAndIndex(manifestPath, manifest, cacheDir, packName);
   }
 
   // Commit and push

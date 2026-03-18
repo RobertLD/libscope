@@ -144,7 +144,10 @@ describe("registry search", () => {
 
     const { results } = searchRegistries("docs");
     expect(results).toHaveLength(2);
-    expect(results.map((r) => r.pack.name).sort()).toEqual(["react-docs", "vue-docs"]);
+    expect(results.map((r) => r.pack.name).sort((a, b) => a.localeCompare(b))).toEqual([
+      "react-docs",
+      "vue-docs",
+    ]);
   });
 
   it("should sort results by score descending", () => {

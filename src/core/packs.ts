@@ -710,15 +710,16 @@ function collectFiles(
       continue; // Skip unreadable entries
     }
 
-    if (stat.isDirectory()) {
-      if (recursive) {
-        results.push(...collectFiles(fullPath, rootDir, recursive, extensions, excludePatterns));
-      }
-    } else if (stat.isFile()) {
-      const ext = extname(fullPath).toLowerCase();
-      if (extensions.has(ext)) {
-        results.push(fullPath);
-      }
+    if (stat.isDirectory() && recursive) {
+      results.push(...collectFiles(fullPath, rootDir, recursive, extensions, excludePatterns));
+      continue;
+    }
+
+    if (!stat.isFile()) continue;
+
+    const ext = extname(fullPath).toLowerCase();
+    if (extensions.has(ext)) {
+      results.push(fullPath);
     }
   }
 

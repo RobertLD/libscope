@@ -150,44 +150,34 @@ interface RankedItem {
   ranks: number[];
 }
 
-/**
- * Merge two ranked result lists via Reciprocal Rank Fusion.
- * Returns results sorted by fused score in descending order.
- */
-function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): SearchResult[] {
-  const map = new Map<string, RankedItem>();
-
-  for (let i = 0; i < listA.length; i++) {
-    const r = listA[i];
+/** Add ranked results from a single list into the RRF accumulator map. */
+function addRankedList(
+  list: SearchResult[],
+  map: Map<string, RankedItem>,
+  preferVector: boolean,
+): void {
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
     if (r === undefined) continue;
-    const key = r.chunkId;
-    const existing = map.get(key);
-    if (existing) {
-      existing.ranks.push(i + 1);
-    } else {
-      map.set(key, { result: r, ranks: [i + 1] });
+    const existing = map.get(r.chunkId);
+    if (!existing) {
+      map.set(r.chunkId, { result: r, ranks: [i + 1] });
+      continue;
+    }
+    existing.ranks.push(i + 1);
+    // Prefer result with richer explanation (vector > fts5 > keyword)
+    if (
+      preferVector &&
+      r.scoreExplanation.method === "vector" &&
+      existing.result.scoreExplanation.method !== "vector"
+    ) {
+      existing.result = r;
     }
   }
+}
 
-  for (let i = 0; i < listB.length; i++) {
-    const r = listB[i];
-    if (r === undefined) continue;
-    const key = r.chunkId;
-    const existing = map.get(key);
-    if (existing) {
-      existing.ranks.push(i + 1);
-      // Prefer result with richer explanation (vector > fts5 > keyword)
-      if (
-        r.scoreExplanation.method === "vector" &&
-        existing.result.scoreExplanation.method !== "vector"
-      ) {
-        existing.result = r;
-      }
-    } else {
-      map.set(key, { result: r, ranks: [i + 1] });
-    }
-  }
-
+/** Compute final RRF scores from the accumulated rank map. */
+function computeRrfScores(map: Map<string, RankedItem>): SearchResult[] {
   const fused: Array<{ result: SearchResult; score: number }> = [];
   for (const item of map.values()) {
     let rrfScore = 0;
@@ -209,9 +199,19 @@ function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): Sea
       score: rrfScore,
     });
   }
-
   fused.sort((a, b) => b.score - a.score);
   return fused.map((f) => f.result);
+}
+
+/**
+ * Merge two ranked result lists via Reciprocal Rank Fusion.
+ * Returns results sorted by fused score in descending order.
+ */
+function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): SearchResult[] {
+  const map = new Map<string, RankedItem>();
+  addRankedList(listA, map, false);
+  addRankedList(listB, map, true);
+  return computeRrfScores(map);
 }
 
 /** Fetch neighboring chunks for a given chunk within its document. */

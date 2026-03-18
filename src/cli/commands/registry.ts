@@ -59,6 +59,46 @@ function padColumns(cols: string[]): string {
   return cols.map((col, i) => col.padEnd(widths[i] ?? 16)).join("  ");
 }
 
+/** Sync a single named registry and print the result. */
+async function syncSingleRegistry(name: string): Promise<void> {
+  const status = await syncRegistryByName(name);
+  if (status.status === "error") {
+    console.error(`Error: ${status.error}`);
+    process.exit(1);
+    return;
+  }
+  if (status.status === "offline") {
+    console.warn(`Warning: ${status.error}`);
+    console.warn(
+      `Registry "${name}" is unreachable. Using cached index from ${status.lastSyncedAt ?? "unknown"}.`,
+    );
+    return;
+  }
+  const cacheDir = getRegistryCacheDir(name);
+  const index = readIndex(cacheDir);
+  console.log(`Registry "${name}" synced: ${index.length} pack(s) available.`);
+}
+
+/** Sync all registries and print per-registry results. */
+async function syncAllRegistriesAction(): Promise<void> {
+  const results = await syncAllRegistries();
+  if (results.length === 0) {
+    console.log("No registries configured.");
+    return;
+  }
+  for (const status of results) {
+    if (status.status === "success") {
+      const cacheDir = getRegistryCacheDir(status.registryName);
+      const index = readIndex(cacheDir);
+      console.log(`  ${status.registryName}: synced (${index.length} packs)`);
+    } else if (status.status === "offline") {
+      console.warn(`  ${status.registryName}: offline (using cached data)`);
+    } else {
+      console.error(`  ${status.registryName}: error — ${status.error}`);
+    }
+  }
+}
+
 /** Register all `registry` subcommands on the given Commander program. */
 export function registerRegistryCommands(program: Command): void {
   const registryCmd = program
@@ -241,39 +281,9 @@ export function registerRegistryCommands(program: Command): void {
       }
 
       if (name) {
-        const status = await syncRegistryByName(name);
-        if (status.status === "error") {
-          console.error(`Error: ${status.error}`);
-          process.exit(1);
-          return;
-        }
-        if (status.status === "offline") {
-          console.warn(`Warning: ${status.error}`);
-          console.warn(
-            `Registry "${name}" is unreachable. Using cached index from ${status.lastSyncedAt ?? "unknown"}.`,
-          );
-        } else {
-          const cacheDir = getRegistryCacheDir(name);
-          const index = readIndex(cacheDir);
-          console.log(`Registry "${name}" synced: ${index.length} pack(s) available.`);
-        }
+        await syncSingleRegistry(name);
       } else {
-        const results = await syncAllRegistries();
-        if (results.length === 0) {
-          console.log("No registries configured.");
-          return;
-        }
-        for (const status of results) {
-          if (status.status === "success") {
-            const cacheDir = getRegistryCacheDir(status.registryName);
-            const index = readIndex(cacheDir);
-            console.log(`  ${status.registryName}: synced (${index.length} packs)`);
-          } else if (status.status === "offline") {
-            console.warn(`  ${status.registryName}: offline (using cached data)`);
-          } else {
-            console.error(`  ${status.registryName}: error — ${status.error}`);
-          }
-        }
+        await syncAllRegistriesAction();
       }
     });
 

@@ -139,7 +139,9 @@ describe("integration: registry conflict resolution", () => {
     expect(resolved).toBeNull();
     expect(conflict).toBeDefined();
     expect(conflict!.sources).toHaveLength(2);
-    expect(conflict!.sources.map((s) => s.registryName).sort()).toEqual(["reg1", "reg2"]);
+    expect(conflict!.sources.map((s) => s.registryName).sort((a, b) => a.localeCompare(b))).toEqual(
+      ["reg1", "reg2"],
+    );
   });
 
   it("should resolve conflict with explicit --registry flag", async () => {

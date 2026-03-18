@@ -117,7 +117,7 @@ describe("ratings", () => {
 
       const ratings = listRatings(db, testDocId);
       expect(ratings.length).toBe(2);
-      const feedbacks = ratings.map((r) => r.feedback).sort();
+      const feedbacks = ratings.map((r) => r.feedback).sort((a, b) => a.localeCompare(b));
       expect(feedbacks).toEqual(["first", "second"]);
     });
 

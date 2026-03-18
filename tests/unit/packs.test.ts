@@ -464,7 +464,10 @@ describe("knowledge packs", () => {
 
       expect(pack.name).toBe("test-from-folder");
       expect(pack.documents).toHaveLength(2);
-      expect(pack.documents.map((d) => d.title).sort()).toEqual(["api", "guide"]);
+      expect(pack.documents.map((d) => d.title).sort((a, b) => a.localeCompare(b))).toEqual([
+        "api",
+        "guide",
+      ]);
       expect(pack.documents[0]!.content).toBeTruthy();
       expect(pack.documents[0]!.source).toMatch(/^file:\/\//);
       expect(pack.version).toBe("1.0.0");
@@ -542,7 +545,10 @@ describe("knowledge packs", () => {
       });
 
       expect(pack.documents).toHaveLength(2);
-      expect(pack.documents.map((d) => d.title).sort()).toEqual(["nested", "root"]);
+      expect(pack.documents.map((d) => d.title).sort((a, b) => a.localeCompare(b))).toEqual([
+        "nested",
+        "root",
+      ]);
     });
 
     it("should not recurse when recursive is false", async () => {
