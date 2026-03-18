@@ -165,10 +165,19 @@ function transformObsidianBody(body: string, fileMap: Map<string, string>): stri
   result = result.replaceAll(/%%[\s\S]*?%%/g, "");
   // Strip dataview code blocks
   result = result.replaceAll(/```dataview[\s\S]*?```/g, "");
-  // Convert callouts to blockquotes with type prefix
-  result = result.replaceAll(/^> \[!(\w+)]\s*(.*)$/gm, (_match, type: string, rest: string) => {
-    return `> **${type}**: ${rest}`;
-  });
+  // Convert callouts to blockquotes with type prefix (line-by-line to avoid regex backtracking)
+  result = result
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("> [!")) return line;
+      const close = line.indexOf("]", 4);
+      if (close === -1) return line;
+      const type = line.slice(4, close);
+      if (!/^\w+$/.test(type)) return line;
+      const rest = line.slice(close + 1).trimStart();
+      return `> **${type}**: ${rest}`;
+    })
+    .join("\n");
 
   return result;
 }
