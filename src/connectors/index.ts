@@ -23,7 +23,7 @@ function restrictPermissions(filePath: string, mode: number): void {
     }
     getLogger().warn(
       { err, filePath, mode: mode.toString(8) },
-      "Failed to set restrictive file permissions — config file may be world-readable",
+      "Failed to set restrictive permissions — config path may be world-readable",
     );
   }
 }
@@ -47,8 +47,9 @@ export interface ConnectorConfig {
 function getConfigPath(): string {
   const dir = join(homedir(), ".libscope");
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
+  restrictPermissions(dir, 0o700);
   return join(dir, "connectors.json");
 }
 
