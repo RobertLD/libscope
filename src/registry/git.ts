@@ -72,9 +72,7 @@ export async function fetchRegistry(cachedPath: string): Promise<void> {
   } catch {
     // Cache is corrupted — remove it so the caller can re-clone
     rmSync(cachedPath, { recursive: true, force: true });
-    throw new FetchError(
-      "Cached registry is corrupted and has been removed. Please re-sync.",
-    );
+    throw new FetchError("Cached registry is corrupted and has been removed. Please re-sync.");
   }
 
   // Ensure symlinks are disabled (may not be persisted from clone -c flag)
@@ -97,9 +95,7 @@ export async function fetchRegistry(cachedPath: string): Promise<void> {
   }
 
   if (!resetSuccess) {
-    throw new FetchError(
-      `Failed to reset registry to any known ref (tried: ${refs.join(", ")})`,
-    );
+    throw new FetchError(`Failed to reset registry to any known ref (tried: ${refs.join(", ")})`);
   }
 }
 
@@ -161,7 +157,10 @@ export function readIndex(cachedPath: string): PackSummary[] {
           typeof entry === "object" && entry !== null && "name" in entry
             ? String((entry as Record<string, unknown>)["name"])
             : JSON.stringify(entry);
-        log.warn({ entry: name }, "Skipping invalid index.json entry: missing or wrong-typed required fields");
+        log.warn(
+          { entry: name },
+          "Skipping invalid index.json entry: missing or wrong-typed required fields",
+        );
       }
     }
 

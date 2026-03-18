@@ -593,9 +593,7 @@ function printResultsTable(
   if (!process.env.DEBUG) return;
   const mrr = computeMrr(ranks);
   console.log(`\n  ══ ${label} ══`);
-  console.log(
-    `  ${"Query".padEnd(42)} ${"Expected".padEnd(26)} ${"Top result".padEnd(26)} Rank`,
-  );
+  console.log(`  ${"Query".padEnd(42)} ${"Expected".padEnd(26)} ${"Top result".padEnd(26)} Rank`);
   console.log(`  ${"-".repeat(100)}`);
   for (const r of ranks) {
     const rank = r.rank > 0 ? String(r.rank) : "—";
@@ -761,9 +759,7 @@ describe.runIf(isVecAvailable())(
       if (!neuralAvailable) return;
 
       // Dynamic import to avoid loading transformers during TF-IDF suite
-      const { LocalEmbeddingProvider } = await import(
-        "../../src/providers/local.js"
-      );
+      const { LocalEmbeddingProvider } = await import("../../src/providers/local.js");
       const provider = new LocalEmbeddingProvider();
 
       // Prime the model (downloads if not cached; takes up to 60 s on first run)
@@ -811,7 +807,8 @@ describe.runIf(isVecAvailable())(
       printResultsTable("Neural — paraphrase queries", ranks);
 
       const hits = ranks.filter((r) => r.rank > 0 && r.rank <= 3).length;
-      if (process.env.DEBUG) console.log(`  paraphrase top-3 hits: ${hits}/${PARAPHRASE_QUERIES.length}`);
+      if (process.env.DEBUG)
+        console.log(`  paraphrase top-3 hits: ${hits}/${PARAPHRASE_QUERIES.length}`);
       // all-MiniLM-L6-v2 (22M params) achieves 3/5 on cross-domain programming paraphrase.
       // TF-IDF scores 0–1/5 on these same queries (no vocabulary overlap) — raise this
       // threshold as larger / domain-adapted models are adopted.
