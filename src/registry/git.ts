@@ -5,7 +5,7 @@
 
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLogger } from "../logger.js";
 import { FetchError, ValidationError } from "../errors.js";
@@ -14,8 +14,11 @@ import { INDEX_FILE, PACKS_DIR } from "./types.js";
 
 const execFile = promisify(execFileCb);
 
-/** Default timeout for git operations (60 seconds). */
-const GIT_TIMEOUT_MS = 60_000;
+/** Default timeout for git operations (60 seconds), capped at 5 minutes. */
+const GIT_TIMEOUT_MS = Math.min(
+  parseInt(process.env.LIBSCOPE_GIT_TIMEOUT_MS ?? "60000", 10) || 60000,
+  300000, // cap at 5 minutes
+);
 
 /** Execute a git command safely via execFile. */
 export async function git(
@@ -34,7 +37,20 @@ export async function git(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error({ args, cwd, err: message }, "Git command failed");
-    throw new FetchError(`Git command failed: git ${args.join(" ")}: ${message}`);
+
+    // Provide better diagnostics for common git errors
+    let friendlyMessage: string;
+    if (message.includes("could not read Username")) {
+      friendlyMessage = `Authentication failed: ${message}`;
+    } else if (message.includes("unable to access") || message.includes("Could not resolve host")) {
+      friendlyMessage = `Repository unreachable: ${message}`;
+    } else if (message.includes("timeout")) {
+      friendlyMessage = `Git operation timed out: ${message}`;
+    } else {
+      friendlyMessage = message;
+    }
+
+    throw new FetchError(`Git command failed: git ${args.join(" ")}: ${friendlyMessage}`);
   }
 }
 
@@ -42,15 +58,45 @@ export async function git(
 export async function cloneRegistry(url: string, dest: string): Promise<void> {
   const log = getLogger();
   log.info({ url, dest }, "Cloning registry");
-  await git(["clone", "--depth", "1", url, dest]);
+  await git(["-c", "core.symlinks=false", "clone", "--depth", "1", url, dest]);
 }
 
 /** Fetch latest changes for an already-cloned registry. */
 export async function fetchRegistry(cachedPath: string): Promise<void> {
   const log = getLogger();
   log.info({ cachedPath }, "Fetching registry updates");
+
+  // Verify the cache is a valid git repo before running fetch
+  try {
+    await git(["rev-parse", "--is-inside-work-tree"], { cwd: cachedPath });
+  } catch {
+    // Cache is corrupted — remove it so the caller can re-clone
+    rmSync(cachedPath, { recursive: true, force: true });
+    throw new FetchError("Cached registry is corrupted and has been removed. Please re-sync.");
+  }
+
+  // Ensure symlinks are disabled (may not be persisted from clone -c flag)
+  await git(["config", "core.symlinks", "false"], { cwd: cachedPath });
+
   await git(["fetch", "--depth", "1", "origin"], { cwd: cachedPath });
-  await git(["reset", "--hard", "origin/HEAD"], { cwd: cachedPath });
+
+  // Try origin/HEAD first, then fall back to origin/main, then origin/master
+  const refs = ["origin/HEAD", "origin/main", "origin/master"];
+  let resetSuccess = false;
+  for (const ref of refs) {
+    try {
+      await git(["reset", "--hard", ref], { cwd: cachedPath });
+      log.debug({ cachedPath, ref }, "Reset to ref");
+      resetSuccess = true;
+      break;
+    } catch {
+      log.debug({ cachedPath, ref }, "Ref not available, trying next");
+    }
+  }
+
+  if (!resetSuccess) {
+    throw new FetchError(`Failed to reset registry to any known ref (tried: ${refs.join(", ")})`);
+  }
 }
 
 /**
@@ -69,6 +115,21 @@ export function clearIndexCache(cachedPath?: string): void {
   }
 }
 
+/** Required fields and their expected types for a PackSummary entry. */
+function isValidPackSummary(entry: unknown): entry is PackSummary {
+  if (typeof entry !== "object" || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return (
+    typeof e["name"] === "string" &&
+    typeof e["latestVersion"] === "string" &&
+    typeof e["description"] === "string" &&
+    Array.isArray(e["tags"]) &&
+    (e["tags"] as unknown[]).every((t) => typeof t === "string") &&
+    typeof e["author"] === "string" &&
+    typeof e["updatedAt"] === "string"
+  );
+}
+
 /** Read and parse the index.json from a local registry cache. */
 export function readIndex(cachedPath: string): PackSummary[] {
   const cached = indexCache.get(cachedPath);
@@ -79,14 +140,32 @@ export function readIndex(cachedPath: string): PackSummary[] {
     return [];
   }
   try {
+    const log = getLogger();
     const raw = readFileSync(indexPath, "utf-8");
     const data: unknown = JSON.parse(raw);
     if (!Array.isArray(data)) {
       throw new ValidationError("Registry index.json is not an array");
     }
-    const result = data as PackSummary[];
-    indexCache.set(cachedPath, result);
-    return result;
+
+    // Validate each entry and filter out malformed ones
+    const valid: PackSummary[] = [];
+    for (const entry of data) {
+      if (isValidPackSummary(entry)) {
+        valid.push(entry);
+      } else {
+        const name =
+          typeof entry === "object" && entry !== null && "name" in entry
+            ? String((entry as Record<string, unknown>)["name"])
+            : JSON.stringify(entry);
+        log.warn(
+          { entry: name },
+          "Skipping invalid index.json entry: missing or wrong-typed required fields",
+        );
+      }
+    }
+
+    indexCache.set(cachedPath, valid);
+    return valid;
   } catch (err) {
     if (err instanceof ValidationError) throw err;
     throw new ValidationError(

@@ -27,18 +27,24 @@ import { confirmAction } from "../confirm.js";
 
 /** Derive a short name from a git URL (e.g. "github.com/org/repo" → "repo"). */
 function deriveNameFromUrl(url: string): string {
-  // Handle SSH format: git@github.com:org/repo.git
-  const sshMatch = url.match(/:([^/]+\/)?([^/.]+?)(?:\.git)?$/);
-  if (sshMatch?.[2]) return sshMatch[2];
-  // Handle HTTPS format
-  try {
-    const parsed = new URL(url);
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    const last = segments[segments.length - 1] ?? "registry";
-    return last.replace(/\.git$/, "");
-  } catch {
-    return "registry";
+  // Try URL parsing first for https:// and ssh:// URLs
+  if (url.startsWith("https://") || url.startsWith("ssh://")) {
+    try {
+      const parsed = new URL(url);
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      const last = segments[segments.length - 1] ?? "";
+      const derived = last.replace(/\.git$/, "");
+      if (derived) return derived;
+    } catch {
+      // fall through to SCP regex
+    }
   }
+
+  // Fall back to SCP-style SSH format: git@github.com:org/repo.git
+  const scpMatch = url.match(/:([^/]+\/)*([^/.]+?)(?:\.git)?$/);
+  if (scpMatch?.[2]) return scpMatch[2];
+
+  return "registry";
 }
 
 /** Truncate a string to a max length, adding "..." if truncated. */
@@ -83,7 +89,23 @@ export function registerRegistryCommands(program: Command): void {
           return;
         }
 
-        const name = opts.name ?? deriveNameFromUrl(url);
+        let name: string;
+        if (opts.name) {
+          name = opts.name;
+        } else {
+          const derived = deriveNameFromUrl(url);
+          try {
+            validateRegistryName(derived);
+          } catch {
+            console.error(
+              `Error: Could not derive a valid registry name from URL (got "${derived}"). ` +
+                "Please provide a name using --name.",
+            );
+            process.exit(1);
+            return;
+          }
+          name = derived;
+        }
         const priority = parseInt(opts.priority, 10);
         const syncInterval = parseInt(opts.syncInterval, 10);
 
