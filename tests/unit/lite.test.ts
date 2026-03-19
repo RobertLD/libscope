@@ -156,10 +156,9 @@ describe("LibScopeLite", () => {
     });
 
     it("should call LlmProvider.complete with context", async () => {
-      const mockLlm: LlmProvider = {
-        model: "test-model",
-        complete: vi.fn().mockResolvedValue({ text: "Mocked LLM response" }),
-      };
+      // Declare the spy separately so we never reference it as an object method
+      const completeSpy = vi.fn().mockResolvedValue({ text: "Mocked LLM response" });
+      const mockLlm: LlmProvider = { model: "test-model", complete: completeSpy };
 
       const liteWithLlm = new LibScopeLite({
         dbPath: ":memory:",
@@ -173,9 +172,6 @@ describe("LibScopeLite", () => {
 
       const answer = await liteWithLlm.ask("What are testing patterns?");
       expect(answer).toBe("Mocked LLM response");
-
-      // Access the spy via the object property (avoids unbound-method lint rule)
-      const completeSpy = vi.mocked(mockLlm.complete);
       expect(completeSpy).toHaveBeenCalledOnce();
       expect(completeSpy.mock.calls[0]?.[0]).toContain("testing patterns");
 
