@@ -27,6 +27,38 @@ CI runs on Node 20 and 22. CI checks: lint, format:check, typecheck, test:covera
 - **Prettier:** double quotes, semicolons, trailing commas, 100-char line width, 2-space indent
 - **Pre-commit hooks:** husky + lint-staged runs `eslint --fix` and `prettier --write` on staged `.ts` files
 
+## CI/CD Requirements — READ BEFORE PUSHING
+
+CI runs **all** of these on every PR. A PR that fails any check will not merge:
+
+1. `npm run lint` — zero errors (pre-existing errors only in parsers/pptx.ts, core/rag.ts, parsers/epub.ts)
+2. `npm run format:check` — must pass (run `npm run format` before committing)
+3. `npm run typecheck` — zero new errors (same pre-existing exceptions)
+4. `npm run test:coverage` — all tests pass, coverage thresholds met
+5. `npm run build` — must succeed
+6. **SonarCloud quality gate** — zero new issues on changed files, duplication density ≤3%
+
+### SonarCloud rules that commonly bite
+
+Before pushing any PR, mentally verify these won't be introduced:
+
+- **S7781**: Use `.replaceAll("str", ...)` not `.replace(/str/g, ...)` — but `.replaceAll` with a regex `/pattern/g` argument still gets flagged if the regex is a simple literal. Use string arguments.
+- **S7778**: Combine consecutive `.push(a); .push(b)` into `.push(a, b)` — but **NEVER** combine `Readable.push(data); Readable.push(null)`. Stream `.push(null)` signals end-of-stream and must be a separate call. Only combine actual `Array.push()` calls.
+- **S4325**: Don't remove `as Type` assertions without verifying on Node 22. CI runs Node 20 AND Node 22 — Node 22 has stricter type definitions (especially for `fetch`, `Response`, `ReadableStream`, `fs.Stats`). An assertion that looks "unnecessary" locally on Node 20 may be required for Node 22.
+- **S7773**: `parseInt` → `Number.parseInt` is safe. `isNaN` → `Number.isNaN` is **NOT** a drop-in replacement (it doesn't coerce strings). Verify the argument is already a number.
+- **S3776**: When reducing cognitive complexity, extract helpers — don't remove type assertions or restructure code in ways that change semantics.
+- **Duplication density**: SonarCloud counts duplicated lines as a percentage of new code. Small PRs with few new lines are very sensitive — 6 duplicated lines in a 90-line PR = 6.7% (fails the 3% gate). If you touch a file, you inherit responsibility for its duplications.
+
+### Subagent instructions
+
+When delegating to subagents for mechanical fixes:
+
+- Always instruct them to run `npm run lint`, `npm run format:check`, AND `npm test` before committing
+- Instruct them NOT to remove type assertions (`as Type`, `!`) — these are often needed for Node 22 compatibility
+- Instruct them NOT to combine `Readable.push()` / stream `.push()` calls
+- Instruct them NOT to modify `src/web/dashboard.ts` — it's one giant template literal with intentional escape sequences
+- Review their work before pushing if possible
+
 ## Project Structure
 
 ```
