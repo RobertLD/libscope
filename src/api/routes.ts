@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { performance } from "node:perf_hooks";
 import type { EmbeddingProvider } from "../providers/embedding.js";
@@ -55,6 +56,8 @@ import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
 import { spiderUrl } from "../core/spider.js";
 import type { SpiderOptions, SpiderStats } from "../core/spider.js";
+import { loadReposConfig, createRepoLibScope } from "./indexing/repoConfig.js";
+import { indexRepo, type IndexJobStats } from "./indexing/repoIndexer.js";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -69,6 +72,22 @@ interface RouteContext {
   url: URL;
   start: number;
 }
+
+// ---------------------------------------------------------------------------
+// Repo index job registry
+// ---------------------------------------------------------------------------
+
+interface IndexJob {
+  jobId: string;
+  repoSlug: string;
+  status: "queued" | "running" | "completed" | "failed";
+  startedAt: string;
+  completedAt?: string;
+  stats?: IndexJobStats;
+  error?: string;
+}
+
+const repoIndexJobs = new Map<string, IndexJob>();
 
 // ---------------------------------------------------------------------------
 // URL / path helpers
@@ -903,6 +922,108 @@ function handleDeleteWebhook(ctx: RouteContext, webhookId: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Repo indexing webhook handler
+// ---------------------------------------------------------------------------
+
+/** Match /api/v1/index/jobs/:jobId */
+function matchIndexJobId(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "index" &&
+    segments[3] === "jobs"
+  ) {
+    return segments[4] ?? null;
+  }
+  return null;
+}
+
+function handleGetIndexJob(ctx: RouteContext, jobId: string): void {
+  const job = repoIndexJobs.get(jobId);
+  if (!job) {
+    sendError(ctx.res, 404, "NOT_FOUND", `Index job "${jobId}" not found`);
+    return;
+  }
+  sendJson(ctx.res, 200, job, elapsed(ctx.start));
+}
+
+/** Match /api/v1/index/repos/:repoSlug */
+function matchRepoSlugForIndex(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "index" &&
+    segments[3] === "repos"
+  ) {
+    return segments[4] ?? null;
+  }
+  return null;
+}
+
+async function handleIndexRepo(ctx: RouteContext, repoSlug: string): Promise<void> {
+  const log = getLogger();
+
+  // Parse optional body — empty body is valid (full reindex)
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed = await parseJsonBody(ctx.req);
+    if (parsed && typeof parsed === "object") {
+      body = parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* empty body or non-JSON — treat as full reindex request */
+  }
+
+  const branch = typeof body["branch"] === "string" ? body["branch"] : undefined;
+  const files = Array.isArray(body["files"])
+    ? (body["files"] as unknown[]).filter((f): f is string => typeof f === "string")
+    : undefined;
+
+  const config = loadReposConfig();
+  const entry = config.repos[repoSlug];
+  if (!entry) {
+    sendError(ctx.res, 404, "NOT_FOUND", `Repo "${repoSlug}" not found in repos config`);
+    return;
+  }
+
+  const jobId = randomUUID();
+  const job: IndexJob = {
+    jobId,
+    repoSlug,
+    status: "queued",
+    startedAt: new Date().toISOString(),
+  };
+  repoIndexJobs.set(jobId, job);
+
+  sendJson(ctx.res, 202, { jobId, status: "queued" }, elapsed(ctx.start));
+
+  // Fire-and-forget indexing job
+  const libscope = createRepoLibScope(repoSlug);
+  job.status = "running";
+  const indexOpts: { branch?: string; files?: string[] } = {};
+  if (branch !== undefined) indexOpts.branch = branch;
+  if (files !== undefined) indexOpts.files = files;
+  indexRepo(libscope, repoSlug, entry, indexOpts)
+    .then((stats) => {
+      job.status = "completed";
+      job.completedAt = new Date().toISOString();
+      job.stats = stats;
+      log.info({ jobId, repoSlug, stats }, "Repo indexing completed");
+    })
+    .catch((err: unknown) => {
+      job.status = "failed";
+      job.completedAt = new Date().toISOString();
+      job.error = err instanceof Error ? err.message : String(err);
+      log.error({ jobId, repoSlug, err }, "Repo indexing failed");
+    })
+    .finally(() => {
+      libscope.close();
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Error classification helper
 // ---------------------------------------------------------------------------
 
@@ -1069,6 +1190,16 @@ async function dispatchMiscSegmentRoutes(
   const savedSearchId = matchSearchId(segments);
   if (savedSearchId && method === "DELETE") {
     handleDeleteSavedSearch(ctx, savedSearchId);
+    return true;
+  }
+  const indexJobId = matchIndexJobId(segments);
+  if (indexJobId && method === "GET") {
+    handleGetIndexJob(ctx, indexJobId);
+    return true;
+  }
+  const repoSlug = matchRepoSlugForIndex(segments);
+  if (repoSlug && method === "POST") {
+    await handleIndexRepo(ctx, repoSlug);
     return true;
   }
   return dispatchWebhookRoutes(ctx, segments, method);

@@ -7,6 +7,7 @@ import { createDatabase } from "../db/connection.js";
 import { runMigrations, createVectorTable } from "../db/schema.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
+import { bulkDelete } from "../core/bulk.js";
 import { rateDocument } from "../core/ratings.js";
 import { askQuestion, getContextForQuestion, type LlmProvider } from "../core/rag.js";
 import { normalizeRawInput } from "./normalize.js";
@@ -60,10 +61,10 @@ export class LibScopeLite {
     }
   }
 
-  async indexRaw(input: RawInput): Promise<string> {
+  async indexRaw(input: RawInput): Promise<string[]> {
     const normalized = await normalizeRawInput(input);
     if (normalized.chunks !== undefined && normalized.chunks.length > 1) {
-      let firstId = "";
+      const ids: string[] = [];
       for (let i = 0; i < normalized.chunks.length; i++) {
         const chunk = normalized.chunks[i]!;
         const result = await indexDocument(this.db, this.provider, {
@@ -71,9 +72,9 @@ export class LibScopeLite {
           content: chunk,
           sourceType: "manual",
         });
-        if (i === 0) firstId = result.id;
+        ids.push(result.id);
       }
-      return firstId;
+      return ids;
     }
     const result = await indexDocument(this.db, this.provider, {
       title: normalized.title,
@@ -81,7 +82,7 @@ export class LibScopeLite {
       sourceType: "manual",
       url: input.type === "url" ? input.url : undefined,
     });
-    return result.id;
+    return [result.id];
   }
 
   async indexBatch(docs: LiteDoc[], opts: { concurrency: number }): Promise<void> {
@@ -89,7 +90,7 @@ export class LibScopeLite {
     let activeCount = 0;
     let idx = 0;
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
       if (docs.length === 0) {
         resolve();
         return;
@@ -101,14 +102,16 @@ export class LibScopeLite {
           if (!doc) break;
           idx++;
           activeCount++;
-          void this.index([doc]).finally(() => {
-            activeCount--;
-            if (idx >= docs.length && activeCount === 0) {
-              resolve();
-            } else {
-              runNext();
-            }
-          });
+          this.index([doc])
+            .then(() => {
+              activeCount--;
+              if (idx >= docs.length && activeCount === 0) {
+                resolve();
+              } else {
+                runNext();
+              }
+            })
+            .catch(reject);
         }
       };
 
@@ -174,6 +177,14 @@ export class LibScopeLite {
 
   rate(docId: string, score: number): void {
     rateDocument(this.db, { documentId: docId, rating: score });
+  }
+
+  deleteByLibrary(library: string): void {
+    // bulkDelete caps at MAX_BATCH_SIZE=1000; loop until all cleared
+    let result;
+    do {
+      result = bulkDelete(this.db, { library }, false);
+    } while (result.affected > 0);
   }
 
   close(): void {
