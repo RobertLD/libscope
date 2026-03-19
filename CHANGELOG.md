@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0](https://github.com/RobertLD/libscope/compare/v1.6.0...v1.7.0) (2026-03-19)
+
+
+### Features
+
+* Libscope Lite-powered PR review tooling ([#457](https://github.com/RobertLD/libscope/issues/457)) ([08ba8f9](https://github.com/RobertLD/libscope/commit/08ba8f90c3ab48d97cc724916d8dd2ef593df1bf))
+
 ## [1.6.0](https://github.com/RobertLD/libscope/compare/v1.5.3...v1.6.0) (2026-03-19)
 
 
