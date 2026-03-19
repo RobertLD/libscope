@@ -139,6 +139,7 @@ await lite.index([
 | `version` | `string?` | Library version |
 | `sourceType` | `string?` | `"manual"` (default), `"library"`, `"topic"`, or `"model-generated"` |
 | `topicId` | `string?` | Topic ID to associate the document with |
+| `language` | `string?` | Language alias for code-aware tree-sitter chunking (e.g. `"typescript"`, `"cpp"`, `"go"`). When set and tree-sitter is available, chunks at function/class boundaries instead of text boundaries. |
 
 ### `indexRaw(input)`
 
@@ -269,7 +270,39 @@ The LLM provider must support streaming. Providers that don't expose a `complete
 
 ## Code Indexing
 
-For source code files, use the tree-sitter chunker to split at function and class boundaries:
+LibScope Lite can split source code files at function and class boundaries using tree-sitter rather than plain text chunking. The preferred way to enable this is to set the `language` field on a `LiteDoc` — no extra imports or chunking steps required.
+
+### Preferred: set `language` on `LiteDoc`
+
+```ts
+// Preferred: just set language on LiteDoc — chunking is automatic
+await lite.index([
+  {
+    title: "src/auth.cpp",
+    content: fileContent,
+    library: "my-repo",
+    language: "cpp",   // enables tree-sitter chunking at function boundaries
+  },
+]);
+```
+
+Setting `language` on a `LiteDoc` automatically triggers code-aware tree-sitter chunking. This is the preferred approach over using `TreeSitterChunker` directly. If tree-sitter is not installed or parsing fails, indexing falls back silently to the standard text chunker.
+
+Supported languages and their extension aliases:
+
+| Language | Aliases |
+|---|---|
+| `typescript` | `ts`, `tsx` |
+| `javascript` | `js`, `jsx`, `mjs`, `cjs` |
+| `python` | `py` |
+| `csharp` | `cs` |
+| `cpp` | `cc`, `cxx`, `hpp`, `h` |
+| `c` | — |
+| `go` | — |
+
+### Advanced: using `TreeSitterChunker` directly
+
+Direct use of `TreeSitterChunker` is rarely needed when using `LibScopeLite` — setting `language` on `LiteDoc` covers most cases. Use `TreeSitterChunker` directly only when you need access to the raw `CodeChunk` objects (e.g., to extract line numbers for display, filter by node type, or build custom chunk titles):
 
 ```ts
 import { LibScopeLite } from "libscope/lite";
