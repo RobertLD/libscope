@@ -19,11 +19,13 @@ export class CsvParser implements DocumentParser {
       const rows = records.slice(1);
 
       const escapeCell = (cell: string): string =>
-        cell.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
+        cell.replaceAll("\\", "\\\\").replaceAll("|", "\\|").replaceAll("\n", " ");
 
       const lines: string[] = [];
-      lines.push("| " + header.map(escapeCell).join(" | ") + " |");
-      lines.push("| " + header.map(() => "---").join(" | ") + " |");
+      lines.push(
+        "| " + header.map(escapeCell).join(" | ") + " |",
+        "| " + header.map(() => "---").join(" | ") + " |",
+      );
       for (const row of rows) {
         // Normalize row length to match header
         const normalized = Array.from({ length: colCount }, (_, i) => row[i] ?? "");

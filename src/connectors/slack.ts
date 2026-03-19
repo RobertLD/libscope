@@ -289,7 +289,7 @@ function formatTimestamp(ts: string): string {
 }
 
 function truncateTitle(text: string, maxLen: number = 80): string {
-  const cleaned = text.replace(/\n/g, " ").trim();
+  const cleaned = text.replaceAll(/\n/g, " ").trim();
   if (cleaned.length <= maxLen) return cleaned;
   return cleaned.slice(0, maxLen - 3) + "...";
 }

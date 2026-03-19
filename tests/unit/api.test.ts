@@ -52,8 +52,7 @@ function createMockReq(method: string, url: string, body?: unknown): IncomingMes
     req.headers["content-type"] = "application/json";
     // Push the body data asynchronously
     process.nextTick(() => {
-      req.push(Buffer.from(json));
-      req.push(null);
+      req.push(Buffer.from(json), null);
     });
   } else {
     process.nextTick(() => {

@@ -278,7 +278,7 @@ export function getDashboardHtml(): string {
 
   function escAttr(s) {
     if (!s) return '';
-    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return s.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll("'", '&#39;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   }
 
   // Event delegation for cards and delete buttons

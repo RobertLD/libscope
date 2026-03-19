@@ -123,7 +123,7 @@ async function validateUrl(url: string, allowPrivateUrls = false): Promise<strin
 
 /** Read a response body while enforcing a byte-size limit on actual data received. */
 async function readBodyWithLimit(response: Response, limit: number): Promise<string> {
-  const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const reader = response.body?.getReader();
   if (!reader) {
     // Fallback: body is not streamable
     const text = await response.text();
@@ -370,7 +370,7 @@ function titleFromUrl(url: string): string {
     const path = parsed.pathname.replace(/\/$/, "");
     const last = path.split("/").pop();
     if (last) {
-      return last.replace(/[-_]/g, " ").replace(/\.\w+$/, "");
+      return last.replaceAll(/[-_]/g, " ").replace(/\.\w+$/, "");
     }
     return parsed.hostname;
   } catch {

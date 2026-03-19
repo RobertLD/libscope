@@ -223,10 +223,10 @@ export function convertOneNoteHtml(html: string): string {
   let md = nhm.translate(processed).trim();
 
   // Post-process: replace tokens with final markdown
-  md = md.replace(/CHECKDONE7X9Z\s*/g, "- [x] ");
-  md = md.replace(/CHECKTODO7X9Z\s*/g, "- [ ] ");
-  md = md.replace(/INKPLACEHOLDER7X9Z/g, "[handwritten content]");
-  md = md.replace(/IMGPLACEHOLDER7X9Z/g, "[image]");
+  md = md.replaceAll(/CHECKDONE7X9Z\s*/g, "- [x] ");
+  md = md.replaceAll(/CHECKTODO7X9Z\s*/g, "- [ ] ");
+  md = md.replaceAll("INKPLACEHOLDER7X9Z", "[handwritten content]");
+  md = md.replaceAll("IMGPLACEHOLDER7X9Z", "[image]");
   md = md.replace(/FILEATTACH7X9Z([^\s]+?)ENDATTACH7X9Z/g, "[attached: $1]");
 
   return md;

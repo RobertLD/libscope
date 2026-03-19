@@ -59,7 +59,7 @@ function startChunkAtHeading(
   line: string,
 ): { lines: string[]; length: number } {
   const level = (headingMatch[1] ?? "").length;
-  while (headingStack.length > 0 && (headingStack[headingStack.length - 1]?.level ?? 0) >= level) {
+  while (headingStack.length > 0 && (headingStack.at(-1)?.level ?? 0) >= level) {
     headingStack.pop();
   }
   const breadcrumb = headingStack.map((h) => h.text).join(" > ");
@@ -223,7 +223,7 @@ function addDeduplicatedChunks(
   seenHashes: Set<string>,
 ): void {
   for (const chunk of windowChunks) {
-    const normalized = chunk.replace(/\s+/g, " ").trim();
+    const normalized = chunk.replaceAll(/\s+/g, " ").trim();
     const hash = createHash("sha256").update(normalized).digest("hex");
     if (!seenHashes.has(hash)) {
       seenHashes.add(hash);

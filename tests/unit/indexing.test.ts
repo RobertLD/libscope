@@ -189,7 +189,7 @@ More content here.`;
     // Build content where the same logical text appears with different whitespace
     const line = "Hello world this is a test line.";
     const variant1 = line + "\n";
-    const variant2 = line.replace(/ /g, "  ") + "\n"; // double spaces
+    const variant2 = line.replaceAll(" ", "  ") + "\n"; // double spaces
     // Interleave so overlap might pick up both
     const content = (variant1.repeat(50) + variant2.repeat(50)).repeat(2);
     const chunks = chunkContentStreaming(content, { windowSize: 512 });
@@ -197,7 +197,7 @@ More content here.`;
     // After whitespace normalization, duplicates should be removed
     const seen = new Set<string>();
     for (const chunk of chunks) {
-      const normalized = chunk.replace(/\s+/g, " ").trim();
+      const normalized = chunk.replaceAll(/\s+/g, " ").trim();
       expect(seen.has(normalized)).toBe(false);
       seen.add(normalized);
     }
