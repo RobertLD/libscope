@@ -9,7 +9,12 @@
   },
   "exports": {
     ".": "./dist/core/index.js",
-    "./mcp": "./dist/mcp/server.js"
+    "./mcp": "./dist/mcp/server.js",
+    "./lite": {
+      "import": "./dist/lite/index.js",
+      "require": "./dist/lite/index.js",
+      "types": "./dist/lite/index.d.ts"
+    }
   },
   "files": [
     "dist/"
@@ -89,6 +94,18 @@
     "typescript": "^5.6.0",
     "vitepress": "^1.6.4",
     "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "tree-sitter": "^0.21.0",
+    "tree-sitter-javascript": "^0.21.0",
+    "tree-sitter-typescript": "^0.21.0",
+    "tree-sitter-python": "^0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "tree-sitter": { "optional": true },
+    "tree-sitter-javascript": { "optional": true },
+    "tree-sitter-typescript": { "optional": true },
+    "tree-sitter-python": { "optional": true }
   },
   "lint-staged": {
     "*.ts": [
