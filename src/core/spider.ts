@@ -260,7 +260,7 @@ function stripTags(input: string): string {
     pos = scanPastTag(input, open + 1);
   }
   // Collapse whitespace left behind by removed tags
-  return result.replace(/\s+/g, " ");
+  return result.replaceAll(/\s+/g, " ");
 }
 
 function extractTitle(html: string, url: string): string {

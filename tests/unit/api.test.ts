@@ -47,16 +47,16 @@ function createMockReq(method: string, url: string, body?: unknown): IncomingMes
   req.url = url;
   req.headers = { host: "localhost:3378" };
 
-  if (body !== undefined) {
+  if (body === undefined) {
+    process.nextTick(() => {
+      req.push(null);
+    });
+  } else {
     const json = typeof body === "string" ? body : JSON.stringify(body);
     req.headers["content-type"] = "application/json";
     // Push the body data asynchronously
     process.nextTick(() => {
       req.push(Buffer.from(json));
-      req.push(null);
-    });
-  } else {
-    process.nextTick(() => {
       req.push(null);
     });
   }

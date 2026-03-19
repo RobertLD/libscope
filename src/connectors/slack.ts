@@ -5,6 +5,7 @@ import { getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { deleteDocumentRows } from "./index.js";
 
 export interface SlackConfig {
   token: string;
@@ -569,40 +570,9 @@ export function disconnectSlack(db: Database.Database): number {
   const rows = db.prepare("SELECT id FROM documents WHERE url LIKE 'slack://%'").all() as Array<{
     id: string;
   }>;
-
   if (rows.length === 0) return 0;
 
-  const deleteChunksFts = db.prepare(
-    "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?))",
-  );
-  const deleteEmbeddings = db.prepare(
-    "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-  );
-  const deleteChunks = db.prepare("DELETE FROM chunks WHERE document_id = ?");
-  const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ?");
-
-  const tx = db.transaction(() => {
-    for (const row of rows) {
-      try {
-        deleteChunksFts.run(row.id);
-      } catch (err) {
-        getLogger().debug(
-          { err, documentId: row.id },
-          "FTS table cleanup skipped (table may not exist)",
-        );
-      }
-      try {
-        deleteEmbeddings.run(row.id);
-      } catch (err) {
-        getLogger().debug(
-          { err, documentId: row.id },
-          "chunk_embeddings cleanup skipped (table may not exist)",
-        );
-      }
-      deleteChunks.run(row.id);
-      deleteDoc.run(row.id);
-    }
-  });
+  const tx = db.transaction(() => deleteDocumentRows(db, rows));
   tx();
 
   return rows.length;

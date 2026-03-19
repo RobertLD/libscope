@@ -2,6 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { loadConfig, validateConfig, invalidateConfigCache } from "../../src/config.js";
 import type { LibScopeConfig } from "../../src/config.js";
 import * as loggerModule from "../../src/logger.js";
+import { withEnv } from "../fixtures/helpers.js";
+
+/** Set env vars, invalidate cache, load config, then restore env. */
+function loadConfigWithEnv(vars: Record<string, string>): LibScopeConfig {
+  let result: LibScopeConfig | undefined;
+  withEnv(vars, () => {
+    invalidateConfigCache();
+    result = loadConfig();
+  });
+  return result!;
+}
 
 describe("config", () => {
   it("should return default config when no files exist", () => {
@@ -21,118 +32,42 @@ describe("config", () => {
   });
 
   it("should respect LIBSCOPE_EMBEDDING_PROVIDER env var", () => {
-    const original = process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
-    try {
-      process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = "ollama";
-      invalidateConfigCache();
-      const config = loadConfig();
-      expect(config.embedding.provider).toBe("ollama");
-    } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = original;
-      } else {
-        delete process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
-      }
-    }
+    const config = loadConfigWithEnv({ LIBSCOPE_EMBEDDING_PROVIDER: "ollama" });
+    expect(config.embedding.provider).toBe("ollama");
   });
 
   it("should ignore invalid provider values from env", () => {
-    const original = process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
-    try {
-      process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = "invalid";
-      invalidateConfigCache();
-      const config = loadConfig();
-      // Should fall through to default since "invalid" doesn't match the switch
-      expect(config.embedding.provider).toBe("local");
-    } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = original;
-      } else {
-        delete process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
-      }
-    }
+    const config = loadConfigWithEnv({ LIBSCOPE_EMBEDDING_PROVIDER: "invalid" });
+    expect(config.embedding.provider).toBe("local");
   });
 
   it("should pick up LIBSCOPE_OPENAI_API_KEY", () => {
-    const original = process.env["LIBSCOPE_OPENAI_API_KEY"];
-    try {
-      process.env["LIBSCOPE_OPENAI_API_KEY"] = "sk-test123";
-      invalidateConfigCache();
-      const config = loadConfig();
-      expect(config.embedding.openaiApiKey).toBe("sk-test123");
-    } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_OPENAI_API_KEY"] = original;
-      } else {
-        delete process.env["LIBSCOPE_OPENAI_API_KEY"];
-      }
-    }
+    const config = loadConfigWithEnv({ LIBSCOPE_OPENAI_API_KEY: "sk-test123" });
+    expect(config.embedding.openaiApiKey).toBe("sk-test123");
   });
 
   it("should pick up LIBSCOPE_OLLAMA_URL", () => {
-    const original = process.env["LIBSCOPE_OLLAMA_URL"];
-    try {
-      process.env["LIBSCOPE_OLLAMA_URL"] = "http://custom:11434";
-      invalidateConfigCache();
-      const config = loadConfig();
-      expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
-    } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_OLLAMA_URL"] = original;
-      } else {
-        delete process.env["LIBSCOPE_OLLAMA_URL"];
-      }
-    }
+    const config = loadConfigWithEnv({ LIBSCOPE_OLLAMA_URL: "http://custom:11434" });
+    expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
   });
 
   it("should pick up LIBSCOPE_ALLOW_PRIVATE_URLS", () => {
-    const original = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
-    try {
-      process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = "true";
-      invalidateConfigCache();
-      const config = loadConfig();
-      expect(config.indexing.allowPrivateUrls).toBe(true);
-    } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = original;
-      } else {
-        delete process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
-      }
-    }
+    const config = loadConfigWithEnv({ LIBSCOPE_ALLOW_PRIVATE_URLS: "true" });
+    expect(config.indexing.allowPrivateUrls).toBe(true);
   });
 
   it("should pick up LIBSCOPE_ALLOW_SELF_SIGNED_CERTS", () => {
-    const original = process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
-    try {
-      process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = "1";
-      invalidateConfigCache();
-      const config = loadConfig();
-      expect(config.indexing.allowSelfSignedCerts).toBe(true);
-    } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = original;
-      } else {
-        delete process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
-      }
-    }
+    const config = loadConfigWithEnv({ LIBSCOPE_ALLOW_SELF_SIGNED_CERTS: "1" });
+    expect(config.indexing.allowSelfSignedCerts).toBe(true);
   });
 
   it("should pick up LIBSCOPE_LLM_PROVIDER and LIBSCOPE_LLM_MODEL", () => {
-    const origProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
-    const origModel = process.env["LIBSCOPE_LLM_MODEL"];
-    try {
-      process.env["LIBSCOPE_LLM_PROVIDER"] = "ollama";
-      process.env["LIBSCOPE_LLM_MODEL"] = "llama3";
-      invalidateConfigCache();
-      const config = loadConfig();
-      expect(config.llm?.provider).toBe("ollama");
-      expect(config.llm?.model).toBe("llama3");
-    } finally {
-      if (origProvider !== undefined) process.env["LIBSCOPE_LLM_PROVIDER"] = origProvider;
-      else delete process.env["LIBSCOPE_LLM_PROVIDER"];
-      if (origModel !== undefined) process.env["LIBSCOPE_LLM_MODEL"] = origModel;
-      else delete process.env["LIBSCOPE_LLM_MODEL"];
-    }
+    const config = loadConfigWithEnv({
+      LIBSCOPE_LLM_PROVIDER: "ollama",
+      LIBSCOPE_LLM_MODEL: "llama3",
+    });
+    expect(config.llm?.provider).toBe("ollama");
+    expect(config.llm?.model).toBe("llama3");
   });
 });
 
@@ -161,10 +96,10 @@ describe("validateConfig", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     for (const [key, val] of Object.entries(savedEnv)) {
-      if (val !== undefined) {
-        process.env[key] = val;
-      } else {
+      if (val === undefined) {
         delete process.env[key];
+      } else {
+        process.env[key] = val;
       }
     }
   });

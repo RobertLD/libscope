@@ -57,10 +57,10 @@ export function withEnv(vars: Record<string, string>, fn: () => void): void {
     fn();
   } finally {
     for (const [key, original] of Object.entries(originals)) {
-      if (original !== undefined) {
-        process.env[key] = original;
-      } else {
+      if (original === undefined) {
         delete process.env[key];
+      } else {
+        process.env[key] = original;
       }
     }
   }

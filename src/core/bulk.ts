@@ -92,7 +92,9 @@ export function bulkDelete(
   const log = getLogger();
   const ids = resolveSelector(db, selector);
 
-  if (!dryRun) {
+  if (dryRun) {
+    log.info({ count: ids.length, dryRun: true }, "Bulk delete dry run");
+  } else {
     const deleteAll = db.transaction(() => {
       for (const id of ids) {
         deleteDocument(db, id);
@@ -100,8 +102,6 @@ export function bulkDelete(
     });
     deleteAll();
     log.info({ count: ids.length, dryRun: false }, "Bulk delete completed");
-  } else {
-    log.info({ count: ids.length, dryRun: true }, "Bulk delete dry run");
   }
 
   return { affected: ids.length, documentIds: ids };
@@ -123,7 +123,9 @@ export function bulkRetag(
 
   const ids = resolveSelector(db, selector);
 
-  if (!dryRun) {
+  if (dryRun) {
+    log.info({ count: ids.length, addTags, removeTags, dryRun: true }, "Bulk retag dry run");
+  } else {
     const retagAll = db.transaction(() => {
       for (const id of ids) {
         if (addTags && addTags.length > 0) {
@@ -143,8 +145,6 @@ export function bulkRetag(
     });
     retagAll();
     log.info({ count: ids.length, addTags, removeTags, dryRun: false }, "Bulk retag completed");
-  } else {
-    log.info({ count: ids.length, addTags, removeTags, dryRun: true }, "Bulk retag dry run");
   }
 
   return { affected: ids.length, documentIds: ids };
@@ -160,7 +160,9 @@ export function bulkMove(
   const log = getLogger();
   const ids = resolveSelector(db, selector);
 
-  if (!dryRun) {
+  if (dryRun) {
+    log.info({ count: ids.length, targetTopicId, dryRun: true }, "Bulk move dry run");
+  } else {
     const moveAll = db.transaction(() => {
       const stmt = db.prepare(
         "UPDATE documents SET topic_id = ?, updated_at = datetime('now') WHERE id = ?",
@@ -171,8 +173,6 @@ export function bulkMove(
     });
     moveAll();
     log.info({ count: ids.length, targetTopicId, dryRun: false }, "Bulk move completed");
-  } else {
-    log.info({ count: ids.length, targetTopicId, dryRun: true }, "Bulk move dry run");
   }
 
   return { affected: ids.length, documentIds: ids };

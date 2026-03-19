@@ -105,7 +105,7 @@ export function parseRepoUrl(url: string): ParsedRepoUrl {
 // ── SSRF Protection ──────────────────────────────────────────────────────────
 
 async function validateHost(hostname: string): Promise<void> {
-  const stripped = hostname.replace(/^\[|\]$/g, "");
+  const stripped = hostname.replaceAll(/^\[|\]$/g, "");
   const results = await Promise.allSettled([dns.resolve4(stripped), dns.resolve6(stripped)]);
 
   const addresses: string[] = [];

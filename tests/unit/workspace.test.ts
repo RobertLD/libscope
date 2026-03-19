@@ -29,10 +29,10 @@ describe("workspace", () => {
 
   afterEach(() => {
     process.env["HOME"] = savedHome;
-    if (savedWsEnv !== undefined) {
-      process.env["LIBSCOPE_WORKSPACE"] = savedWsEnv;
-    } else {
+    if (savedWsEnv === undefined) {
       delete process.env["LIBSCOPE_WORKSPACE"];
+    } else {
+      process.env["LIBSCOPE_WORKSPACE"] = savedWsEnv;
     }
     if (existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true });
