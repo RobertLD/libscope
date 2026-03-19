@@ -77,7 +77,7 @@ export async function checkDuplicate(
 
     if (row) {
       log.debug({ existingDocId: row.id }, "Exact duplicate detected via content hash");
-      return { isDuplicate: true, matchType: "exact", existingDocId: row.id, similarity: 1.0 };
+      return { isDuplicate: true, matchType: "exact", existingDocId: row.id, similarity: 1 };
     }
   }
 

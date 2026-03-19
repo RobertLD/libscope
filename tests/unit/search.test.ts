@@ -260,24 +260,29 @@ describe("searchDocuments (FTS5 fallback)", () => {
 });
 
 describe("escapeLikePattern", () => {
+  // prettier-ignore
   it("escapes % wildcard", () => {
-    expect(escapeLikePattern("100%")).toBe("100\\%");
+    expect(escapeLikePattern("100%")).toBe(String.raw`100\%`);
   });
 
+  // prettier-ignore
   it("escapes _ wildcard", () => {
-    expect(escapeLikePattern("user_name")).toBe("user\\_name");
+    expect(escapeLikePattern("user_name")).toBe(String.raw`user\_name`);
   });
 
+  // prettier-ignore
   it("escapes [ bracket", () => {
-    expect(escapeLikePattern("arr[0]")).toBe("arr\\[0]");
+    expect(escapeLikePattern("arr[0]")).toBe(String.raw`arr\[0]`);
   });
 
+  // prettier-ignore
   it("escapes backslash", () => {
-    expect(escapeLikePattern("path\\file")).toBe("path\\\\file");
+    expect(escapeLikePattern("path\\file")).toBe(String.raw`path\\file`);
   });
 
+  // prettier-ignore
   it("escapes multiple special characters", () => {
-    expect(escapeLikePattern("100%_[test]")).toBe("100\\%\\_\\[test]");
+    expect(escapeLikePattern("100%_[test]")).toBe(String.raw`100\%\_\[test]`);
   });
 
   it("returns plain strings unchanged", () => {

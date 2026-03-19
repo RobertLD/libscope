@@ -46,7 +46,7 @@ export function startWebServer(
     });
 
     server.on("error", reject);
-    server.listen(port, host, () => resolve(server!));
+    server.listen(port, host, () => resolve(server));
   });
 }
 

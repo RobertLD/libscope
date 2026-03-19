@@ -184,7 +184,8 @@ describe("registry publish", () => {
       addTestRegistry(makeEntry(regName, bareUrl));
 
       const packFile = join(tempDir, "backslash.json");
-      writeFileSync(packFile, JSON.stringify(makePackJson("foo\\bar")), "utf-8");
+      // prettier-ignore
+      writeFileSync(packFile, JSON.stringify(makePackJson(String.raw`foo\bar`)), "utf-8");
 
       await expect(publishPack({ registryName: regName, packFilePath: packFile })).rejects.toThrow(
         /path separators/i,
