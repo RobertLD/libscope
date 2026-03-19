@@ -2,6 +2,10 @@
 
 LibScope can be used as a Node.js library via the `LibScope` SDK class.
 
+::: tip Looking for embedded / lightweight usage?
+[LibScope Lite](/guide/lite) (`libscope/lite`) is a zero-dependency-on-connectors embeddable class with `index()`, `search()`, `getContext()`, and tree-sitter code chunking — designed to be imported directly into external applications without the full CLI/MCP/connector surface area.
+:::
+
 ## Setup
 
 ```ts

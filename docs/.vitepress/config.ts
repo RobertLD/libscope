@@ -61,6 +61,8 @@ export default defineConfig({
               text: "Programmatic Usage",
               link: "/guide/programmatic-usage",
             },
+            { text: "LibScope Lite", link: "/guide/lite" },
+            { text: "Code Indexing", link: "/guide/code-indexing" },
           ],
         },
         {
@@ -86,6 +88,7 @@ export default defineConfig({
             { text: "CLI Commands", link: "/reference/cli" },
             { text: "MCP Tools", link: "/reference/mcp-tools" },
             { text: "REST API", link: "/reference/rest-api" },
+            { text: "LibScope Lite API", link: "/reference/lite-api" },
             { text: "Registry", link: "/reference/registry" },
             { text: "Configuration", link: "/reference/configuration" },
           ],
