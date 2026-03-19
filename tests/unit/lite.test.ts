@@ -3,6 +3,11 @@ import { LibScopeLite } from "../../src/lite/index.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import type { LlmProvider } from "../../src/core/rag.js";
 
+function* fakeStream(): Generator<string> {
+  yield "Hello";
+  yield " world";
+}
+
 describe("LibScopeLite", () => {
   let lite: LibScopeLite;
   let provider: MockEmbeddingProvider;
@@ -219,11 +224,6 @@ describe("LibScopeLite", () => {
     });
 
     it("should stream tokens from LlmProvider", async () => {
-      function* fakeStream(): Generator<string> {
-        yield "Hello";
-        yield " world";
-      }
-
       const mockLlm: LlmProvider = {
         model: "stream-model",
         complete: vi.fn().mockResolvedValue({ text: "done" }),

@@ -29,10 +29,7 @@ export class LibScopeLite {
     this.provider = opts.provider ?? new LocalEmbeddingProvider();
     this.llmProvider = opts.llmProvider ?? null;
 
-    if (opts.db !== undefined) {
-      // Caller-provided DB: skip all setup (migrations, extension loading, vector table).
-      this.db = opts.db;
-    } else {
+    if (opts.db === undefined) {
       const dbPath = opts.dbPath ?? join(homedir(), ".libscope", "lite.db");
       // createDatabase handles directory creation, WAL mode, pragmas, and sqlite-vec loading.
       this.db = createDatabase(dbPath);
@@ -43,6 +40,9 @@ export class LibScopeLite {
       } catch {
         /* sqlite-vec not loaded — FTS5 search still works */
       }
+    } else {
+      // Caller-provided DB: skip all setup (migrations, extension loading, vector table).
+      this.db = opts.db;
     }
   }
 

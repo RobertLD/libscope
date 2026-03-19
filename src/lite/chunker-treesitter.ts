@@ -92,7 +92,7 @@ const DEFAULT_MAX_CHUNK_SIZE = 1500;
  */
 export class TreeSitterChunker {
   private parserCache: TSParser | undefined;
-  private grammarCache = new Map<SupportedLanguage, unknown>();
+  private readonly grammarCache = new Map<SupportedLanguage, unknown>();
 
   /** Returns true if the given language (or alias) is supported. */
   supports(language: string): boolean {
@@ -175,35 +175,10 @@ export class TreeSitterChunker {
       if (child === null) continue;
 
       if (chunkNodeTypes.has(child.type)) {
-        // This is a declaration node — create a chunk
-        const content = preamble ? preamble + "\n\n" + child.text : child.text;
-        const startLine = preambleStartLine ?? child.startPosition.row + 1;
-
-        if (content.length > maxChunkSize) {
-          // Large node — try to split by recursing into its children
-          if (preamble) {
-            chunks.push({
-              content: preamble,
-              startLine: preambleStartLine ?? startLine,
-              endLine: child.startPosition.row,
-              nodeType: "preamble",
-            });
-          }
-          const subChunks = this.splitLargeNode(child, maxChunkSize);
-          chunks.push(...subChunks);
-        } else {
-          chunks.push({
-            content,
-            startLine,
-            endLine: child.endPosition.row + 1,
-            nodeType: child.type,
-          });
-        }
-
+        this.flushDeclaration(child, preamble, preambleStartLine, maxChunkSize, chunks);
         preamble = "";
         preambleStartLine = undefined;
       } else {
-        // Non-declaration node (import, comment, etc.) — accumulate as preamble
         const text = child.text.trim();
         if (text) {
           preambleStartLine ??= child.startPosition.row + 1;
@@ -212,7 +187,6 @@ export class TreeSitterChunker {
       }
     }
 
-    // Trailing preamble with no following declaration
     if (preamble) {
       chunks.push({
         content: preamble,
@@ -225,56 +199,84 @@ export class TreeSitterChunker {
     return chunks;
   }
 
+  /** Emit one or more chunks for a declaration node, prepending any accumulated preamble. */
+  private flushDeclaration(
+    child: TSNode,
+    preamble: string,
+    preambleStartLine: number | undefined,
+    maxChunkSize: number,
+    chunks: CodeChunk[],
+  ): void {
+    const content = preamble ? preamble + "\n\n" + child.text : child.text;
+    const startLine = preambleStartLine ?? child.startPosition.row + 1;
+
+    if (content.length <= maxChunkSize) {
+      chunks.push({ content, startLine, endLine: child.endPosition.row + 1, nodeType: child.type });
+      return;
+    }
+
+    // Large node — flush preamble separately, then split by children
+    if (preamble) {
+      chunks.push({
+        content: preamble,
+        startLine: preambleStartLine ?? startLine,
+        endLine: child.startPosition.row,
+        nodeType: "preamble",
+      });
+    }
+    chunks.push(...this.splitLargeNode(child, maxChunkSize));
+  }
+
   /**
    * Split a large declaration node into smaller chunks by recursing into
    * its named children (e.g. methods inside a class).
    */
   private splitLargeNode(node: TSNode, maxChunkSize: number): CodeChunk[] {
-    const chunks: CodeChunk[] = [];
-
-    // Try splitting by named children (methods, nested functions)
     if (node.namedChildCount > 1) {
-      let accumulated = "";
-      let accStartLine = node.startPosition.row + 1;
+      const chunks = this.accumulateNamedChildren(node, maxChunkSize);
+      if (chunks.length > 0) return chunks;
+    }
+    // Node has ≤1 child or accumulation produced nothing — return as-is
+    return [
+      {
+        content: node.text,
+        startLine: node.startPosition.row + 1,
+        endLine: node.endPosition.row + 1,
+        nodeType: node.type,
+      },
+    ];
+  }
 
-      for (let i = 0; i < node.namedChildCount; i++) {
-        const child = node.namedChild(i);
-        if (child === null) continue;
+  /** Accumulate named children of a node into size-bounded chunks. */
+  private accumulateNamedChildren(node: TSNode, maxChunkSize: number): CodeChunk[] {
+    const chunks: CodeChunk[] = [];
+    let accumulated = "";
+    let accStartLine = node.startPosition.row + 1;
 
-        const childText = child.text;
-        if (accumulated && accumulated.length + childText.length + 2 > maxChunkSize) {
-          // Flush accumulated
-          chunks.push({
-            content: accumulated,
-            startLine: accStartLine,
-            endLine: child.startPosition.row,
-            nodeType: node.type,
-          });
-          accumulated = childText;
-          accStartLine = child.startPosition.row + 1;
-        } else {
-          accumulated = accumulated ? accumulated + "\n\n" + childText : childText;
-          if (!accumulated || accumulated === childText) {
-            accStartLine = child.startPosition.row + 1;
-          }
-        }
-      }
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (child === null) continue;
 
-      if (accumulated) {
+      const childText = child.text;
+      if (accumulated && accumulated.length + childText.length + 2 > maxChunkSize) {
         chunks.push({
           content: accumulated,
           startLine: accStartLine,
-          endLine: node.endPosition.row + 1,
+          endLine: child.startPosition.row,
           nodeType: node.type,
         });
+        accumulated = childText;
+        accStartLine = child.startPosition.row + 1;
+      } else {
+        if (!accumulated) accStartLine = child.startPosition.row + 1;
+        accumulated = accumulated ? accumulated + "\n\n" + childText : childText;
       }
     }
 
-    // If recursion didn't help (or node has ≤1 child), return the whole node
-    if (chunks.length === 0) {
+    if (accumulated) {
       chunks.push({
-        content: node.text,
-        startLine: node.startPosition.row + 1,
+        content: accumulated,
+        startLine: accStartLine,
         endLine: node.endPosition.row + 1,
         nodeType: node.type,
       });
