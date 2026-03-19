@@ -24,6 +24,10 @@ npm install tree-sitter
 npm install tree-sitter-typescript   # TypeScript + TSX
 npm install tree-sitter-javascript   # JavaScript, JSX, MJS, CJS
 npm install tree-sitter-python       # Python
+npm install tree-sitter-c-sharp      # C#
+npm install tree-sitter-cpp          # C++ (also used for .h/.hpp headers)
+npm install tree-sitter-c            # C
+npm install tree-sitter-go           # Go
 ```
 
 If tree-sitter is not installed, `TreeSitterChunker.chunk()` throws a `ValidationError` with a clear install message. All other LibScope Lite features work normally without tree-sitter.
@@ -35,6 +39,10 @@ If tree-sitter is not installed, `TreeSitterChunker.chunk()` throws a `Validatio
 | TypeScript | `typescript`, `ts`, `tsx` | `tree-sitter-typescript` |
 | JavaScript | `javascript`, `js`, `jsx`, `mjs`, `cjs` | `tree-sitter-javascript` |
 | Python | `python`, `py` | `tree-sitter-python` |
+| C# | `csharp`, `cs` | `tree-sitter-c-sharp` |
+| C++ | `cpp`, `cc`, `cxx`, `hpp`, `h` | `tree-sitter-cpp` |
+| C | `c` | `tree-sitter-c` |
+| Go | `go` | `tree-sitter-go` |
 
 Aliases are case-insensitive: `"TS"`, `"ts"`, `"TypeScript"` all resolve to TypeScript.
 
@@ -120,6 +128,29 @@ The chunker extracts these node types per language:
 - `function_definition` — `def foo():`
 - `class_definition` — `class Foo:`
 - `decorated_definition` — `@decorator\ndef foo():`
+
+**C#:**
+- `method_declaration` — `public void Foo() {}`
+- `class_declaration` — `class Foo {}`
+- `interface_declaration` — `interface IFoo {}`
+- `struct_declaration` — `struct Point {}`
+- `enum_declaration` — `enum Color {}`
+- `constructor_declaration` — `public Foo() {}`
+
+**C++:**
+- `function_definition` — `void foo() {}`
+- `class_specifier` — `class Foo {}`
+- `struct_specifier` — `struct Point {}`
+- `namespace_definition` — `namespace MyNS {}`
+
+**C:**
+- `function_definition` — `void foo() {}`
+- `struct_specifier` — `struct Point {}`
+
+**Go:**
+- `function_declaration` — `func Foo() {}`
+- `method_declaration` — `func (r *Receiver) Foo() {}`
+- `type_declaration` — `type Foo struct {}` / `type Bar interface {}`
 
 ## Preamble Accumulation
 
@@ -229,10 +260,10 @@ for (const file of files) {
 import { ValidationError } from "libscope";
 
 try {
-  const chunks = await chunker.chunk(source, "go");
+  const chunks = await chunker.chunk(source, "rust");
 } catch (err) {
   if (err instanceof ValidationError) {
-    // "Unsupported language for code chunking: 'go'"
+    // "Unsupported language for code chunking: 'rust'"
     // "Code chunking requires the 'tree-sitter' package. Install it with: ..."
     console.warn(err.message);
   }

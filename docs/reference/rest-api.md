@@ -64,6 +64,58 @@ The OpenAPI 3.0 spec is available at `GET /openapi.json`.
 | `POST` | `/api/v1/bulk/retag`    | Bulk add/remove tags           |
 | `POST` | `/api/v1/bulk/move`     | Bulk move documents to a topic |
 
+### Repository Indexing
+
+| Method | Endpoint                            | Description                                 |
+| ------ | ----------------------------------- | ------------------------------------------- |
+| `POST` | `/api/v1/index/repos/:repoSlug`     | Trigger a repo index job (async, 202)       |
+| `GET`  | `/api/v1/index/jobs/:jobId`         | Poll index job status                       |
+
+The `POST` endpoint is designed to be used as a **Bitbucket post-receive webhook**. It clones the repo, walks files, runs tree-sitter chunking for supported languages, and indexes everything into the main libscope database under `library: repoSlug`. The response is immediate (202) with a `jobId`.
+
+**Configure via `LIBSCOPE_REPOS_CONFIG`** — path to a JSON file:
+
+```json
+{
+  "repos": {
+    "my-service": {
+      "cloneUrl": "https://git.example.com/org/my-service.git",
+      "branch": "main",
+      "include": ["src/**/*.go", "**/*.cs"],
+      "exclude": ["vendor/**", "**/*_test.go"]
+    }
+  }
+}
+```
+
+**Trigger a full reindex:**
+
+```bash
+curl -X POST http://localhost:3378/api/v1/index/repos/my-service \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+# → { "data": { "jobId": "abc-123", "status": "queued" } }
+```
+
+**Incremental reindex** (specific files only, e.g. from a push webhook):
+
+```bash
+curl -X POST http://localhost:3378/api/v1/index/repos/my-service \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "files": ["src/auth/handler.go", "src/models/user.go"] }'
+```
+
+**Poll job status:**
+
+```bash
+curl http://localhost:3378/api/v1/index/jobs/abc-123
+# → { "data": { "jobId": "abc-123", "status": "completed", "stats": { ... } } }
+```
+
+Job status values: `queued` → `running` → `completed` | `failed`.
+
 ### Webhooks
 
 | Method   | Endpoint                        | Description                   |

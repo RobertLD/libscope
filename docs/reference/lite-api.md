@@ -390,6 +390,28 @@ process.stdout.write("\n");
 
 ---
 
+### `deleteByLibrary(library)`
+
+```ts
+deleteByLibrary(library: string): void
+```
+
+Delete all documents and chunks belonging to the given library namespace. Loops internally until all matching documents are removed (batch size is capped at 1000 per iteration).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `library` | `string` | Library name to clear — matches the `library` field set at index time |
+
+Use this before a full reindex to avoid stale content accumulating:
+
+```ts
+// Wipe the old index for this repo, then rebuild
+lite.deleteByLibrary("my-repo");
+await lite.indexBatch(freshDocs, { concurrency: 4 });
+```
+
+---
+
 ### `rate(docId, score)`
 
 ```ts
@@ -453,7 +475,9 @@ Returns `true` if the given language alias is supported. Case-insensitive.
 ```ts
 chunker.supports("ts");         // true
 chunker.supports("TypeScript"); // true
-chunker.supports("go");         // false (not yet supported)
+chunker.supports("go");         // true
+chunker.supports("cs");         // true
+chunker.supports("rust");       // false (not supported)
 chunker.supports("unknown");    // false
 ```
 
