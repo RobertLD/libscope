@@ -1139,8 +1139,7 @@ function fts5Search(
     baseParams = [...orParams];
 
     orSql += " ORDER BY rank LIMIT ? OFFSET ?";
-    orParams.push(limit);
-    orParams.push(offset);
+    orParams.push(limit, offset);
 
     rows = validateRows(Fts5RowSchema, db.prepare(orSql).all(...orParams), "fts5Search.orRows");
   }
