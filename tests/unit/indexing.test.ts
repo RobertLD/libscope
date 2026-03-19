@@ -334,7 +334,11 @@ describe("indexDocument preChunked", () => {
   beforeEach(() => {
     db = createDatabase(":memory:");
     runMigrations(db);
-    try { createVectorTable(db, 4); } catch { /* sqlite-vec not available */ }
+    try {
+      createVectorTable(db, 4);
+    } catch {
+      /* sqlite-vec not available */
+    }
     provider = new MockEmbeddingProvider();
   });
 
@@ -353,7 +357,9 @@ describe("indexDocument preChunked", () => {
 
     expect(result.chunkCount).toBe(3);
 
-    const chunks = db.prepare("SELECT content FROM chunks WHERE document_id = ? ORDER BY chunk_index").all(result.id) as Array<{ content: string }>;
+    const chunks = db
+      .prepare("SELECT content FROM chunks WHERE document_id = ? ORDER BY chunk_index")
+      .all(result.id) as Array<{ content: string }>;
     expect(chunks).toHaveLength(3);
     expect(chunks[0]?.content).toBe("chunk one");
     expect(chunks[1]?.content).toBe("chunk two");

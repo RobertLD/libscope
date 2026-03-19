@@ -440,10 +440,7 @@ export async function indexDocument(
     chunks = useStreaming ? chunkContentStreaming(input.content) : chunkContent(input.content);
   }
 
-  log.info(
-    { docId, title: input.title, chunkCount: chunks.length },
-    "Indexing document",
-  );
+  log.info({ docId, title: input.title, chunkCount: chunks.length }, "Indexing document");
 
   const metaPrefix = buildMetaPrefix(input);
   const textsForEmbedding = chunks.map((c) => metaPrefix + c);

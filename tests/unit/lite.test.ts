@@ -279,8 +279,18 @@ describe("LibScopeLite", () => {
     it("calls TreeSitterChunker.chunk() when language is set and supported", async () => {
       vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(true);
       const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk").mockResolvedValue([
-        { content: "function foo() {}", startLine: 1, endLine: 3, nodeType: "function_declaration" },
-        { content: "function bar() {}", startLine: 5, endLine: 7, nodeType: "function_declaration" },
+        {
+          content: "function foo() {}",
+          startLine: 1,
+          endLine: 3,
+          nodeType: "function_declaration",
+        },
+        {
+          content: "function bar() {}",
+          startLine: 5,
+          endLine: 7,
+          nodeType: "function_declaration",
+        },
       ]);
 
       await lite.index([
@@ -291,10 +301,7 @@ describe("LibScopeLite", () => {
         },
       ]);
 
-      expect(chunkSpy).toHaveBeenCalledWith(
-        "function foo() {}\nfunction bar() {}",
-        "typescript",
-      );
+      expect(chunkSpy).toHaveBeenCalledWith("function foo() {}\nfunction bar() {}", "typescript");
     });
 
     it("does not call chunk() when language is not set", async () => {
