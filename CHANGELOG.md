@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0](https://github.com/RobertLD/libscope/compare/v1.5.3...v1.6.0) (2026-03-19)
+
+
+### Features
+
+* Add SonarQube CI/CD step ([#417](https://github.com/RobertLD/libscope/issues/417)) ([00b0479](https://github.com/RobertLD/libscope/commit/00b047952c557852f8e608a59e6fdebd6280d1e1))
+* Implement connectors for common doc sites ([#450](https://github.com/RobertLD/libscope/issues/450)) ([056db0e](https://github.com/RobertLD/libscope/commit/056db0eb6db28b1182a206e9c8b37f12aef3c4d1))
+* libscope/lite — embeddable semantic search library ([#451](https://github.com/RobertLD/libscope/issues/451)) ([#452](https://github.com/RobertLD/libscope/issues/452)) ([022b958](https://github.com/RobertLD/libscope/commit/022b958a022fe8f09c809dfca626a77c24b429eb))
+
+
+### Bug Fixes
+
+* miscellaneous minor SonarCloud issues (S7755, S4325, S3863, S7748, S7778) ([#448](https://github.com/RobertLD/libscope/issues/448)) ([ef2a6f7](https://github.com/RobertLD/libscope/commit/ef2a6f79127e7851301b366dfb0989dc1b9853bb))
+* resolve all 11 SonarCloud HIGH impact issues ([#449](https://github.com/RobertLD/libscope/issues/449)) ([ec4e539](https://github.com/RobertLD/libscope/commit/ec4e5392040f7f689f5d84ebd69d192605ee6274))
+* resolve SonarCloud critical issues ([#419](https://github.com/RobertLD/libscope/issues/419)) ([#420](https://github.com/RobertLD/libscope/issues/420)) ([bf6e1be](https://github.com/RobertLD/libscope/commit/bf6e1bebc6d6d30bb553cfdb98801488efae56bf))
+* S7735 — flip negated conditions (31 occurrences) ([#445](https://github.com/RobertLD/libscope/issues/445)) ([b3c3b5b](https://github.com/RobertLD/libscope/commit/b3c3b5b41046c94dfd9d5416e8537b32870b3c2e))
+* S7780 — use String.raw for escaped strings (13 occurrences) ([#446](https://github.com/RobertLD/libscope/issues/446)) ([63975db](https://github.com/RobertLD/libscope/commit/63975dbd44352e147facd3c4a9ee62590968ce51))
+* use String#replaceAll() over replace() with global flag (S7781) ([#447](https://github.com/RobertLD/libscope/issues/447)) ([1519ad1](https://github.com/RobertLD/libscope/commit/1519ad14d3c1af05e4e116b66825d1645a6cd26c))
+
 ## [1.5.3](https://github.com/RobertLD/libscope/compare/v1.5.2...v1.5.3) (2026-03-18)
 
 
