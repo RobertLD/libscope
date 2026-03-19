@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -9,6 +9,23 @@ import type { LiteDoc } from "../../lite/types.js";
 import type { RepoEntry } from "./repoConfig.js";
 
 const chunker = new TreeSitterChunker();
+
+/**
+ * Absolute path to the git executable, resolved once at module load time.
+ * Using an absolute path means the OS never consults PATH, eliminating the
+ * risk of a tampered environment redirecting "git" to a malicious binary.
+ */
+const GIT_EXECUTABLE = ((): string => {
+  const candidates = [
+    "/usr/bin/git",
+    "/usr/local/bin/git",
+    "/opt/homebrew/bin/git",
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  throw new Error("git executable not found at any known path");
+})();
 
 export interface IndexJobStats {
   filesIndexed: number;
@@ -107,15 +124,11 @@ function cloneToTemp(cloneUrl: string, branch?: string): string {
     validateBranchName(branch);
     args.push("--branch", branch);
   }
-  // execFileSync bypasses the shell — args are passed directly to git.
+  // Use the absolute path resolved at startup — PATH is never consulted.
+  // execFileSync with an array bypasses the shell entirely.
   // The "--" separator prevents git from interpreting the URL as a flag.
-  // PATH is fixed to known, unwriteable system directories so that a
-  // tampered environment cannot redirect "git" to a malicious binary.
   args.push("--", cloneUrl, tempDir);
-  execFileSync("git", args, {
-    stdio: "ignore",
-    env: { PATH: "/usr/bin:/bin:/usr/local/bin" },
-  });
+  execFileSync(GIT_EXECUTABLE, args, { stdio: "ignore" });
   return tempDir;
 }
 
