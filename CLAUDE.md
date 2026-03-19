@@ -75,6 +75,12 @@ src/
 ├── mcp/           # MCP server
 │   ├── server.ts  # MCP entry point
 │   └── tools/     # Each file exports registerTools(server, db, provider)
+├── lite/          # libscope/lite — embeddable semantic search (no CLI/MCP/connectors)
+│   ├── index.ts              # Public entrypoint — exports LibScopeLite + types
+│   ├── core.ts               # LibScopeLite class (index, search, getContext, ask, rate)
+│   ├── types.ts              # LiteOptions, LiteDoc, LiteSearchResult, etc.
+│   ├── normalize.ts          # Raw input → markdown (dispatches to core/parsers/)
+│   └── chunker-treesitter.ts # Optional tree-sitter code chunker (TS/JS/Python)
 ├── core/          # Business logic (documents, search, indexing, packs, topics, etc.)
 │   └── parsers/   # File format parsers (markdown, pdf, docx, html, epub, pptx, csv, yaml, json)
 ├── api/           # REST API server (routes, middleware, openapi spec)

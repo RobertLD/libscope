@@ -23,16 +23,17 @@ export class MockEmbeddingProvider implements EmbeddingProvider {
 
   /** Simple deterministic hash → 4D unit vector. */
   private hashToVector(text: string): number[] {
-    let hash = 0;
+    let hash = 5381; // Non-zero seed avoids the zero-hash collapse
     for (let i = 0; i < text.length; i++) {
-      hash = Math.trunc(hash * 31 + text.codePointAt(i)!);
+      hash = Math.trunc((hash * 33) ^ text.codePointAt(i)!);
     }
     const a = Math.sin(hash) * 10000;
     const b = Math.sin(hash + 1) * 10000;
     const c = Math.sin(hash + 2) * 10000;
     const d = Math.sin(hash + 3) * 10000;
-    // Normalize
+    // Normalize — guard against zero magnitude (hash collision to 0)
     const mag = Math.hypot(a, b, c, d);
+    if (mag === 0) return [1, 0, 0, 0];
     return [a / mag, b / mag, c / mag, d / mag];
   }
 }

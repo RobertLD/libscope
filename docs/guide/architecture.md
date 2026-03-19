@@ -7,27 +7,43 @@ This guide explains how LibScope is structured internally. It is intended for co
 LibScope is organized into four distinct layers:
 
 ```
-┌─────────────────────────────────────────────┐
-│           Entry Points                       │
-│   CLI (Commander.js)  MCP Server  REST API   │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│           Core Business Logic                │
-│  indexing · search · rag · documents · ...   │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│          Infrastructure                      │
-│   db/ (SQLite)      providers/ (embeddings)  │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Entry Points                          │
+│  CLI (Commander.js)  MCP Server  REST API  LibScopeLite  │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────┐
+│                 Core Business Logic                      │
+│     indexing · search · rag · documents · parsers · …   │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────┐
+│                    Infrastructure                        │
+│      db/ (SQLite + sqlite-vec)    providers/ (embeddings)│
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Entry points** (`src/cli/`, `src/mcp/`, `src/api/`) are thin adapters. They parse input, call core functions, and format output. They contain no business logic.
+**Entry points** (`src/cli/`, `src/mcp/`, `src/api/`, `src/lite/`) are thin adapters. They parse input, call core functions, and format output. They contain no business logic.
 
-**Core** (`src/core/`) contains all business logic. Core modules are plain TypeScript functions — they don't know whether they were called from the CLI, an MCP tool, or the REST API.
+**Core** (`src/core/`) contains all business logic. Core modules are plain TypeScript functions — they don't know whether they were called from the CLI, an MCP tool, the REST API, or `LibScopeLite`.
 
 **Infrastructure** (`src/db/`, `src/providers/`) handles persistence and external services. The database layer uses better-sqlite3 (synchronous). The provider layer abstracts embedding models behind a common interface.
+
+### LibScope Lite Layer
+
+`src/lite/` is a separate entry point that exposes a minimal embeddable API built on top of the same core and infrastructure modules:
+
+```
+libscope/lite  →  src/lite/index.ts  →  LibScopeLite class
+                                         ├── core/indexing.ts
+                                         ├── core/search.ts
+                                         ├── core/rag.ts
+                                         ├── core/ratings.ts
+                                         ├── db/connection.ts
+                                         └── providers/
+```
+
+`LibScopeLite` deliberately omits connectors, topics, packs, webhooks, and registry — keeping the API surface small and the import footprint minimal for embedding in external applications.
 
 ## Module Map
 
@@ -113,6 +129,12 @@ src/
 │   ├── onenote.ts            # Microsoft Graph API sync
 │   ├── http-utils.ts         # shared retry logic with exponential backoff
 │   └── sync-tracker.ts       # sync history and status in database
+├── lite/
+│   ├── index.ts              # public entrypoint — exports LibScopeLite + types
+│   ├── core.ts               # LibScopeLite class implementation
+│   ├── types.ts              # LiteOptions, LiteDoc, LiteSearchResult, etc.
+│   ├── normalize.ts          # raw input → markdown (dispatches to core/parsers/)
+│   └── chunker-treesitter.ts # optional tree-sitter code chunker (TS/JS/Python)
 ├── config.ts                 # loadConfig() — merges env, project, user, defaults
 ├── errors.ts                 # LibScopeError hierarchy
 ├── logger.ts                 # pino logger with child logger support

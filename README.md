@@ -175,7 +175,9 @@ Search uses sqlite-vec for vector similarity when available, with FTS5 full-text
 
 ### Programmatic SDK
 
-LibScope also exports a `LibScope` class for use as a library:
+LibScope exports two embeddable APIs:
+
+**`LibScope`** — full SDK with all features (connectors, topics, packs, etc.):
 
 ```ts
 import { LibScope } from "libscope";
@@ -186,7 +188,36 @@ const results = await scope.search("query");
 scope.close();
 ```
 
-See the [Programmatic Usage](/guide/programmatic-usage) guide for details on the SDK, batch search, and document TTL/expiry.
+**`LibScopeLite`** — lightweight embeddable class for external applications. No CLI, no MCP server, no connectors. Designed for embedding semantic search directly into other tools (MCP servers, VS Code extensions, CI scripts):
+
+```ts
+import { LibScopeLite } from "libscope/lite";
+
+const lite = new LibScopeLite({ dbPath: ":memory:" });
+
+// Index documents (or code files via tree-sitter chunking)
+await lite.indexBatch(docs, { concurrency: 4 });
+
+// Hybrid vector + FTS5 search
+const results = await lite.search("how to authenticate");
+
+// Get RAG context for injection into an external LLM prompt
+const context = await lite.getContext("How does auth work?");
+
+lite.close();
+```
+
+Tree-sitter powered code indexing splits TypeScript, JavaScript, and Python files at function/class boundaries:
+
+```ts
+import { TreeSitterChunker } from "libscope/lite";
+
+const chunker = new TreeSitterChunker();
+const chunks = await chunker.chunk(sourceCode, "typescript");
+// Each chunk is a complete function or class with 1-based line numbers
+```
+
+See the [LibScope Lite guide](https://libscope.com/guide/lite) and [API reference](https://libscope.com/reference/lite-api) for the full documentation.
 
 ## Organizing Content
 
