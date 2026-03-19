@@ -65,10 +65,13 @@ const MAX_HTML_SIZE = 5_000_000;
 /** Supported documentation site generators. */
 export type DocSiteType = "sphinx" | "vitepress" | "doxygen" | "generic";
 
-/** A CSS-like selector expressed as a tag name + attribute regex. */
+/** Matcher for tag attributes — RegExp or predicate function. */
+type AttrMatcher = RegExp | ((attrs: string) => boolean);
+
+/** A CSS-like selector expressed as a tag name + attribute matcher. */
 interface ContentSelector {
   tag: string;
-  attr: RegExp;
+  attr: AttrMatcher;
 }
 
 /** Per-framework detection patterns and content selectors. */
@@ -79,11 +82,29 @@ interface FrameworkDef {
 }
 
 /**
+ * Return a predicate that checks whether a tag's attribute string contains
+ * a specific CSS class name. Uses indexOf + split instead of regex to avoid
+ * polynomial backtracking on untrusted HTML.
+ */
+function classContains(className: string, caseInsensitive = false): (attrs: string) => boolean {
+  return (attrs: string): boolean => {
+    // Extract the class attribute value using indexOf (no overlapping quantifiers)
+    const classRe = /class=["']([^"']{0,2000})["']/i;
+    const m = classRe.exec(attrs);
+    if (!m?.[1]) return false;
+    const classes = m[1].split(/\s+/);
+    return caseInsensitive
+      ? classes.some((c) => c.toLowerCase() === className.toLowerCase())
+      : classes.includes(className);
+  };
+}
+
+/**
  * Data-driven framework definitions.
  *
- * Each framework specifies regex patterns for detection and content selectors
- * for extraction. Regex character classes are bounded to mitigate ReDoS on
- * untrusted HTML (e.g. `[^"']{0,200}` instead of `[^"']*`).
+ * Detection patterns use bounded regex for full-HTML scanning.
+ * Content selectors use classContains() predicates to avoid polynomial
+ * backtracking when matching class attributes on untrusted input.
  */
 const FRAMEWORK_DEFS: readonly FrameworkDef[] = [
   {
@@ -96,7 +117,7 @@ const FRAMEWORK_DEFS: readonly FrameworkDef[] = [
     ],
     contentSelectors: [
       { tag: "div", attr: /role=["']main["']/i },
-      { tag: "div", attr: /class=["'][^"']{0,200}\bbody\b/ },
+      { tag: "div", attr: classContains("body") },
       { tag: "section", attr: /role=["']main["']/i },
       { tag: "article", attr: /(?:)/ },
     ],
@@ -110,8 +131,8 @@ const FRAMEWORK_DEFS: readonly FrameworkDef[] = [
       /content=["']VitePress/i,
     ],
     contentSelectors: [
-      { tag: "div", attr: /class=["'][^"']{0,200}\bvp-doc\b/i },
-      { tag: "div", attr: /class=["'][^"']{0,200}\bVPDoc\b/i },
+      { tag: "div", attr: classContains("vp-doc", true) },
+      { tag: "div", attr: classContains("VPDoc") },
       { tag: "main", attr: /(?:)/ },
     ],
   },
@@ -124,9 +145,9 @@ const FRAMEWORK_DEFS: readonly FrameworkDef[] = [
       /class=["'][^"']{0,200}doxygen/i,
     ],
     contentSelectors: [
-      { tag: "div", attr: /class=["'][^"']{0,200}\bcontents\b/ },
+      { tag: "div", attr: classContains("contents") },
       { tag: "div", attr: /id=["']doc-content["']/ },
-      { tag: "div", attr: /class=["'][^"']{0,200}\btextblock\b/ },
+      { tag: "div", attr: classContains("textblock") },
     ],
   },
 ];
@@ -136,7 +157,7 @@ const GENERIC_CONTENT_SELECTORS: readonly ContentSelector[] = [
   { tag: "main", attr: /(?:)/ },
   { tag: "article", attr: /(?:)/ },
   { tag: "div", attr: /\bid=["']content["']/ },
-  { tag: "div", attr: /class=["'][^"']{0,200}\bcontent\b/ },
+  { tag: "div", attr: classContains("content") },
 ];
 
 /** Configuration for a documentation site sync. */
@@ -237,7 +258,7 @@ export function detectDocSiteType(html: string): DocSiteType {
 export function extractElementByPattern(
   html: string,
   tagName: string,
-  attrPattern: RegExp,
+  attrPattern: AttrMatcher,
 ): string | null {
   // Scan for the first opening tag of tagName whose attributes match
   const scanner = new RegExp(`<(${tagName})(\\s[^>]{0,2000})?>`, "gi");
@@ -246,9 +267,11 @@ export function extractElementByPattern(
   let m: RegExpExecArray | null;
   while ((m = scanner.exec(html)) !== null) {
     const attrs = m[2] ?? "";
-    // attrPattern with no source ("(?:)") matches everything — used for
-    // tag-name-only matches like <main> or <article>.
-    if (attrPattern.source === "(?:)" || attrPattern.test(attrs)) {
+    const matchesAttr =
+      typeof attrPattern === "function"
+        ? attrPattern(attrs)
+        : attrPattern.source === "(?:)" || attrPattern.test(attrs);
+    if (matchesAttr) {
       startTagMatch = m;
       break;
     }
