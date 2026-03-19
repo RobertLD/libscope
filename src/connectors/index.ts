@@ -163,13 +163,12 @@ export function hasNamedConnectorConfig(name: string): boolean {
   return existsSync(filePath);
 }
 
-/** Delete documents with a given source_type from the database. Returns count deleted. */
-export function deleteConnectorDocuments(db: Database.Database, sourceType: string): number {
-  const rows = db
-    .prepare("SELECT id FROM documents WHERE source_type = ?")
-    .all(sourceType) as Array<{ id: string }>;
-  if (rows.length === 0) return 0;
-
+/**
+ * Delete a set of document rows and their associated chunks, embeddings, and FTS entries.
+ * Tolerates missing virtual tables (chunk_embeddings, chunks_fts).
+ */
+export function deleteDocumentRows(db: Database.Database, rows: Array<{ id: string }>): void {
+  const log = getLogger();
   const deleteChunksFts = db.prepare(
     "DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?))",
   );
@@ -179,28 +178,33 @@ export function deleteConnectorDocuments(db: Database.Database, sourceType: stri
   const deleteChunks = db.prepare("DELETE FROM chunks WHERE document_id = ?");
   const deleteDoc = db.prepare("DELETE FROM documents WHERE id = ?");
 
-  const tx = db.transaction(() => {
-    for (const row of rows) {
-      try {
-        deleteChunksFts.run(row.id);
-      } catch (err) {
-        getLogger().debug(
-          { err, documentId: row.id },
-          "FTS table cleanup skipped (table may not exist)",
-        );
-      }
-      try {
-        deleteEmbeddings.run(row.id);
-      } catch (err) {
-        getLogger().debug(
-          { err, documentId: row.id },
-          "chunk_embeddings cleanup skipped (table may not exist)",
-        );
-      }
-      deleteChunks.run(row.id);
-      deleteDoc.run(row.id);
+  for (const row of rows) {
+    try {
+      deleteChunksFts.run(row.id);
+    } catch (err) {
+      log.debug({ err, documentId: row.id }, "FTS table cleanup skipped (table may not exist)");
     }
-  });
+    try {
+      deleteEmbeddings.run(row.id);
+    } catch (err) {
+      log.debug(
+        { err, documentId: row.id },
+        "chunk_embeddings cleanup skipped (table may not exist)",
+      );
+    }
+    deleteChunks.run(row.id);
+    deleteDoc.run(row.id);
+  }
+}
+
+/** Delete documents with a given source_type from the database. Returns count deleted. */
+export function deleteConnectorDocuments(db: Database.Database, sourceType: string): number {
+  const rows = db
+    .prepare("SELECT id FROM documents WHERE source_type = ?")
+    .all(sourceType) as Array<{ id: string }>;
+  if (rows.length === 0) return 0;
+
+  const tx = db.transaction(() => deleteDocumentRows(db, rows));
   tx();
 
   return rows.length;
