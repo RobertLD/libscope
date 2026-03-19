@@ -204,13 +204,13 @@ describe("extractElementByPattern", () => {
 
   it("extracts main element with empty attr pattern", () => {
     const html = "<html><body><main><p>content</p></main></body></html>";
-    const result = extractElementByPattern(html, "main", /(?:)/);
+    const result = extractElementByPattern(html, "main", () => true);
     expect(result).toBe("<p>content</p>");
   });
 
   it("extracts article element with empty attr pattern", () => {
     const html = "<body><article><h1>Doc</h1><p>text</p></article></body>";
-    const result = extractElementByPattern(html, "article", /(?:)/);
+    const result = extractElementByPattern(html, "article", () => true);
     expect(result).toBe("<h1>Doc</h1><p>text</p>");
   });
 
