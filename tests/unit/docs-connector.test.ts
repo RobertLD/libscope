@@ -25,16 +25,13 @@ import type Database from "better-sqlite3";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-// Test-only public IP for mock DNS resolver — not a real endpoint
-const MOCK_PUBLIC_IP = [93, 184, 216, 34].join(".");
-
 // Mock dns to avoid real DNS lookups from url-fetcher
 vi.mock("node:dns", () => ({
   promises: {
-    resolve4: vi.fn().mockResolvedValue([MOCK_PUBLIC_IP]),
+    resolve4: vi.fn().mockResolvedValue(["93.184.216.34"]),
     resolve6: vi.fn().mockResolvedValue([]),
   },
-  lookup: (_host: string, cb: (err: null, addr: string) => void) => cb(null, MOCK_PUBLIC_IP),
+  lookup: (_host: string, cb: (err: null, addr: string) => void) => cb(null, "93.184.216.34"),
 }));
 
 // Dynamic import after mocks
