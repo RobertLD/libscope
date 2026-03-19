@@ -35,10 +35,15 @@ The primary use case driving this feature: a Bitbucket MCP server that wants sem
 npm install libscope
 ```
 
-For code indexing, also install the optional peer dependencies:
+For code indexing, also install the optional peer dependencies for the languages you need:
 
 ```bash
-npm install tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python
+# Core parser (required for any language)
+npm install tree-sitter
+
+# Install grammars for the languages you need
+npm install tree-sitter-typescript tree-sitter-javascript tree-sitter-python
+npm install tree-sitter-c-sharp tree-sitter-cpp tree-sitter-c tree-sitter-go
 ```
 
 These are optional — if not installed, code chunking is unavailable but all other features work.
@@ -290,6 +295,18 @@ if (chunker.supports("typescript")) {
 ```
 
 See [Code Indexing](/guide/code-indexing) for the full guide including supported languages, chunk shape, and large-file strategies.
+
+### `deleteByLibrary(library)`
+
+Delete all indexed documents belonging to a library namespace. Useful before a full reindex to avoid stale chunks accumulating:
+
+```ts
+// Clear all previously indexed content for this repo, then reindex
+lite.deleteByLibrary("my-repo");
+await lite.indexBatch(freshDocs, { concurrency: 4 });
+```
+
+The library name matches the `library` field set at index time. Deletion is batched internally and loops until all matching documents are removed.
 
 ## Feedback
 
