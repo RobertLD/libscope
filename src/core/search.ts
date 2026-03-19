@@ -719,8 +719,7 @@ function keywordSearch(
   const baseParams = [...params];
 
   sql += " LIMIT ? OFFSET ?";
-  params.push(limit);
-  params.push(offset);
+  params.push(limit, offset);
 
   const KeywordRowSchema = z.object({
     chunk_id: z.string(),
@@ -1087,8 +1086,7 @@ function fts5Search(
   let baseParams = [...params];
 
   sql += " ORDER BY rank LIMIT ? OFFSET ?";
-  params.push(limit);
-  params.push(offset);
+  params.push(limit, offset);
 
   const Fts5RowSchema = z.object({
     chunk_id: z.string(),
@@ -1141,8 +1139,7 @@ function fts5Search(
     baseParams = [...orParams];
 
     orSql += " ORDER BY rank LIMIT ? OFFSET ?";
-    orParams.push(limit);
-    orParams.push(offset);
+    orParams.push(limit, offset);
 
     rows = validateRows(Fts5RowSchema, db.prepare(orSql).all(...orParams), "fts5Search.orRows");
   }
