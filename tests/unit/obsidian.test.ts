@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { parseObsidianMarkdown } from "../../src/connectors/obsidian.js";
+import {
+  parseObsidianMarkdown,
+  syncObsidianVault,
+  disconnectVault,
+} from "../../src/connectors/obsidian.js";
 import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import type Database from "better-sqlite3";
@@ -29,7 +33,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
-import { syncObsidianVault, disconnectVault } from "../../src/connectors/obsidian.js";
 import { initLogger } from "../../src/logger.js";
 
 const mockedReaddirSync = vi.mocked(readdirSync);
