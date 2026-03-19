@@ -1,6 +1,6 @@
 {
   "name": "libscope",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "AI-powered knowledge base with MCP integration — query library docs, internal wikis, and topics with semantic search",
   "homepage": "https://libscope.com",
   "type": "module",
