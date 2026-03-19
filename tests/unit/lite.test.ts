@@ -168,10 +168,10 @@ describe("LibScopeLite", () => {
 
       const answer = await liteWithLlm.ask("What are testing patterns?");
       expect(answer).toBe("Mocked LLM response");
-      expect(vi.mocked(mockLlm.complete)).toHaveBeenCalledOnce();
+      expect(vi.mocked(mockLlm).complete).toHaveBeenCalledOnce();
 
       // The first argument should be the context prompt
-      const callArgs = vi.mocked(mockLlm.complete).mock.calls[0];
+      const callArgs = vi.mocked(mockLlm).complete.mock.calls[0];
       expect(callArgs?.[0]).toContain("testing patterns");
 
       liteWithLlm.close();
