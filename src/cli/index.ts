@@ -335,6 +335,119 @@ async function handlePackConflict(
   return false;
 }
 
+/** Try to resolve a pack from git registries; returns true if installed. */
+async function tryGitRegistryInstall(
+  nameOrPath: string,
+  opts: { fromRegistry?: string; version?: string; yes?: boolean },
+  db: ReturnType<typeof getDatabase>,
+  provider: EmbeddingProvider,
+  installOpts: {
+    batchSize: number | undefined;
+    resumeFrom: number | undefined;
+    concurrency: number | undefined;
+  },
+  reporter: ReturnType<typeof createReporter>,
+): Promise<boolean> {
+  const isLocalFile = nameOrPath.endsWith(".json") || nameOrPath.endsWith(".json.gz");
+  if (isLocalFile || loadRegistries().length === 0) return false;
+
+  const { name: packName, version: specVersion } = parsePackSpecifier(nameOrPath);
+  const version = opts.version ?? specVersion;
+
+  const { resolved, conflict, warnings } = resolvePackFromRegistries(packName, {
+    version,
+    registryName: opts.fromRegistry,
+    conflictResolution: opts.fromRegistry
+      ? { strategy: "explicit", registryName: opts.fromRegistry }
+      : opts.yes
+        ? { strategy: "priority" }
+        : undefined,
+  });
+
+  for (const w of warnings) {
+    reporter.log(`Warning: ${w}`);
+  }
+
+  if (conflict && !resolved) {
+    const handled = await handlePackConflict(
+      conflict,
+      packName,
+      version,
+      opts,
+      db,
+      provider,
+      installOpts,
+      reporter,
+    );
+    if (handled) return true;
+  }
+
+  if (resolved) {
+    await installResolvedPack(db, provider, resolved, installOpts, reporter);
+    return true;
+  }
+
+  return false;
+}
+
+/** Execute a pack install from git registry, URL, or local file. */
+async function executePackInstall(
+  nameOrPath: string,
+  opts: {
+    registry?: string;
+    fromRegistry?: string;
+    version?: string;
+    yes?: boolean;
+    batchSize?: string;
+    resumeFrom?: string;
+    concurrency?: string;
+  },
+): Promise<void> {
+  const { db, provider } = initializeAppWithEmbedding();
+  const globalOpts = program.opts<ProgramOpts>();
+  const reporter = createReporter(globalOpts.verbose);
+
+  const batchSize = opts.batchSize ? parseIntOption(opts.batchSize, "--batch-size") : undefined;
+  const resumeFrom = opts.resumeFrom ? parseIntOption(opts.resumeFrom, "--resume-from") : undefined;
+  const concurrency = opts.concurrency
+    ? parseIntOption(opts.concurrency, "--concurrency")
+    : undefined;
+
+  if (concurrency !== undefined && concurrency < 1) {
+    reporter.log('Error: "--concurrency" must be an integer greater than or equal to 1.');
+    closeDatabase();
+    process.exit(1);
+    return;
+  }
+
+  const installOpts = { batchSize, resumeFrom, concurrency };
+
+  try {
+    const installed = await tryGitRegistryInstall(
+      nameOrPath,
+      opts,
+      db,
+      provider,
+      installOpts,
+      reporter,
+    );
+    if (installed) return;
+
+    const result = await installPack(db, provider, nameOrPath, {
+      registryUrl: opts.registry,
+      ...installOpts,
+      onProgress: (current, total, docTitle) => {
+        reporter.progress(current, total, docTitle);
+      },
+    });
+
+    reporter.clearProgress();
+    reportInstallResult(result, reporter);
+  } finally {
+    closeDatabase();
+  }
+}
+
 const program = new Command();
 
 program
@@ -1891,86 +2004,7 @@ packCmd
         concurrency?: string;
       },
     ) => {
-      const { db, provider } = initializeAppWithEmbedding();
-      const globalOpts = program.opts<ProgramOpts>();
-      const reporter = createReporter(globalOpts.verbose);
-
-      const batchSize = opts.batchSize ? parseIntOption(opts.batchSize, "--batch-size") : undefined;
-      const resumeFrom = opts.resumeFrom
-        ? parseIntOption(opts.resumeFrom, "--resume-from")
-        : undefined;
-      const concurrency = opts.concurrency
-        ? parseIntOption(opts.concurrency, "--concurrency")
-        : undefined;
-
-      if (concurrency !== undefined && concurrency < 1) {
-        reporter.log('Error: "--concurrency" must be an integer greater than or equal to 1.');
-        closeDatabase();
-        process.exit(1);
-        return;
-      }
-
-      const installOpts = { batchSize, resumeFrom, concurrency };
-
-      try {
-        // Check if this is a local file or URL-based registry install
-        const isLocalFile = nameOrPath.endsWith(".json") || nameOrPath.endsWith(".json.gz");
-
-        // Try git registry resolution if not a local file and we have registries configured
-        if (!isLocalFile && loadRegistries().length > 0) {
-          const { name: packName, version: specVersion } = parsePackSpecifier(nameOrPath);
-          const version = opts.version ?? specVersion;
-
-          const { resolved, conflict, warnings } = resolvePackFromRegistries(packName, {
-            version,
-            registryName: opts.fromRegistry,
-            conflictResolution: opts.fromRegistry
-              ? { strategy: "explicit", registryName: opts.fromRegistry }
-              : opts.yes
-                ? { strategy: "priority" }
-                : undefined,
-          });
-
-          for (const w of warnings) {
-            reporter.log(`Warning: ${w}`);
-          }
-
-          if (conflict && !resolved) {
-            const handled = await handlePackConflict(
-              conflict,
-              packName,
-              version,
-              opts,
-              db,
-              provider,
-              installOpts,
-              reporter,
-            );
-            if (handled) return;
-          }
-
-          if (resolved) {
-            await installResolvedPack(db, provider, resolved, installOpts, reporter);
-            return;
-          }
-
-          // Fall through to URL-based registry install if git registry resolution failed
-        }
-
-        // Original URL-based or local file install
-        const result = await installPack(db, provider, nameOrPath, {
-          registryUrl: opts.registry,
-          ...installOpts,
-          onProgress: (current, total, docTitle) => {
-            reporter.progress(current, total, docTitle);
-          },
-        });
-
-        reporter.clearProgress();
-        reportInstallResult(result, reporter);
-      } finally {
-        closeDatabase();
-      }
+      await executePackInstall(nameOrPath, opts);
     },
   );
 

@@ -819,6 +819,72 @@ async function fetchUrlToPackDoc(url: string): Promise<PackDocument | null> {
   return { title: fetched.title, content: fetched.content.trimEnd(), source: url, tags };
 }
 
+/** Process all file sources, collecting documents and errors. */
+async function processFileSources(
+  allFiles: string[],
+  totalCount: number,
+  onProgress: CreatePackFromSourceOptions["onProgress"],
+): Promise<{ documents: PackDocument[]; errors: Array<{ source: string; error: string }> }> {
+  const log = getLogger();
+  const documents: PackDocument[] = [];
+  const errors: Array<{ source: string; error: string }> = [];
+
+  for (let i = 0; i < allFiles.length; i++) {
+    const filePath = allFiles[i]!;
+    onProgress?.({ file: filePath, index: i, total: totalCount });
+    try {
+      const doc = await parseFileToPackDoc(filePath);
+      if (doc) documents.push(doc);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn({ file: filePath, err: msg }, "Failed to parse file, skipping");
+      errors.push({ source: filePath, error: msg });
+    }
+  }
+
+  return { documents, errors };
+}
+
+/** Process all URL sources, collecting documents and errors. */
+async function processUrlSources(
+  urls: string[],
+  fileOffset: number,
+  totalCount: number,
+  onProgress: CreatePackFromSourceOptions["onProgress"],
+): Promise<{ documents: PackDocument[]; errors: Array<{ source: string; error: string }> }> {
+  const log = getLogger();
+  const documents: PackDocument[] = [];
+  const errors: Array<{ source: string; error: string }> = [];
+
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i]!;
+    onProgress?.({ file: url, index: fileOffset + i, total: totalCount });
+    try {
+      const doc = await fetchUrlToPackDoc(url);
+      if (doc) documents.push(doc);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn({ url, err: msg }, "Failed to fetch URL, skipping");
+      errors.push({ source: url, error: msg });
+    }
+  }
+
+  return { documents, errors };
+}
+
+/** Validate that at least one document was created, throwing if none. */
+function validateDocuments(
+  documents: PackDocument[],
+  errors: Array<{ source: string; error: string }>,
+): void {
+  if (documents.length > 0) return;
+  const detail =
+    errors.length > 0
+      ? ` (${errors.length} source(s) failed: ${errors.map((e) => e.source).join(", ")})`
+      : "";
+  throw new ValidationError(`No documents could be created from the provided sources${detail}`);
+}
+
 /** Create a pack directly from filesystem paths and/or URLs (no database needed). */
 export async function createPackFromSource(
   options: CreatePackFromSourceOptions,
@@ -840,9 +906,6 @@ export async function createPackFromSource(
   const excludePatterns = options.exclude ?? [];
   const recursive = options.recursive ?? true;
 
-  const documents: PackDocument[] = [];
-  const errors: Array<{ source: string; error: string }> = [];
-
   const urls: string[] = [];
   const fileSources: string[] = [];
   for (const src of options.from) {
@@ -850,41 +913,15 @@ export async function createPackFromSource(
   }
 
   const allFiles = collectAllSourceFiles(fileSources, recursive, extensions, excludePatterns);
-
   const totalCount = allFiles.length + urls.length;
-  for (let i = 0; i < allFiles.length; i++) {
-    const filePath = allFiles[i]!;
-    options.onProgress?.({ file: filePath, index: i, total: totalCount });
-    try {
-      const doc = await parseFileToPackDoc(filePath);
-      if (doc) documents.push(doc);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ file: filePath, err: msg }, "Failed to parse file, skipping");
-      errors.push({ source: filePath, error: msg });
-    }
-  }
 
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i]!;
-    options.onProgress?.({ file: url, index: allFiles.length + i, total: totalCount });
-    try {
-      const doc = await fetchUrlToPackDoc(url);
-      if (doc) documents.push(doc);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ url, err: msg }, "Failed to fetch URL, skipping");
-      errors.push({ source: url, error: msg });
-    }
-  }
+  const fileResults = await processFileSources(allFiles, totalCount, options.onProgress);
+  const urlResults = await processUrlSources(urls, allFiles.length, totalCount, options.onProgress);
 
-  if (documents.length === 0) {
-    const detail =
-      errors.length > 0
-        ? ` (${errors.length} source(s) failed: ${errors.map((e) => e.source).join(", ")})`
-        : "";
-    throw new ValidationError(`No documents could be created from the provided sources${detail}`);
-  }
+  const documents = [...fileResults.documents, ...urlResults.documents];
+  const errors = [...fileResults.errors, ...urlResults.errors];
+
+  validateDocuments(documents, errors);
 
   if (errors.length > 0) {
     log.warn({ errorCount: errors.length, errors }, "Some sources failed during pack creation");

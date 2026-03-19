@@ -17,6 +17,12 @@ npm run build        # tsc — outputs to dist/
 
 CI runs on Node 20 and 22. CI checks: lint, format:check, typecheck, test:coverage, build. Build verifies `dist/mcp/server.js`, `dist/cli/index.js`, `dist/core/index.js` exist.
 
+**Before every push, run this exact sequence locally:**
+```bash
+npm run format:check && npm run lint && npm run typecheck && npm test
+```
+Do not skip any step. Do not assume "pre-existing errors" — compare the lint error count against main. If your branch has MORE errors than main, CI will fail. The pre-existing error count on main is ~39 lint errors (all in parsers/rag.ts).
+
 ## Code Style & TypeScript
 
 - **Strict mode** with `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitReturns`

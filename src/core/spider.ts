@@ -398,6 +398,59 @@ function enqueueChildLinks(
   log.debug({ url: canonicalUrl, linksFound: links.length }, "Spider: extracted links");
 }
 
+/** Check if the spider has exceeded its total timeout. */
+function checkDeadline(
+  deadline: number,
+  stats: SpiderStats,
+  log: ReturnType<typeof getLogger>,
+): boolean {
+  if (Date.now() <= deadline) return false;
+  log.warn({ pagesFetched: stats.pagesFetched }, "Spider total timeout reached");
+  stats.abortReason = "timeout";
+  return true;
+}
+
+/** Determine whether a non-seed URL should be skipped (robots, domain, path, exclude). */
+async function shouldSkipNonSeedUrl(
+  url: string,
+  config: SpiderConfig,
+  robotsCache: Map<string, Set<string>>,
+  stats: SpiderStats,
+  log: ReturnType<typeof getLogger>,
+): Promise<boolean> {
+  const urlOrigin = safeParseOrigin(url, config.seedOrigin);
+  const robotsRules = await ensureRobotsLoaded(urlOrigin, robotsCache, config.fetchOptions);
+  const skipReason = shouldSkipUrl(url, config, robotsRules);
+  if (!skipReason) return false;
+  log.debug({ url }, skipReason);
+  stats.pagesSkipped++;
+  return true;
+}
+
+/** Fetch a single page, returning the raw result or null on failure. */
+async function fetchSpiderPage(
+  url: string,
+  config: SpiderConfig,
+  stats: SpiderStats,
+  log: ReturnType<typeof getLogger>,
+): Promise<Awaited<ReturnType<typeof fetchRaw>> | null> {
+  if (stats.pagesCrawled > 0 && config.requestDelay > 0) {
+    await sleep(config.requestDelay);
+  }
+
+  log.info({ url, depth: 0 }, "Spider: fetching page");
+  stats.pagesCrawled++;
+
+  try {
+    return await fetchRaw(url, config.fetchOptions);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn({ url, err: msg }, "Spider: fetch failed, skipping");
+    stats.errors.push({ url, error: msg });
+    return null;
+  }
+}
+
 /**
  * Spider a seed URL, yielding each successfully fetched page as a SpiderResult.
  * Performs BFS up to maxDepth hops and maxPages total.
@@ -432,25 +485,15 @@ export async function* spiderUrl(
   const deadline = Date.now() + HARD_TOTAL_TIMEOUT_MS;
 
   while (queue.length > 0 && stats.pagesFetched < config.maxPages) {
-    if (Date.now() > deadline) {
-      log.warn({ pagesFetched: stats.pagesFetched }, "Spider total timeout reached");
-      stats.abortReason = "timeout";
-      break;
-    }
+    if (checkDeadline(deadline, stats, log)) break;
 
     const { url, depth } = queue.shift()!;
     if (visited.has(url)) continue;
     visited.add(url);
 
     if (depth > 0) {
-      const urlOrigin = safeParseOrigin(url, config.seedOrigin);
-      const robotsRules = await ensureRobotsLoaded(urlOrigin, robotsCache, config.fetchOptions);
-      const skipReason = shouldSkipUrl(url, config, robotsRules);
-      if (skipReason) {
-        log.debug({ url }, skipReason);
-        stats.pagesSkipped++;
-        continue;
-      }
+      const skipped = await shouldSkipNonSeedUrl(url, config, robotsCache, stats, log);
+      if (skipped) continue;
     }
 
     if (stats.pagesFetched >= config.maxPages) {
@@ -458,22 +501,8 @@ export async function* spiderUrl(
       break;
     }
 
-    if (stats.pagesCrawled > 0 && config.requestDelay > 0) {
-      await sleep(config.requestDelay);
-    }
-
-    log.info({ url, depth }, "Spider: fetching page");
-    stats.pagesCrawled++;
-
-    let raw: Awaited<ReturnType<typeof fetchRaw>>;
-    try {
-      raw = await fetchRaw(url, config.fetchOptions);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ url, err: msg }, "Spider: fetch failed, skipping");
-      stats.errors.push({ url, error: msg });
-      continue;
-    }
+    const raw = await fetchSpiderPage(url, config, stats, log);
+    if (!raw) continue;
 
     const result = convertPage(raw, url, depth);
     if (result.url !== url) visited.add(result.url);

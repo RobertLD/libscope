@@ -328,37 +328,39 @@ function renderChildContent(children: NotionBlock[]): string | undefined {
     .join("\n");
 }
 
+/** Convert a single Notion block to markdown line(s), appending to the output array. */
+function convertSingleBlock(block: NotionBlock, lines: string[]): void {
+  const text = getBlockText(block);
+  const children = (block as Record<string, unknown>)["children"] as NotionBlock[] | undefined;
+
+  // Handle table specially (children are inline rows)
+  if (block.type === "table" && children) {
+    lines.push(...renderTableRows(children));
+    return;
+  }
+
+  // Try special blocks first (ones needing type-specific data extraction)
+  const specialLine = convertSpecialBlock(block, text);
+  if (specialLine === undefined) {
+    const simpleLine = blockToMarkdownLine(block, text);
+    if (simpleLine !== undefined) lines.push(simpleLine);
+  } else {
+    lines.push(specialLine);
+  }
+
+  // Render nested children (except table children which are handled above)
+  if (children && block.type !== "table") {
+    const indented = renderChildContent(children);
+    if (indented) lines.push(indented);
+  }
+}
+
 /** Convert an array of Notion blocks to markdown. */
 export function convertNotionBlocks(blocks: NotionBlock[]): string {
   const lines: string[] = [];
-
   for (const block of blocks) {
-    const text = getBlockText(block);
-    const children = (block as Record<string, unknown>)["children"] as NotionBlock[] | undefined;
-
-    // Handle table specially (children are inline rows)
-    if (block.type === "table" && children) {
-      lines.push(...renderTableRows(children));
-      continue;
-    }
-
-    // Try special blocks first (ones needing type-specific data extraction)
-    const specialLine = convertSpecialBlock(block, text);
-    if (specialLine === undefined) {
-      // Simple blocks that just need text formatting
-      const simpleLine = blockToMarkdownLine(block, text);
-      if (simpleLine !== undefined) lines.push(simpleLine);
-    } else {
-      lines.push(specialLine);
-    }
-
-    // Render nested children (except table children which are handled above)
-    if (children && block.type !== "table") {
-      const indented = renderChildContent(children);
-      if (indented) lines.push(indented);
-    }
+    convertSingleBlock(block, lines);
   }
-
   return lines.join("\n");
 }
 
@@ -480,6 +482,24 @@ async function syncNotionDatabase(
   log.debug({ id: item.id, title: dbTitle, rows: rows.length }, "Indexed Notion database");
 }
 
+/** Sync a single search result item (page or database). */
+async function syncNotionItem(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  item: NotionSearchResult,
+  excludeSet: Set<string>,
+  result: NotionSyncResult,
+): Promise<void> {
+  if (item.object === "page") {
+    const indexed = await syncNotionPage(db, provider, token, item);
+    if (indexed) result.pagesIndexed++;
+  } else if (item.object === "database") {
+    await syncNotionDatabase(db, provider, token, item, excludeSet);
+    result.databasesIndexed++;
+  }
+}
+
 /** Sync pages and databases from Notion into the knowledge base. */
 export async function syncNotion(
   db: Database.Database,
@@ -514,13 +534,7 @@ export async function syncNotion(
       }
 
       try {
-        if (item.object === "page") {
-          const indexed = await syncNotionPage(db, provider, config.token, item);
-          if (indexed) result.pagesIndexed++;
-        } else if (item.object === "database") {
-          await syncNotionDatabase(db, provider, config.token, item, excludeSet);
-          result.databasesIndexed++;
-        }
+        await syncNotionItem(db, provider, config.token, item, excludeSet, result);
       } catch (err) {
         const title = extractTitle(item);
         const message = err instanceof Error ? err.message : String(err);
