@@ -31,9 +31,7 @@ describe("LibScopeLite", () => {
 
   describe("index()", () => {
     it("should index a single document", async () => {
-      await lite.index([
-        { title: "Test Doc", content: "This is test content for indexing." },
-      ]);
+      await lite.index([{ title: "Test Doc", content: "This is test content for indexing." }]);
 
       expect(provider.embedBatchCallCount).toBeGreaterThan(0);
     });
@@ -96,7 +94,10 @@ describe("LibScopeLite", () => {
   describe("search()", () => {
     beforeEach(async () => {
       await lite.index([
-        { title: "React Hooks", content: "useState and useEffect are the most common React hooks." },
+        {
+          title: "React Hooks",
+          content: "useState and useEffect are the most common React hooks.",
+        },
         { title: "Vue Composition", content: "Vue 3 composition API uses setup function." },
         { title: "Angular DI", content: "Angular uses dependency injection pattern extensively." },
       ]);
@@ -129,7 +130,10 @@ describe("LibScopeLite", () => {
   describe("getContext()", () => {
     beforeEach(async () => {
       await lite.index([
-        { title: "Node.js Streams", content: "Readable streams in Node.js are a fundamental pattern." },
+        {
+          title: "Node.js Streams",
+          content: "Readable streams in Node.js are a fundamental pattern.",
+        },
       ]);
     });
 
@@ -164,7 +168,7 @@ describe("LibScopeLite", () => {
 
       const answer = await liteWithLlm.ask("What are testing patterns?");
       expect(answer).toBe("Mocked LLM response");
-      expect(mockLlm.complete).toHaveBeenCalledOnce();
+      expect(vi.mocked(mockLlm.complete)).toHaveBeenCalledOnce();
 
       // The first argument should be the context prompt
       const callArgs = vi.mocked(mockLlm.complete).mock.calls[0];
@@ -215,7 +219,7 @@ describe("LibScopeLite", () => {
     });
 
     it("should stream tokens from LlmProvider", async () => {
-      async function* fakeStream(): AsyncGenerator<string> {
+      function* fakeStream(): Generator<string> {
         yield "Hello";
         yield " world";
       }

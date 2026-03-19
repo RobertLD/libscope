@@ -1,10 +1,9 @@
 import Database from "better-sqlite3";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { LocalEmbeddingProvider } from "../providers/local.js";
+import { createDatabase } from "../db/connection.js";
 import { runMigrations, createVectorTable } from "../db/schema.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
@@ -21,37 +20,29 @@ import type {
   LiteAskOptions,
 } from "./types.js";
 
-const require = createRequire(import.meta.url);
-
 export class LibScopeLite {
   private readonly db: Database.Database;
   private readonly provider: EmbeddingProvider;
   private readonly llmProvider: LlmProvider | null;
 
   constructor(opts: LiteOptions = {}) {
-    const dbPath = opts.dbPath ?? join(homedir(), ".libscope", "lite.db");
-    mkdirSync(dirname(dbPath), { recursive: true });
-
-    this.db = new Database(dbPath);
-
-    // Load sqlite-vec extension for vector search (best-effort — falls back to FTS5)
-    try {
-      const sqliteVec = require("sqlite-vec") as { getLoadablePath(): string };
-      this.db.loadExtension(sqliteVec.getLoadablePath());
-    } catch {
-      /* sqlite-vec not available — FTS5 search still works */
-    }
-
     this.provider = opts.provider ?? new LocalEmbeddingProvider();
     this.llmProvider = opts.llmProvider ?? null;
 
-    runMigrations(this.db);
-
-    // Create vector table best-effort (requires sqlite-vec)
-    try {
-      createVectorTable(this.db, this.provider.dimensions);
-    } catch {
-      /* vector table creation failed — FTS5 still works */
+    if (opts.db !== undefined) {
+      // Caller-provided DB: skip all setup (migrations, extension loading, vector table).
+      this.db = opts.db;
+    } else {
+      const dbPath = opts.dbPath ?? join(homedir(), ".libscope", "lite.db");
+      // createDatabase handles directory creation, WAL mode, pragmas, and sqlite-vec loading.
+      this.db = createDatabase(dbPath);
+      runMigrations(this.db);
+      // Create vector table best-effort (requires sqlite-vec to be loaded).
+      try {
+        createVectorTable(this.db, this.provider.dimensions);
+      } catch {
+        /* sqlite-vec not loaded — FTS5 search still works */
+      }
     }
   }
 

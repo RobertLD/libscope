@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TreeSitterChunker, type CodeChunk } from "../../src/lite/chunker-treesitter.js";
+import { TreeSitterChunker } from "../../src/lite/chunker-treesitter.js";
 import { ValidationError } from "../../src/errors.js";
 
 describe("TreeSitterChunker", () => {
@@ -62,7 +62,7 @@ describe("TreeSitterChunker", () => {
       // tree-sitter is not installed in test environment, so chunk() should fail gracefully
       // If it does happen to be installed, this test is still valid — it just takes the other path
       try {
-        await chunker.chunk('const x = 1;', "typescript");
+        await chunker.chunk("const x = 1;", "typescript");
         // If tree-sitter IS installed, we skip this assertion
       } catch (err: unknown) {
         expect(err).toBeInstanceOf(ValidationError);
@@ -73,6 +73,17 @@ describe("TreeSitterChunker", () => {
   });
 
   describe("chunk() — with mocked tree-sitter", () => {
+    interface MockNode {
+      type: string;
+      text: string;
+      startPosition: { row: number; column: number };
+      endPosition: { row: number; column: number };
+      childCount: number;
+      child: (i: number) => MockNode | null;
+      namedChildCount: number;
+      namedChild: (i: number) => MockNode | null;
+    }
+
     /**
      * Helper: create a mock TSNode that simulates tree-sitter node shape.
      */
@@ -81,17 +92,8 @@ describe("TreeSitterChunker", () => {
       text: string,
       startRow: number,
       endRow: number,
-      children: ReturnType<typeof makeMockNode>[] = [],
-    ): {
-      type: string;
-      text: string;
-      startPosition: { row: number; column: number };
-      endPosition: { row: number; column: number };
-      childCount: number;
-      child: (i: number) => ReturnType<typeof makeMockNode> | null;
-      namedChildCount: number;
-      namedChild: (i: number) => ReturnType<typeof makeMockNode> | null;
-    } {
+      children: MockNode[] = [],
+    ): MockNode {
       return {
         type,
         text,
@@ -158,12 +160,7 @@ describe("TreeSitterChunker", () => {
     });
 
     it("should chunk at class declaration boundaries", async () => {
-      const cls = makeMockNode(
-        "class_declaration",
-        "class Foo {\n  bar() {}\n}",
-        0,
-        2,
-      );
+      const cls = makeMockNode("class_declaration", "class Foo {\n  bar() {}\n}", 0, 2);
 
       const chunker = createMockedChunker([cls]);
       const chunks = await chunker.chunk("unused", "typescript");

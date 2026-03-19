@@ -118,21 +118,24 @@ describe("LibScopeLite integration", () => {
       lite.rate(docId, 3);
     });
 
-    it("should reject invalid ratings", () => {
+    it("should reject invalid ratings", async () => {
       // We need a valid doc ID first
       const rateInvalid = async (): Promise<void> => {
         const results = await lite.search("React");
         const docId = results[0]!.docId;
         lite.rate(docId, 0); // 0 is out of range
       };
-      expect(rateInvalid()).rejects.toThrow();
+      await expect(rateInvalid()).rejects.toThrow();
     });
   });
 
   describe("full pipeline: index → search → getContext → rate", () => {
     it("should execute the complete workflow end-to-end", async () => {
       // 1. Index additional docs
-      const extraLite = new LibScopeLite({ dbPath: ":memory:", provider: new MockEmbeddingProvider() });
+      const extraLite = new LibScopeLite({
+        dbPath: ":memory:",
+        provider: new MockEmbeddingProvider(),
+      });
       await extraLite.index([
         {
           title: "Docker Basics",

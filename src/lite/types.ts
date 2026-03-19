@@ -1,8 +1,13 @@
+import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import type { LlmProvider } from "../core/rag.js";
 
 export interface LiteOptions {
+  /** Path to SQLite database file. Defaults to ~/.libscope/lite.db. Use ':memory:' for in-memory. */
   dbPath?: string | undefined;
+  /** Pre-configured database instance. When provided, dbPath is ignored and no migrations or
+   *  vector table setup are performed — caller is responsible for schema initialization. */
+  db?: Database.Database | undefined;
   provider?: EmbeddingProvider | undefined;
   model?: string | undefined;
   llmProvider?: LlmProvider | undefined;
