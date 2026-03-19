@@ -69,15 +69,16 @@ import {
   syncOneNote,
   disconnectOneNote,
 } from "../connectors/onenote.js";
-import { loadConnectorConfig, saveConnectorConfig } from "../connectors/index.js";
-import { syncNotion, disconnectNotion } from "../connectors/notion.js";
-import type { NotionConfig } from "../connectors/notion.js";
-import { syncSlack, disconnectSlack, type SlackConfig } from "../connectors/slack.js";
 import {
+  loadConnectorConfig,
+  saveConnectorConfig,
   saveNamedConnectorConfig,
   loadNamedConnectorConfig,
   hasNamedConnectorConfig,
 } from "../connectors/index.js";
+import { syncNotion, disconnectNotion } from "../connectors/notion.js";
+import type { NotionConfig } from "../connectors/notion.js";
+import { syncSlack, disconnectSlack, type SlackConfig } from "../connectors/slack.js";
 import {
   createSavedSearch,
   listSavedSearches,

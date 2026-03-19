@@ -462,7 +462,7 @@ export function suggestTags(
   for (const [term, count] of tf) {
     if (existingTags.has(term)) continue;
     const normalizedTf = count / maxTf;
-    const knownBoost = knownTags.has(term) ? 2.0 : 1.0;
+    const knownBoost = knownTags.has(term) ? 2 : 1;
     scored.push({ term, score: normalizedTf * knownBoost });
   }
 
