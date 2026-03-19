@@ -18,8 +18,9 @@ export class CsvParser implements DocumentParser {
       const colCount = header.length;
       const rows = records.slice(1);
 
+      // prettier-ignore
       const escapeCell = (cell: string): string =>
-        cell.replaceAll("\\", "\\\\").replaceAll("|", "\\|").replaceAll("\n", " ");
+        cell.replaceAll("\\", String.raw`\\`).replaceAll("|", String.raw`\|`).replaceAll("\n", " ");
 
       const lines: string[] = [];
       lines.push(

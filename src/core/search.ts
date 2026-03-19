@@ -39,11 +39,12 @@ function isVectorTableError(err: unknown): boolean {
 
 /** Escape LIKE special characters so user input is treated literally. */
 export function escapeLikePattern(input: string): string {
+  // prettier-ignore
   return input
-    .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/\[/g, "\\[");
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll("%", String.raw`\%`)
+    .replaceAll("_", String.raw`\_`)
+    .replaceAll("[", String.raw`\[`);
 }
 
 export interface SearchOptions {

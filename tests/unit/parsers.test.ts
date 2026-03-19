@@ -174,7 +174,8 @@ describe("CsvParser", () => {
   it("escapes pipe characters in cell values", async () => {
     const input = "col1,col2\nfoo|bar,baz";
     const result = await parser.parse(Buffer.from(input));
-    expect(result).toContain("foo\\|bar");
+    // prettier-ignore
+    expect(result).toContain(String.raw`foo\|bar`);
   });
 
   it("replaces newlines in cell values", async () => {
