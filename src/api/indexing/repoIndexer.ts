@@ -87,16 +87,28 @@ function walkFiles(
   return results;
 }
 
+/**
+ * Validate a git branch name against the git-check-ref-format allowlist.
+ * Rejects anything outside [a-zA-Z0-9._\-/] to prevent argument injection.
+ */
+function validateBranchName(branch: string): void {
+  if (!/^[a-zA-Z0-9._\-/]+$/.test(branch)) {
+    throw new Error(
+      `Invalid branch name "${branch}": only alphanumerics, '.', '_', '-', and '/' are allowed`,
+    );
+  }
+}
+
 /** Clone a repo at branch into a temp directory. Returns the temp dir path. */
 function cloneToTemp(cloneUrl: string, branch?: string): string {
   const tempDir = join(tmpdir(), `libscope-repo-${randomUUID()}`);
-  // Use execFileSync with an argument array — no shell is invoked, so shell
-  // metacharacters in cloneUrl or branch cannot cause command injection.
-  // The "--" separator still prevents git from interpreting the URL as a flag.
   const args = ["clone", "--depth=1"];
   if (branch) {
+    validateBranchName(branch);
     args.push("--branch", branch);
   }
+  // execFileSync bypasses the shell — args are passed directly to git.
+  // The "--" separator prevents git from interpreting the URL as a flag.
   args.push("--", cloneUrl, tempDir);
   execFileSync("git", args, { stdio: "ignore" });
   return tempDir;
