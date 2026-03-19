@@ -61,10 +61,10 @@ function detectLanguage(filePath: string): string | undefined {
 /** Convert a glob-style pattern to a RegExp. Handles ** and * wildcards. */
 function globToRegex(pattern: string): RegExp {
   const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "§DOUBLESTAR§")
-    .replace(/\*/g, "[^/]*")
-    .replace(/§DOUBLESTAR§/g, ".*");
+    .replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
+    .replaceAll("**", "§DOUBLESTAR§")
+    .replaceAll("*", "[^/]*")
+    .replaceAll("§DOUBLESTAR§", ".*");
   return new RegExp(`^${escaped}$`);
 }
 
@@ -132,6 +132,74 @@ function cloneToTemp(cloneUrl: string, branch?: string): string {
   return tempDir;
 }
 
+/** Chunk a source file with tree-sitter and append resulting LiteDocs. */
+async function chunkAndIndex(
+  relPath: string,
+  source: string,
+  lang: string,
+  repoSlug: string,
+  allDocs: LiteDoc[],
+  stats: IndexJobStats,
+): Promise<void> {
+  try {
+    const chunks = await chunker.chunk(source, lang);
+    for (const chunk of chunks) {
+      allDocs.push({
+        title: `${relPath}:L${String(chunk.startLine)}-L${String(chunk.endLine)} [${chunk.nodeType}]`,
+        content: chunk.content,
+        library: repoSlug,
+        url: `repo://${repoSlug}/${relPath}#L${String(chunk.startLine)}`,
+      });
+      stats.chunksCreated++;
+    }
+    stats.filesIndexed++;
+  } catch (err) {
+    stats.errors.push(
+      `${relPath} (chunking): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    stats.filesSkipped++;
+  }
+}
+
+/** Read one file from the cloned repo and append its docs to allDocs. */
+async function processFile(
+  relPath: string,
+  tempDir: string,
+  repoSlug: string,
+  allDocs: LiteDoc[],
+  stats: IndexJobStats,
+): Promise<void> {
+  const fullPath = join(tempDir, relPath);
+  let source: string;
+  try {
+    const stat = statSync(fullPath);
+    if (!stat.isFile()) {
+      stats.filesSkipped++;
+      return;
+    }
+    source = readFileSync(fullPath, "utf8");
+  } catch (err) {
+    stats.filesSkipped++;
+    stats.errors.push(`${relPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  const lang = detectLanguage(relPath);
+  if (lang && chunker.supports(lang)) {
+    await chunkAndIndex(relPath, source, lang, repoSlug, allDocs, stats);
+  } else {
+    // Non-code file or unsupported language — index as raw text
+    allDocs.push({
+      title: relPath,
+      content: source,
+      library: repoSlug,
+      url: `repo://${repoSlug}/${relPath}`,
+    });
+    stats.chunksCreated++;
+    stats.filesIndexed++;
+  }
+}
+
 export async function indexRepo(
   libscope: LibScopeLite,
   repoSlug: string,
@@ -151,7 +219,6 @@ export async function indexRepo(
   const tempDir = cloneToTemp(entry.cloneUrl, branch);
 
   try {
-    // Full reindex: clear existing docs for this repo
     const isIncremental = opts.files !== undefined && opts.files.length > 0;
     if (!isIncremental) {
       libscope.deleteByLibrary(repoSlug);
@@ -162,56 +229,8 @@ export async function indexRepo(
       : walkFiles(tempDir, entry.include, entry.exclude);
 
     const allDocs: LiteDoc[] = [];
-
     for (const relPath of filesToIndex) {
-      const fullPath = join(tempDir, relPath);
-      let source: string;
-      try {
-        // Skip non-files (symlinks pointing outside, etc.)
-        const stat = statSync(fullPath);
-        if (!stat.isFile()) {
-          stats.filesSkipped++;
-          continue;
-        }
-        source = readFileSync(fullPath, "utf8");
-      } catch (err) {
-        stats.filesSkipped++;
-        stats.errors.push(`${relPath}: ${err instanceof Error ? err.message : String(err)}`);
-        continue;
-      }
-
-      const lang = detectLanguage(relPath);
-
-      if (lang && chunker.supports(lang)) {
-        try {
-          const chunks = await chunker.chunk(source, lang);
-          for (const chunk of chunks) {
-            allDocs.push({
-              title: `${relPath}:L${String(chunk.startLine)}-L${String(chunk.endLine)} [${chunk.nodeType}]`,
-              content: chunk.content,
-              library: repoSlug,
-              url: `repo://${repoSlug}/${relPath}#L${String(chunk.startLine)}`,
-            });
-            stats.chunksCreated++;
-          }
-          stats.filesIndexed++;
-        } catch (err) {
-          stats.errors.push(
-            `${relPath} (chunking): ${err instanceof Error ? err.message : String(err)}`,
-          );
-          stats.filesSkipped++;
-        }
-      } else {
-        // Non-code file or unsupported language — index as raw text
-        allDocs.push({
-          title: relPath,
-          content: source,
-          library: repoSlug,
-          url: `repo://${repoSlug}/${relPath}`,
-        });
-        stats.chunksCreated++;
-        stats.filesIndexed++;
-      }
+      await processFile(relPath, tempDir, repoSlug, allDocs, stats);
     }
 
     await libscope.indexBatch(allDocs, { concurrency: 4 });

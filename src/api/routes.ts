@@ -925,6 +925,29 @@ function handleDeleteWebhook(ctx: RouteContext, webhookId: string): void {
 // Repo indexing webhook handler
 // ---------------------------------------------------------------------------
 
+/** Match /api/v1/index/jobs/:jobId */
+function matchIndexJobId(segments: string[]): string | null {
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    segments[2] === "index" &&
+    segments[3] === "jobs"
+  ) {
+    return segments[4] ?? null;
+  }
+  return null;
+}
+
+function handleGetIndexJob(ctx: RouteContext, jobId: string): void {
+  const job = repoIndexJobs.get(jobId);
+  if (!job) {
+    sendError(ctx.res, 404, "NOT_FOUND", `Index job "${jobId}" not found`);
+    return;
+  }
+  sendJson(ctx.res, 200, job, elapsed(ctx.start));
+}
+
 /** Match /api/v1/index/repos/:repoSlug */
 function matchRepoSlugForIndex(segments: string[]): string | null {
   if (
@@ -979,10 +1002,9 @@ async function handleIndexRepo(ctx: RouteContext, repoSlug: string): Promise<voi
   // Fire-and-forget indexing job
   const libscope = createRepoLibScope(repoSlug);
   job.status = "running";
-  const indexOpts = {
-    ...(branch !== undefined ? { branch } : {}),
-    ...(files !== undefined ? { files } : {}),
-  };
+  const indexOpts: { branch?: string; files?: string[] } = {};
+  if (branch !== undefined) indexOpts.branch = branch;
+  if (files !== undefined) indexOpts.files = files;
   indexRepo(libscope, repoSlug, entry, indexOpts)
     .then((stats) => {
       job.status = "completed";
@@ -1168,6 +1190,11 @@ async function dispatchMiscSegmentRoutes(
   const savedSearchId = matchSearchId(segments);
   if (savedSearchId && method === "DELETE") {
     handleDeleteSavedSearch(ctx, savedSearchId);
+    return true;
+  }
+  const indexJobId = matchIndexJobId(segments);
+  if (indexJobId && method === "GET") {
+    handleGetIndexJob(ctx, indexJobId);
     return true;
   }
   const repoSlug = matchRepoSlugForIndex(segments);
