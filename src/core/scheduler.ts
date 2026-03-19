@@ -124,7 +124,7 @@ export class ConnectorScheduler {
     const log = getLogger();
     const inFlight: Promise<void>[] = [];
     for (const [key, job] of this.jobs) {
-      void job.task.stop(); // eslint: no-floating-promises requires void for fire-and-forget
+      void job.task.stop(); // NOSONAR — ESLint no-floating-promises requires void for fire-and-forget
       if (job.running && job.runPromise) {
         inFlight.push(job.runPromise);
       }

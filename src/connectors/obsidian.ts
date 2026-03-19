@@ -401,6 +401,61 @@ function deleteRemovedFiles(
   return deleted;
 }
 
+/** Process a single vault file outcome and update tracking state. */
+function applyVaultFileOutcome(
+  outcome: { entry: VaultFileEntry; isUpdate: boolean } | "unchanged",
+  relPath: string,
+  trackedFiles: Record<string, VaultFileEntry>,
+  newTrackedFiles: Record<string, VaultFileEntry>,
+  result: SyncResult,
+): void {
+  if (outcome === "unchanged") {
+    newTrackedFiles[relPath] = trackedFiles[relPath]!;
+    return;
+  }
+  newTrackedFiles[relPath] = outcome.entry;
+  if (outcome.isUpdate) {
+    result.updated++;
+  } else {
+    result.added++;
+  }
+}
+
+/** Sync all vault files, populating result and newTrackedFiles. */
+async function syncVaultFiles(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: ObsidianConfig,
+  vaultFiles: string[],
+  trackedFiles: Record<string, VaultFileEntry>,
+  newTrackedFiles: Record<string, VaultFileEntry>,
+  result: SyncResult,
+): Promise<void> {
+  const log = getLogger();
+  for (const relPath of vaultFiles) {
+    try {
+      const outcome = await processVaultFile(
+        db,
+        provider,
+        config,
+        relPath,
+        vaultFiles,
+        trackedFiles[relPath],
+        log,
+      );
+      applyVaultFileOutcome(outcome, relPath, trackedFiles, newTrackedFiles, result);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      result.errors.push({ file: relPath, error: errMsg });
+      log.warn({ file: relPath, err }, "Failed to sync file");
+      const tracked = trackedFiles[relPath];
+      if (tracked) {
+        newTrackedFiles[relPath] = tracked;
+      }
+    }
+  }
+}
+
 export async function syncObsidianVault(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -431,37 +486,7 @@ export async function syncObsidianVault(
     const newTrackedFiles: Record<string, VaultFileEntry> = {};
     const currentFileSet = new Set(vaultFiles);
 
-    for (const relPath of vaultFiles) {
-      try {
-        const outcome = await processVaultFile(
-          db,
-          provider,
-          config,
-          relPath,
-          vaultFiles,
-          trackedFiles[relPath],
-          log,
-        );
-
-        if (outcome === "unchanged") {
-          newTrackedFiles[relPath] = trackedFiles[relPath]!;
-        } else if (outcome.isUpdate) {
-          newTrackedFiles[relPath] = outcome.entry;
-          result.updated++;
-        } else {
-          newTrackedFiles[relPath] = outcome.entry;
-          result.added++;
-        }
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        result.errors.push({ file: relPath, error: errMsg });
-        log.warn({ file: relPath, err }, "Failed to sync file");
-        const tracked = trackedFiles[relPath];
-        if (tracked) {
-          newTrackedFiles[relPath] = tracked;
-        }
-      }
-    }
+    await syncVaultFiles(db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result);
 
     result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
 

@@ -259,6 +259,29 @@ function computeAveragedEmbeddings(rows: ChunkEmbeddingRow[]): Map<string, numbe
   return docEmbeddings;
 }
 
+/** Find all edges from one document to later documents that exceed the similarity threshold. */
+function findEdgesForDocument(
+  idA: string,
+  vecA: number[],
+  docIdList: string[],
+  startIndex: number,
+  docEmbeddings: Map<string, number[]>,
+  threshold: number,
+): GraphEdge[] {
+  const edges: GraphEdge[] = [];
+  for (let j = startIndex; j < docIdList.length; j++) {
+    const idB = docIdList[j];
+    if (!idB) continue;
+    const vecB = docEmbeddings.get(idB);
+    if (!vecB) continue;
+    const sim = cosineSimilarity(vecA, vecB);
+    if (sim >= threshold) {
+      edges.push({ source: idA, target: idB, type: "similar_to", weight: sim });
+    }
+  }
+  return edges;
+}
+
 /** Compute pairwise similarity edges from averaged document embeddings. */
 function computeSimilarityEdges(
   docEmbeddings: Map<string, number[]>,
@@ -271,16 +294,7 @@ function computeSimilarityEdges(
     if (!idA) continue;
     const vecA = docEmbeddings.get(idA);
     if (!vecA) continue;
-    for (let j = i + 1; j < docIdList.length; j++) {
-      const idB = docIdList[j];
-      if (!idB) continue;
-      const vecB = docEmbeddings.get(idB);
-      if (!vecB) continue;
-      const sim = cosineSimilarity(vecA, vecB);
-      if (sim >= threshold) {
-        edges.push({ source: idA, target: idB, type: "similar_to", weight: sim });
-      }
-    }
+    edges.push(...findEdgesForDocument(idA, vecA, docIdList, i + 1, docEmbeddings, threshold));
   }
   return edges;
 }
