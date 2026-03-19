@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1](https://github.com/RobertLD/libscope/compare/v1.7.0...v1.7.1) (2026-03-19)
+
+
+### Bug Fixes
+
+* export TreeSitterChunker and CodeChunk from libscope/lite ([#459](https://github.com/RobertLD/libscope/issues/459)) ([4763f79](https://github.com/RobertLD/libscope/commit/4763f79fc13fa3a07c575ffba0e3924df9984dde))
+
 ## [1.7.0](https://github.com/RobertLD/libscope/compare/v1.6.0...v1.7.0) (2026-03-19)
 
 
