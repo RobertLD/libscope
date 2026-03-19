@@ -14,6 +14,8 @@ export default defineConfig({
         "src/providers/local.ts",
         "src/providers/ollama.ts",
         "src/providers/openai.ts",
+        "src/api/indexing/repoConfig.ts",
+        "src/api/indexing/repoIndexer.ts",
         "src/db/connection.ts",
         "src/core/index.ts",
         "src/db/index.ts",
