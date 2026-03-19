@@ -212,6 +212,19 @@ export {
 } from "../connectors/confluence.js";
 export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confluence.js";
 
+export {
+  syncDocSite,
+  disconnectDocSite,
+  detectDocSiteType,
+  extractDocLinks,
+  extractDocTitle,
+  extractMainContent,
+  extractElementByPattern,
+  extractSitemapUrls,
+  normalizeUrl as normalizeDocUrl,
+} from "../connectors/docs.js";
+export type { DocSiteConfig, DocSiteSyncResult, DocSiteType } from "../connectors/docs.js";
+
 export { resolveSelector, bulkDelete, bulkRetag, bulkMove } from "./bulk.js";
 export type { BulkSelector, BulkResult } from "./bulk.js";
 
