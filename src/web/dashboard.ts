@@ -143,9 +143,10 @@ export function getDashboardHtml(): string {
   async function loadTopics() {
     try {
       const topics = await api('/api/topics');
-      let html = `<li class="active" data-topic="" onclick="selectTopic(this, '')">All Documents</li>`;
+      let html = '<li class="active" data-topic="" onclick="selectTopic(this, \\'\\')">All Documents</li>';
       for (const t of topics) {
-        html += `<li data-topic="${t.id}" onclick="selectTopic(this, '${t.id}')"><span>${esc(t.name)}</span><span class="count">${t.documentCount || 0}</span></li>`;
+        html += '<li data-topic="' + t.id + '" onclick="selectTopic(this, \\'' + t.id + '\\')">'
+          + '<span>' + esc(t.name) + '</span><span class="count">' + (t.documentCount || 0) + '</span></li>';
       }
       $topicList.innerHTML = html;
     } catch (e) { console.error('loadTopics failed', e); }
