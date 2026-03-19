@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, relative, extname } from "node:path";
 import { tmpdir } from "node:os";
@@ -90,10 +90,15 @@ function walkFiles(
 /** Clone a repo at branch into a temp directory. Returns the temp dir path. */
 function cloneToTemp(cloneUrl: string, branch?: string): string {
   const tempDir = join(tmpdir(), `libscope-repo-${randomUUID()}`);
-  const branchArgs = branch ? ["--branch", branch] : [];
-  // Use -- to prevent URL injection into git argument parsing
-  const args = ["git", "clone", "--depth=1", ...branchArgs, "--", cloneUrl, tempDir].join(" ");
-  execSync(args, { stdio: "ignore" });
+  // Use execFileSync with an argument array — no shell is invoked, so shell
+  // metacharacters in cloneUrl or branch cannot cause command injection.
+  // The "--" separator still prevents git from interpreting the URL as a flag.
+  const args = ["clone", "--depth=1"];
+  if (branch) {
+    args.push("--branch", branch);
+  }
+  args.push("--", cloneUrl, tempDir);
+  execFileSync("git", args, { stdio: "ignore" });
   return tempDir;
 }
 
