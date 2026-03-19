@@ -41,10 +41,10 @@ function isVectorTableError(err: unknown): boolean {
 export function escapeLikePattern(input: string): string {
   // prettier-ignore
   return input
-    .replace(/\\/g, String.raw`\\`)
-    .replace(/%/g, String.raw`\%`)
-    .replace(/_/g, String.raw`\_`)
-    .replace(/\[/g, String.raw`\[`);
+    .replaceAll("\\", String.raw`\\`)
+    .replaceAll("%", String.raw`\%`)
+    .replaceAll("_", String.raw`\_`)
+    .replaceAll("[", String.raw`\[`);
 }
 
 export interface SearchOptions {
