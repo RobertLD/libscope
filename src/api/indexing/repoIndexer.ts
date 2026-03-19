@@ -109,8 +109,13 @@ function cloneToTemp(cloneUrl: string, branch?: string): string {
   }
   // execFileSync bypasses the shell — args are passed directly to git.
   // The "--" separator prevents git from interpreting the URL as a flag.
+  // PATH is fixed to known, unwriteable system directories so that a
+  // tampered environment cannot redirect "git" to a malicious binary.
   args.push("--", cloneUrl, tempDir);
-  execFileSync("git", args, { stdio: "ignore" });
+  execFileSync("git", args, {
+    stdio: "ignore",
+    env: { PATH: "/usr/bin:/bin:/usr/local/bin" },
+  });
   return tempDir;
 }
 
