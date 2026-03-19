@@ -51,11 +51,11 @@ const {
 // Helpers
 // -------------------------------------------------------------------------
 
-function htmlResponse(body: string, status = 200): Response {
+function mockResponse(body: string, contentType: string, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+    headers: new Headers({ "content-type": contentType }),
     body: {
       getReader: () => {
         let done = false;
@@ -75,28 +75,12 @@ function htmlResponse(body: string, status = 200): Response {
   } as unknown as Response;
 }
 
+function htmlResponse(body: string, status = 200): Response {
+  return mockResponse(body, "text/html; charset=utf-8", status);
+}
+
 function xmlResponse(body: string, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: new Headers({ "content-type": "application/xml; charset=utf-8" }),
-    body: {
-      getReader: () => {
-        let done = false;
-        return {
-          read: () => {
-            if (done) return Promise.resolve({ done: true as const, value: undefined });
-            done = true;
-            return Promise.resolve({ done: false as const, value: new TextEncoder().encode(body) });
-          },
-          cancel: () => Promise.resolve(undefined),
-        };
-      },
-    },
-    text: () => Promise.resolve(body),
-    url: "",
-    redirected: false,
-  } as unknown as Response;
+  return mockResponse(body, "application/xml; charset=utf-8", status);
 }
 
 function notFoundResponse(): Response {
