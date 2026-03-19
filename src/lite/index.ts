@@ -1,4 +1,6 @@
 export { LibScopeLite } from "./core.js";
+export { TreeSitterChunker } from "./chunker-treesitter.js";
+export type { CodeChunk } from "./chunker-treesitter.js";
 export type {
   LiteOptions,
   LiteDoc,
