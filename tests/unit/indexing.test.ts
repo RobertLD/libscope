@@ -1,9 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   chunkContent,
   chunkContentStreaming,
   STREAMING_THRESHOLD,
+  indexDocument,
 } from "../../src/core/indexing.js";
+import Database from "better-sqlite3";
+import { runMigrations, createVectorTable } from "../../src/db/schema.js";
+import { createDatabase } from "../../src/db/connection.js";
+import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 
 describe("chunkContent", () => {
   it("should split content by markdown headings", () => {
@@ -319,5 +324,61 @@ Detail.`;
 describe("STREAMING_THRESHOLD", () => {
   it("should be 1MB", () => {
     expect(STREAMING_THRESHOLD).toBe(1024 * 1024);
+  });
+});
+
+describe("indexDocument preChunked", () => {
+  let db: Database.Database;
+  let provider: MockEmbeddingProvider;
+
+  beforeEach(() => {
+    db = createDatabase(":memory:");
+    runMigrations(db);
+    try { createVectorTable(db, 4); } catch { /* sqlite-vec not available */ }
+    provider = new MockEmbeddingProvider();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("uses preChunked when provided, bypassing chunkContent", async () => {
+    const preChunked = ["chunk one", "chunk two", "chunk three"];
+    const result = await indexDocument(db, provider, {
+      title: "Test File",
+      content: "some content",
+      sourceType: "manual",
+      preChunked,
+    });
+
+    expect(result.chunkCount).toBe(3);
+
+    const chunks = db.prepare("SELECT content FROM chunks WHERE document_id = ? ORDER BY chunk_index").all(result.id) as Array<{ content: string }>;
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]?.content).toBe("chunk one");
+    expect(chunks[1]?.content).toBe("chunk two");
+    expect(chunks[2]?.content).toBe("chunk three");
+  });
+
+  it("falls back to text chunking when preChunked is empty", async () => {
+    const result = await indexDocument(db, provider, {
+      title: "Test File",
+      content: "Some content that will be chunked normally.",
+      sourceType: "manual",
+      preChunked: [],
+    });
+
+    // Should have chunked via chunkContent (at least 1 chunk)
+    expect(result.chunkCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("falls back to text chunking when preChunked is undefined", async () => {
+    const result = await indexDocument(db, provider, {
+      title: "Test File",
+      content: "Some content without preChunked.",
+      sourceType: "manual",
+    });
+
+    expect(result.chunkCount).toBeGreaterThanOrEqual(1);
   });
 });

@@ -77,7 +77,7 @@ interface LiteOptions {
 async index(docs: LiteDoc[]): Promise<void>
 ```
 
-Index an array of pre-parsed documents. Each document is chunked using the markdown-aware chunker, embedded, and stored.
+Index an array of pre-parsed documents. Each document is chunked using the markdown-aware chunker (or code-aware tree-sitter chunker when `language` is set), embedded, and stored.
 
 **`LiteDoc`**
 
@@ -107,8 +107,38 @@ interface LiteDoc {
 
   /** Topic ID to associate the document with for topic-scoped search. */
   topicId?: string;
+
+  /**
+   * Language alias for code-aware tree-sitter chunking.
+   * When set and tree-sitter is available, chunks at function/class boundaries
+   * instead of text boundaries. Falls back silently to the standard text chunker
+   * if tree-sitter is not installed or parsing fails.
+   *
+   * Supported languages and aliases:
+   * - `"typescript"` (aliases: `"ts"`, `"tsx"`)
+   * - `"javascript"` (aliases: `"js"`, `"jsx"`, `"mjs"`, `"cjs"`)
+   * - `"python"` (alias: `"py"`)
+   * - `"csharp"` (alias: `"cs"`)
+   * - `"cpp"` (aliases: `"cc"`, `"cxx"`, `"hpp"`, `"h"`)
+   * - `"c"`
+   * - `"go"`
+   */
+  language?: string;
 }
 ```
+
+**`LiteDoc` properties:**
+
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `title` | `string` | Yes | Document title. Used in search result display and title boosting. |
+| `content` | `string` | Yes | Full document text. Will be chunked before embedding. |
+| `url` | `string` | No | Source URL for deduplication — replaced if content hash changed, skipped if unchanged. |
+| `sourceType` | `string` | No | `"manual"` (default), `"library"`, `"topic"`, or `"model-generated"`. |
+| `library` | `string` | No | Library namespace for scoped search. |
+| `version` | `string` | No | Library version. Used with `library` for version-scoped search. |
+| `topicId` | `string` | No | Topic ID to associate the document with for topic-scoped search. |
+| `language` | `string` | No | Language alias for code-aware tree-sitter chunking (e.g. `"typescript"`, `"cpp"`, `"go"`). When set and tree-sitter is available, chunks at function/class boundaries instead of text boundaries. |
 
 **Example:**
 

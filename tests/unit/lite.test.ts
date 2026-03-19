@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { LibScopeLite } from "../../src/lite/index.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
+import { TreeSitterChunker } from "../../src/lite/chunker-treesitter.js";
 import type { LlmProvider } from "../../src/core/rag.js";
 
 function* fakeStream(): Generator<string> {
@@ -267,6 +268,74 @@ describe("LibScopeLite", () => {
     it("should close the database without error", () => {
       const instance = new LibScopeLite({ dbPath: ":memory:", provider });
       expect(() => instance.close()).not.toThrow();
+    });
+  });
+
+  describe("index() with language/tree-sitter chunking", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("calls TreeSitterChunker.chunk() when language is set and supported", async () => {
+      vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(true);
+      const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk").mockResolvedValue([
+        { content: "function foo() {}", startLine: 1, endLine: 3, nodeType: "function_declaration" },
+        { content: "function bar() {}", startLine: 5, endLine: 7, nodeType: "function_declaration" },
+      ]);
+
+      await lite.index([
+        {
+          title: "src/main.ts",
+          content: "function foo() {}\nfunction bar() {}",
+          language: "typescript",
+        },
+      ]);
+
+      expect(chunkSpy).toHaveBeenCalledWith(
+        "function foo() {}\nfunction bar() {}",
+        "typescript",
+      );
+    });
+
+    it("does not call chunk() when language is not set", async () => {
+      const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk");
+
+      await lite.index([{ title: "Doc", content: "Some content here." }]);
+
+      expect(chunkSpy).not.toHaveBeenCalled();
+    });
+
+    it("falls back silently when tree-sitter throws", async () => {
+      vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(true);
+      vi.spyOn(TreeSitterChunker.prototype, "chunk").mockRejectedValue(
+        new Error("tree-sitter not installed"),
+      );
+
+      // Should not throw — fallback to text chunker
+      await expect(
+        lite.index([
+          {
+            title: "src/main.go",
+            content: "package main\nfunc main() {}",
+            language: "go",
+          },
+        ]),
+      ).resolves.toBeUndefined();
+    });
+
+    it("does not call chunk() when language is set but not supported", async () => {
+      vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(false);
+      const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk");
+
+      await lite.index([
+        {
+          title: "src/main.rb",
+          content: "def hello; end",
+          language: "ruby",
+        },
+      ]);
+
+      expect(chunkSpy).not.toHaveBeenCalled();
     });
   });
 });
