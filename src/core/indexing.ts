@@ -223,7 +223,7 @@ function addDeduplicatedChunks(
   seenHashes: Set<string>,
 ): void {
   for (const chunk of windowChunks) {
-    const normalized = chunk.replace(/\s+/g, " ").trim();
+    const normalized = chunk.replaceAll(/\s+/g, " ").trim();
     const hash = createHash("sha256").update(normalized).digest("hex");
     if (!seenHashes.has(hash)) {
       seenHashes.add(hash);

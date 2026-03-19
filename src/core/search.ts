@@ -182,7 +182,7 @@ function computeRrfScores(map: Map<string, RankedItem>): SearchResult[] {
   for (const item of map.values()) {
     let rrfScore = 0;
     for (const rank of item.ranks) {
-      rrfScore += 1.0 / (RRF_K + rank);
+      rrfScore += 1 / (RRF_K + rank);
     }
     const boostFactors = [...item.result.scoreExplanation.boostFactors];
     fused.push({
@@ -824,7 +824,7 @@ export function getRelatedChunks(
 ): RelatedChunksResult {
   const { chunkId } = options;
   const limit = Math.max(1, Math.min(options.limit ?? 10, 1000));
-  const minScore = options.minScore ?? 0.0;
+  const minScore = options.minScore ?? 0;
 
   // Look up the source chunk
   const SourceChunkSchema = z.object({
@@ -1049,7 +1049,7 @@ function fts5Search(
 
   const needsRatingJoin = options.minRating !== undefined;
 
-  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
+  const ftsQuery = words.map((w) => `"${w.replaceAll('"', '""')}"`).join(" AND ");
   const params: unknown[] = [ftsQuery];
 
   let sql = `

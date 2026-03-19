@@ -163,7 +163,7 @@ function validateUrl(url: string): void {
 /** Resolve hostname and block private/internal IPs (SSRF protection). */
 export async function validateWebhookUrlSsrf(url: string): Promise<void> {
   const parsed = new URL(url);
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  const hostname = parsed.hostname.replaceAll(/^\[|\]$/g, "");
 
   const results = await Promise.allSettled([dns.resolve4(hostname), dns.resolve6(hostname)]);
   const addresses: string[] = [];

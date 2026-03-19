@@ -14,7 +14,7 @@ export class HtmlParser implements DocumentParser {
       const markdown = nhm.translate(html);
 
       // Collapse excessive blank lines left by ignored elements
-      return Promise.resolve(markdown.replace(/\n{3,}/g, "\n\n").trimEnd());
+      return Promise.resolve(markdown.replaceAll(/\n{3,}/g, "\n\n").trimEnd());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown HTML parsing error";
       throw new ValidationError(`Failed to parse HTML: ${message}`);
