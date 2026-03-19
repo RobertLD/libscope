@@ -691,8 +691,9 @@ export function createPack(db: Database.Database, options: CreatePackOptions): K
 /** Simple glob-style pattern matching (supports * and ** wildcards). */
 function matchesExcludePattern(relativePath: string, pattern: string): boolean {
   // Escape regex special chars except * and **
+  // prettier-ignore
   const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
     .replace(/\*\*/g, "\0")
     .replace(/\*/g, "[^/]*")
     .replace(/\0/g, ".*");

@@ -111,7 +111,7 @@ describe("FileWatcher", () => {
 
     watcher.start();
 
-    mockStatSync.mockReturnValue({ isFile: () => true } as import("node:fs").Stats);
+    mockStatSync.mockReturnValue({ isFile: () => true });
     mockReadFileSync.mockReturnValue("content");
 
     watchCallback("change", "file.md");
@@ -135,12 +135,12 @@ describe("FileWatcher", () => {
     const onIndex = vi.fn();
 
     const contentHash = createHash("sha256").update("hello").digest("hex");
-    (db.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+    db.prepare.mockReturnValue({
       get: vi.fn().mockReturnValue({ id: "doc-1", content_hash: contentHash }),
       run: vi.fn(),
     });
 
-    mockStatSync.mockReturnValue({ isFile: () => true } as import("node:fs").Stats);
+    mockStatSync.mockReturnValue({ isFile: () => true });
     mockReadFileSync.mockReturnValue("hello");
 
     const watcher = new FileWatcher(db, provider, {
@@ -165,7 +165,7 @@ describe("FileWatcher", () => {
     const onRemove = vi.fn();
     const runFn = vi.fn();
 
-    (db.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+    db.prepare.mockReturnValue({
       get: vi.fn().mockReturnValue({ id: "doc-1" }),
       run: runFn,
     });
@@ -256,7 +256,7 @@ describe("FileWatcher", () => {
     const provider = createMockProvider();
     const onIndex = vi.fn();
 
-    mockStatSync.mockReturnValue({ isFile: () => false } as import("node:fs").Stats);
+    mockStatSync.mockReturnValue({ isFile: () => false });
 
     const watcher = new FileWatcher(db, provider, {
       directory: "/tmp/docs",
@@ -280,7 +280,7 @@ describe("FileWatcher", () => {
     const onRemove = vi.fn();
 
     // Return undefined for document lookup (no existing doc)
-    (db.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+    db.prepare.mockReturnValue({
       get: vi.fn().mockReturnValue(undefined),
       run: vi.fn(),
     });
