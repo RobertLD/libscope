@@ -185,11 +185,7 @@ describe("extractElementByPattern", () => {
 
   it("extracts content of a div by class pattern", () => {
     const html = '<div class="vp-doc"><h1>Title</h1><p>Body</p></div>';
-    const result = extractElementByPattern(
-      html,
-      "div",
-      (attrs) => attrs.includes("vp-doc"),
-    );
+    const result = extractElementByPattern(html, "div", (attrs) => attrs.includes("vp-doc"));
     expect(result).toBe("<h1>Title</h1><p>Body</p>");
   });
 
