@@ -1050,7 +1050,7 @@ function fts5Search(
 
   const needsRatingJoin = options.minRating !== undefined;
 
-  const ftsQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
+  const ftsQuery = words.map((w) => `"${w.replaceAll('"', '""')}"`).join(" AND ");
   const params: unknown[] = [ftsQuery];
 
   let sql = `

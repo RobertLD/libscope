@@ -156,7 +156,7 @@ function transformObsidianBody(body: string, fileMap: Map<string, string>): stri
     /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
     (_match, link: string, display?: string) => {
       const displayText = display ?? link;
-      const slug = link.toLowerCase().replace(/\s+/g, "-");
+      const slug = link.toLowerCase().replaceAll(/\s+/g, "-");
       return `[${displayText}](${slug})`;
     },
   );
