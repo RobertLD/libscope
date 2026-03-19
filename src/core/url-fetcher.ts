@@ -86,7 +86,7 @@ async function validateUrl(url: string, allowPrivateUrls = false): Promise<strin
   }
 
   // Resolve hostname and check every returned address
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  const hostname = parsed.hostname.replaceAll(/^\[|\]$/g, ""); // strip IPv6 brackets
   const { resolve4, resolve6 } = dns;
   const results = await Promise.allSettled([resolve4(hostname), resolve6(hostname)]);
 

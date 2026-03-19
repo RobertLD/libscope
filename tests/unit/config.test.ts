@@ -28,10 +28,10 @@ describe("config", () => {
       const config = loadConfig();
       expect(config.embedding.provider).toBe("ollama");
     } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = original;
-      } else {
+      if (original === undefined) {
         delete process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
+      } else {
+        process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = original;
       }
     }
   });
@@ -45,10 +45,10 @@ describe("config", () => {
       // Should fall through to default since "invalid" doesn't match the switch
       expect(config.embedding.provider).toBe("local");
     } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = original;
-      } else {
+      if (original === undefined) {
         delete process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
+      } else {
+        process.env["LIBSCOPE_EMBEDDING_PROVIDER"] = original;
       }
     }
   });
@@ -61,10 +61,10 @@ describe("config", () => {
       const config = loadConfig();
       expect(config.embedding.openaiApiKey).toBe("sk-test123");
     } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_OPENAI_API_KEY"] = original;
-      } else {
+      if (original === undefined) {
         delete process.env["LIBSCOPE_OPENAI_API_KEY"];
+      } else {
+        process.env["LIBSCOPE_OPENAI_API_KEY"] = original;
       }
     }
   });
@@ -77,10 +77,10 @@ describe("config", () => {
       const config = loadConfig();
       expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
     } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_OLLAMA_URL"] = original;
-      } else {
+      if (original === undefined) {
         delete process.env["LIBSCOPE_OLLAMA_URL"];
+      } else {
+        process.env["LIBSCOPE_OLLAMA_URL"] = original;
       }
     }
   });
@@ -93,10 +93,10 @@ describe("config", () => {
       const config = loadConfig();
       expect(config.indexing.allowPrivateUrls).toBe(true);
     } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = original;
-      } else {
+      if (original === undefined) {
         delete process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
+      } else {
+        process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"] = original;
       }
     }
   });
@@ -109,10 +109,10 @@ describe("config", () => {
       const config = loadConfig();
       expect(config.indexing.allowSelfSignedCerts).toBe(true);
     } finally {
-      if (original !== undefined) {
-        process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = original;
-      } else {
+      if (original === undefined) {
         delete process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
+      } else {
+        process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"] = original;
       }
     }
   });
@@ -128,10 +128,10 @@ describe("config", () => {
       expect(config.llm?.provider).toBe("ollama");
       expect(config.llm?.model).toBe("llama3");
     } finally {
-      if (origProvider !== undefined) process.env["LIBSCOPE_LLM_PROVIDER"] = origProvider;
-      else delete process.env["LIBSCOPE_LLM_PROVIDER"];
-      if (origModel !== undefined) process.env["LIBSCOPE_LLM_MODEL"] = origModel;
-      else delete process.env["LIBSCOPE_LLM_MODEL"];
+      if (origProvider === undefined) delete process.env["LIBSCOPE_LLM_PROVIDER"];
+      else process.env["LIBSCOPE_LLM_PROVIDER"] = origProvider;
+      if (origModel === undefined) delete process.env["LIBSCOPE_LLM_MODEL"];
+      else process.env["LIBSCOPE_LLM_MODEL"] = origModel;
     }
   });
 });
@@ -161,10 +161,10 @@ describe("validateConfig", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     for (const [key, val] of Object.entries(savedEnv)) {
-      if (val !== undefined) {
-        process.env[key] = val;
-      } else {
+      if (val === undefined) {
         delete process.env[key];
+      } else {
+        process.env[key] = val;
       }
     }
   });

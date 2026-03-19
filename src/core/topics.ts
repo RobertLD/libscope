@@ -31,7 +31,7 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
   const id =
     input.name
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
+      .replaceAll(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "") || randomUUID();
 
   // Verify parent exists if provided
@@ -106,11 +106,11 @@ export function listTopics(db: Database.Database, parentId?: string): Topic[] {
   `;
   const params: unknown[] = [];
 
-  if (parentId !== undefined) {
+  if (parentId === undefined) {
+    sql += " WHERE parent_id IS NULL";
+  } else {
     sql += " WHERE parent_id = ?";
     params.push(parentId);
-  } else {
-    sql += " WHERE parent_id IS NULL";
   }
 
   sql += " ORDER BY name";

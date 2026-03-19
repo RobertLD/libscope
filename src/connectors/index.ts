@@ -111,11 +111,11 @@ export function deleteDbConnectorConfig(db: Database.Database, type: string): bo
 const CONNECTORS_DIR = join(homedir(), ".libscope", "connectors");
 
 function ensureConnectorsDir(): void {
-  if (!existsSync(CONNECTORS_DIR)) {
-    mkdirSync(CONNECTORS_DIR, { recursive: true, mode: 0o700 });
-  } else {
+  if (existsSync(CONNECTORS_DIR)) {
     // Remediate existing directories that may have permissive permissions
     restrictPermissions(CONNECTORS_DIR, 0o700);
+  } else {
+    mkdirSync(CONNECTORS_DIR, { recursive: true, mode: 0o700 });
   }
   try {
     chmodSync(CONNECTORS_DIR, 0o700);
