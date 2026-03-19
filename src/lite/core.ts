@@ -11,6 +11,7 @@ import { bulkDelete } from "../core/bulk.js";
 import { rateDocument } from "../core/ratings.js";
 import { askQuestion, getContextForQuestion, type LlmProvider } from "../core/rag.js";
 import { normalizeRawInput } from "./normalize.js";
+import { TreeSitterChunker } from "./chunker-treesitter.js";
 import type {
   LiteOptions,
   LiteDoc,
@@ -25,6 +26,11 @@ export class LibScopeLite {
   private readonly db: Database.Database;
   private readonly provider: EmbeddingProvider;
   private readonly llmProvider: LlmProvider | null;
+  private _chunker: TreeSitterChunker | undefined;
+  private get chunker(): TreeSitterChunker {
+    this._chunker ??= new TreeSitterChunker();
+    return this._chunker;
+  }
 
   constructor(opts: LiteOptions = {}) {
     this.provider = opts.provider ?? new LocalEmbeddingProvider();
@@ -49,6 +55,17 @@ export class LibScopeLite {
 
   async index(docs: LiteDoc[]): Promise<void> {
     for (const doc of docs) {
+      let preChunked: string[] | undefined;
+
+      if (doc.language && this.chunker.supports(doc.language)) {
+        try {
+          const codeChunks = await this.chunker.chunk(doc.content, doc.language);
+          preChunked = codeChunks.map((c) => c.content);
+        } catch {
+          // tree-sitter not installed or parse failed — fall back to text chunker
+        }
+      }
+
       await indexDocument(this.db, this.provider, {
         title: doc.title,
         content: doc.content,
@@ -57,6 +74,7 @@ export class LibScopeLite {
         version: doc.version,
         topicId: doc.topicId,
         url: doc.url,
+        preChunked,
       });
     }
   }

@@ -26,6 +26,8 @@ export interface IndexDocumentInput {
   dedupOptions?: DedupOptions | undefined;
   /** ISO 8601 expiry timestamp. Document will be pruned by pruneExpiredDocuments() after this time. */
   expiresAt?: string | undefined;
+  /** If set, skip chunkContent() and use these directly as document chunks. */
+  preChunked?: string[] | undefined;
 }
 
 export interface IndexedDocument {
@@ -430,13 +432,15 @@ export async function indexDocument(
   if (titleResult) return titleResult;
 
   const docId = randomUUID();
-  const useStreaming = input.content.length > STREAMING_THRESHOLD;
-  const chunks = useStreaming ? chunkContentStreaming(input.content) : chunkContent(input.content);
+  let chunks: string[];
+  if (input.preChunked && input.preChunked.length > 0) {
+    chunks = input.preChunked;
+  } else {
+    const useStreaming = input.content.length > STREAMING_THRESHOLD;
+    chunks = useStreaming ? chunkContentStreaming(input.content) : chunkContent(input.content);
+  }
 
-  log.info(
-    { docId, title: input.title, chunkCount: chunks.length, streaming: useStreaming },
-    "Indexing document",
-  );
+  log.info({ docId, title: input.title, chunkCount: chunks.length }, "Indexing document");
 
   const metaPrefix = buildMetaPrefix(input);
   const textsForEmbedding = chunks.map((c) => metaPrefix + c);
