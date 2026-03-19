@@ -693,10 +693,10 @@ function matchesExcludePattern(relativePath: string, pattern: string): boolean {
   // Escape regex special chars except * and **
   // prettier-ignore
   const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
-    .replace(/\*\*/g, "\0")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\0/g, ".*");
+    .replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
+    .replaceAll("**", "\0")
+    .replaceAll("*", "[^/]*")
+    .replaceAll("\0", ".*");
   return new RegExp(`^${escaped}$`).test(relativePath);
 }
 

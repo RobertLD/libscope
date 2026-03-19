@@ -20,7 +20,7 @@ export class CsvParser implements DocumentParser {
 
       // prettier-ignore
       const escapeCell = (cell: string): string =>
-        cell.replace(/\\/g, String.raw`\\`).replace(/\|/g, String.raw`\|`).replace(/\n/g, " ");
+        cell.replaceAll("\\", String.raw`\\`).replaceAll("|", String.raw`\|`).replaceAll("\n", " ");
 
       const lines: string[] = [];
       lines.push("| " + header.map(escapeCell).join(" | ") + " |");
