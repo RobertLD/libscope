@@ -2,8 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
-import { seedTestDocument } from "../fixtures/helpers.js";
-import { insertChunk } from "../fixtures/helpers.js";
+import { seedTestDocument, insertChunk } from "../fixtures/helpers.js";
 import {
   searchBatch,
   BATCH_SEARCH_MAX_REQUESTS,

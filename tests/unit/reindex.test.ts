@@ -30,10 +30,10 @@ function createMockProvider(overrides?: Partial<EmbeddingProvider>): MockProvide
     name: "mock",
     dimensions: 384,
     embed: vi.fn().mockResolvedValue(new Array(384).fill(0)),
-    embedBatch: embedBatchFn as EmbeddingProvider["embedBatch"],
+    embedBatch: embedBatchFn as unknown as EmbeddingProvider["embedBatch"],
     ...overrides,
   };
-  return { provider, embedBatchFn: embedBatchFn as ReturnType<typeof vi.fn> };
+  return { provider, embedBatchFn };
 }
 
 interface MockStmt {

@@ -43,7 +43,7 @@ describe("dedup", () => {
 
       expect(result.isDuplicate).toBe(true);
       expect(result.matchType).toBe("exact");
-      expect(result.similarity).toBe(1.0);
+      expect(result.similarity).toBe(1);
       expect(result.existingDocId).toBeDefined();
     });
 
