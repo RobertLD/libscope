@@ -37,9 +37,9 @@ describe("TreeSitterChunker", () => {
 
     it("should return false for unsupported languages", () => {
       expect(chunker.supports("rust")).toBe(false);
-      expect(chunker.supports("go")).toBe(false);
       expect(chunker.supports("java")).toBe(false);
-      expect(chunker.supports("c++")).toBe(false);
+      expect(chunker.supports("ruby")).toBe(false);
+      expect(chunker.supports("swift")).toBe(false);
       expect(chunker.supports("")).toBe(false);
     });
   });

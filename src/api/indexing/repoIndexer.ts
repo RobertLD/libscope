@@ -16,11 +16,7 @@ const chunker = new TreeSitterChunker();
  * risk of a tampered environment redirecting "git" to a malicious binary.
  */
 const GIT_EXECUTABLE = ((): string => {
-  const candidates = [
-    "/usr/bin/git",
-    "/usr/local/bin/git",
-    "/opt/homebrew/bin/git",
-  ];
+  const candidates = ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }
@@ -69,11 +65,7 @@ function globToRegex(pattern: string): RegExp {
 }
 
 /** Recursively list all files under dir, returning paths relative to dir. */
-function walkFiles(
-  dir: string,
-  include?: string[],
-  exclude?: string[],
-): string[] {
+function walkFiles(dir: string, include?: string[], exclude?: string[]): string[] {
   const includeRegexes = include?.map(globToRegex);
   const excludeRegexes = exclude?.map(globToRegex);
   const results: string[] = [];
@@ -154,9 +146,7 @@ async function chunkAndIndex(
     }
     stats.filesIndexed++;
   } catch (err) {
-    stats.errors.push(
-      `${relPath} (chunking): ${err instanceof Error ? err.message : String(err)}`,
-    );
+    stats.errors.push(`${relPath} (chunking): ${err instanceof Error ? err.message : String(err)}`);
     stats.filesSkipped++;
   }
 }
