@@ -44,7 +44,7 @@ interface TSParser {
 }
 
 /** Canonical language name used internally. */
-type SupportedLanguage = "typescript" | "javascript" | "python";
+type SupportedLanguage = "typescript" | "javascript" | "python" | "csharp" | "cpp" | "c" | "go";
 
 /** Map from user-facing aliases to canonical names. */
 const LANGUAGE_ALIASES: Record<string, SupportedLanguage> = {
@@ -58,6 +58,15 @@ const LANGUAGE_ALIASES: Record<string, SupportedLanguage> = {
   cjs: "javascript",
   python: "python",
   py: "python",
+  cs: "csharp",
+  csharp: "csharp",
+  cpp: "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  hpp: "cpp",
+  h: "cpp",
+  c: "c",
+  go: "go",
 };
 
 /** Node types to treat as chunk boundaries per language. */
@@ -80,6 +89,22 @@ const CHUNK_NODE_TYPES: Record<SupportedLanguage, ReadonlySet<string>> = {
     "lexical_declaration",
   ]),
   python: new Set(["function_definition", "class_definition", "decorated_definition"]),
+  csharp: new Set([
+    "method_declaration",
+    "class_declaration",
+    "interface_declaration",
+    "struct_declaration",
+    "enum_declaration",
+    "constructor_declaration",
+  ]),
+  cpp: new Set([
+    "function_definition",
+    "class_specifier",
+    "struct_specifier",
+    "namespace_definition",
+  ]),
+  c: new Set(["function_definition", "struct_specifier"]),
+  go: new Set(["function_declaration", "method_declaration", "type_declaration"]),
 };
 
 const DEFAULT_MAX_CHUNK_SIZE = 1500;
@@ -91,7 +116,7 @@ const DEFAULT_MAX_CHUNK_SIZE = 1500;
  * producing semantically meaningful chunks suitable for embedding.
  */
 export class TreeSitterChunker {
-  private parserCache: TSParser | undefined;
+  private ParserClass: (new () => TSParser) | undefined;
   private readonly grammarCache = new Map<SupportedLanguage, unknown>();
 
   /** Returns true if the given language (or alias) is supported. */
@@ -285,27 +310,24 @@ export class TreeSitterChunker {
     return chunks;
   }
 
-  /** Lazily create or return the cached tree-sitter Parser instance. */
+  /** Lazily load the tree-sitter Parser constructor and create a fresh instance. */
   private async getParser(): Promise<TSParser> {
-    if (this.parserCache !== undefined) {
-      return this.parserCache;
+    if (this.ParserClass === undefined) {
+      try {
+        // @ts-expect-error — tree-sitter is an optional peer dependency, not installed at compile time
+        const TreeSitter = (await import("tree-sitter")) as Record<string, unknown>;
+        // tree-sitter exports vary: could be default export or named
+        const resolved = "default" in TreeSitter ? TreeSitter["default"] : TreeSitter;
+        this.ParserClass = resolved as new () => TSParser;
+      } catch (err: unknown) {
+        throw new ValidationError(
+          'Code chunking requires the "tree-sitter" package. ' +
+            "Install it with: npm install tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python",
+          err,
+        );
+      }
     }
-
-    try {
-      // @ts-expect-error — tree-sitter is an optional peer dependency, not installed at compile time
-      const TreeSitter = (await import("tree-sitter")) as Record<string, unknown>;
-      // tree-sitter exports vary: could be default export or named
-      const resolved = "default" in TreeSitter ? TreeSitter["default"] : TreeSitter;
-      const ParserClass = resolved as new () => TSParser;
-      this.parserCache = new ParserClass();
-      return this.parserCache;
-    } catch (err: unknown) {
-      throw new ValidationError(
-        'Code chunking requires the "tree-sitter" package. ' +
-          "Install it with: npm install tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python",
-        err,
-      );
-    }
+    return new this.ParserClass();
   }
 
   /** Lazily load and cache a tree-sitter grammar for the given language. */
@@ -351,6 +373,14 @@ export class TreeSitterChunker {
         return "tree-sitter-javascript";
       case "python":
         return "tree-sitter-python";
+      case "csharp":
+        return "tree-sitter-c-sharp";
+      case "cpp":
+        return "tree-sitter-cpp";
+      case "c":
+        return "tree-sitter-c";
+      case "go":
+        return "tree-sitter-go";
     }
   }
 }
