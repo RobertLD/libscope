@@ -18,6 +18,8 @@ import { initLogger, type LogLevel } from "../logger.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
+import { spiderUrl } from "../core/spider.js";
+import type { SpiderOptions } from "../core/spider.js";
 import { exportKnowledgeBase, importFromBackup } from "../core/export.js";
 import { batchImport } from "../core/batch.js";
 import { findDuplicates } from "../core/dedup.js";
@@ -490,6 +492,12 @@ program
   .option("--title <title>", "Override document title")
   .option("--format <ext>", "Force file format (e.g. .pdf, .csv, .yaml)")
   .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
+  .option("--spider", "Crawl linked pages from the URL")
+  .option("--max-pages <n>", "Max pages to crawl (default: 25, hard cap: 200)", parseInt)
+  .option("--max-depth <n>", "Max link-hop depth from seed URL (default: 2, hard cap: 5)", parseInt)
+  .option("--no-same-domain", "Follow links outside the seed domain")
+  .option("--path-prefix <path>", "Only follow links under this path prefix")
+  .option("--exclude-patterns <globs...>", "Glob patterns for URLs to skip")
   .action(
     async (
       fileOrUrl: string,
@@ -500,32 +508,88 @@ program
         title?: string;
         format?: string;
         dedup?: string;
+        spider?: boolean;
+        maxPages?: number;
+        maxDepth?: number;
+        sameDomain?: boolean;
+        pathPrefix?: string;
+        excludePatterns?: string[];
       },
     ) => {
       const { config, db, provider } = initializeAppWithEmbedding();
       try {
-        let result;
-
         if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
-          console.log(`Fetching ${fileOrUrl}...`);
-          const fetched = await fetchAndConvert(fileOrUrl, {
+          const fetchOptions = {
             allowPrivateUrls: config.indexing.allowPrivateUrls,
             allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
-          });
-          const title = opts.title ?? fetched.title;
-          result = await indexDocument(db, provider, {
-            title,
-            content: fetched.content,
-            sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
-            library: opts.library,
-            version: opts.version,
-            topicId: opts.topic,
-            url: fileOrUrl,
-            dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
-          });
-          console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
+          };
+
+          if (opts.spider) {
+            const spiderOptions: SpiderOptions = {
+              fetchOptions,
+              ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}),
+              ...(opts.maxDepth !== undefined ? { maxDepth: opts.maxDepth } : {}),
+              ...(opts.sameDomain !== undefined ? { sameDomain: opts.sameDomain } : {}),
+              ...(opts.pathPrefix !== undefined ? { pathPrefix: opts.pathPrefix } : {}),
+              ...(opts.excludePatterns !== undefined
+                ? { excludePatterns: opts.excludePatterns }
+                : {}),
+            };
+
+            console.log(`Spidering ${fileOrUrl}...`);
+            const sourceType = opts.library ? "library" : opts.topic ? "topic" : "manual";
+            let indexed = 0;
+            let failed = 0;
+
+            const gen = spiderUrl(fileOrUrl, spiderOptions);
+            let next = await gen.next();
+            while (!next.done) {
+              const page = next.value;
+              try {
+                await indexDocument(db, provider, {
+                  title: page.title,
+                  content: page.content,
+                  sourceType,
+                  library: opts.library,
+                  version: opts.version,
+                  topicId: opts.topic,
+                  url: page.url,
+                  dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
+                });
+                indexed++;
+                console.log(`  ✓ [${indexed}] ${page.title} (${page.url})`);
+              } catch (err) {
+                failed++;
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error(`  ✗ ${page.url}: ${msg}`);
+              }
+              next = await gen.next();
+            }
+
+            const stats = next.value;
+            console.log(
+              `\nDone. Indexed: ${indexed}, Failed: ${failed}, Skipped: ${stats.pagesSkipped}` +
+                (stats.abortReason ? ` (stopped: ${stats.abortReason})` : ""),
+            );
+          } else {
+            console.log(`Fetching ${fileOrUrl}...`);
+            const fetched = await fetchAndConvert(fileOrUrl, fetchOptions);
+            const title = opts.title ?? fetched.title;
+            const result = await indexDocument(db, provider, {
+              title,
+              content: fetched.content,
+              sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+              library: opts.library,
+              version: opts.version,
+              topicId: opts.topic,
+              url: fileOrUrl,
+              dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
+            });
+            console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
+            console.log(`  ID: ${result.id}`);
+          }
         } else {
-          result = await indexFile(db, provider, fileOrUrl, {
+          const result = await indexFile(db, provider, fileOrUrl, {
             title: opts.title,
             topic: opts.topic,
             library: opts.library,
@@ -535,9 +599,8 @@ program
           });
           const title = opts.title ?? basename(fileOrUrl).replace(/\.[^.]+$/, "");
           console.log(`✓ Indexed "${title}" (${result.chunkCount} chunks)`);
+          console.log(`  ID: ${result.id}`);
         }
-
-        console.log(`  ID: ${result.id}`);
       } finally {
         closeDatabase();
       }
