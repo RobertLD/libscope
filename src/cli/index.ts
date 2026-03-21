@@ -480,6 +480,86 @@ program
     }
   });
 
+function resolveSourceType(library?: string, topic?: string): "library" | "topic" | "manual" {
+  if (library) return "library";
+  if (topic) return "topic";
+  return "manual";
+}
+
+function buildSpiderOptions(
+  opts: {
+    maxPages?: number;
+    maxDepth?: number;
+    sameDomain?: boolean;
+    pathPrefix?: string;
+    excludePatterns?: string[];
+  },
+  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+): SpiderOptions {
+  const options: SpiderOptions = { fetchOptions };
+  if (opts.maxPages !== undefined) options.maxPages = opts.maxPages;
+  if (opts.maxDepth !== undefined) options.maxDepth = opts.maxDepth;
+  if (opts.sameDomain !== undefined) options.sameDomain = opts.sameDomain;
+  if (opts.pathPrefix !== undefined) options.pathPrefix = opts.pathPrefix;
+  if (opts.excludePatterns !== undefined) options.excludePatterns = opts.excludePatterns;
+  return options;
+}
+
+async function runSpiderAdd(
+  db: ReturnType<typeof getDatabase>,
+  provider: EmbeddingProvider,
+  url: string,
+  opts: {
+    topic?: string;
+    library?: string;
+    version?: string;
+    dedup?: string;
+    maxPages?: number;
+    maxDepth?: number;
+    sameDomain?: boolean;
+    pathPrefix?: string;
+    excludePatterns?: string[];
+  },
+  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+): Promise<void> {
+  const spiderOptions = buildSpiderOptions(opts, fetchOptions);
+  const sourceType = resolveSourceType(opts.library, opts.topic);
+  console.log(`Spidering ${url}...`);
+  let indexed = 0;
+  let failed = 0;
+
+  const gen = spiderUrl(url, spiderOptions);
+  let next = await gen.next();
+  while (!next.done) {
+    const page = next.value;
+    try {
+      await indexDocument(db, provider, {
+        title: page.title,
+        content: page.content,
+        sourceType,
+        library: opts.library,
+        version: opts.version,
+        topicId: opts.topic,
+        url: page.url,
+        dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
+      });
+      indexed++;
+      console.log(`  ✓ [${indexed}] ${page.title} (${page.url})`);
+    } catch (err) {
+      failed++;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`  ✗ ${page.url}: ${msg}`);
+    }
+    next = await gen.next();
+  }
+
+  const stats = next.value;
+  console.log(
+    `\nDone. Indexed: ${indexed}, Failed: ${failed}, Skipped: ${stats.pagesSkipped}` +
+      (stats.abortReason ? ` (stopped: ${stats.abortReason})` : ""),
+  );
+}
+
 // add
 program
   .command("add <fileOrUrl>")
@@ -493,8 +573,12 @@ program
   .option("--format <ext>", "Force file format (e.g. .pdf, .csv, .yaml)")
   .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
   .option("--spider", "Crawl linked pages from the URL")
-  .option("--max-pages <n>", "Max pages to crawl (default: 25, hard cap: 200)", parseInt)
-  .option("--max-depth <n>", "Max link-hop depth from seed URL (default: 2, hard cap: 5)", parseInt)
+  .option("--max-pages <n>", "Max pages to crawl (default: 25, hard cap: 200)", Number.parseInt)
+  .option(
+    "--max-depth <n>",
+    "Max link-hop depth from seed URL (default: 2, hard cap: 5)",
+    Number.parseInt,
+  )
   .option("--no-same-domain", "Follow links outside the seed domain")
   .option("--path-prefix <path>", "Only follow links under this path prefix")
   .option("--exclude-patterns <globs...>", "Glob patterns for URLs to skip")
@@ -517,60 +601,14 @@ program
       },
     ) => {
       const { config, db, provider } = initializeAppWithEmbedding();
+      const fetchOptions = {
+        allowPrivateUrls: config.indexing.allowPrivateUrls,
+        allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
+      };
       try {
         if (fileOrUrl.startsWith("http://") || fileOrUrl.startsWith("https://")) {
-          const fetchOptions = {
-            allowPrivateUrls: config.indexing.allowPrivateUrls,
-            allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
-          };
-
           if (opts.spider) {
-            const spiderOptions: SpiderOptions = {
-              fetchOptions,
-              ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}),
-              ...(opts.maxDepth !== undefined ? { maxDepth: opts.maxDepth } : {}),
-              ...(opts.sameDomain !== undefined ? { sameDomain: opts.sameDomain } : {}),
-              ...(opts.pathPrefix !== undefined ? { pathPrefix: opts.pathPrefix } : {}),
-              ...(opts.excludePatterns !== undefined
-                ? { excludePatterns: opts.excludePatterns }
-                : {}),
-            };
-
-            console.log(`Spidering ${fileOrUrl}...`);
-            const sourceType = opts.library ? "library" : opts.topic ? "topic" : "manual";
-            let indexed = 0;
-            let failed = 0;
-
-            const gen = spiderUrl(fileOrUrl, spiderOptions);
-            let next = await gen.next();
-            while (!next.done) {
-              const page = next.value;
-              try {
-                await indexDocument(db, provider, {
-                  title: page.title,
-                  content: page.content,
-                  sourceType,
-                  library: opts.library,
-                  version: opts.version,
-                  topicId: opts.topic,
-                  url: page.url,
-                  dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
-                });
-                indexed++;
-                console.log(`  ✓ [${indexed}] ${page.title} (${page.url})`);
-              } catch (err) {
-                failed++;
-                const msg = err instanceof Error ? err.message : String(err);
-                console.error(`  ✗ ${page.url}: ${msg}`);
-              }
-              next = await gen.next();
-            }
-
-            const stats = next.value;
-            console.log(
-              `\nDone. Indexed: ${indexed}, Failed: ${failed}, Skipped: ${stats.pagesSkipped}` +
-                (stats.abortReason ? ` (stopped: ${stats.abortReason})` : ""),
-            );
+            await runSpiderAdd(db, provider, fileOrUrl, opts, fetchOptions);
           } else {
             console.log(`Fetching ${fileOrUrl}...`);
             const fetched = await fetchAndConvert(fileOrUrl, fetchOptions);
@@ -578,7 +616,7 @@ program
             const result = await indexDocument(db, provider, {
               title,
               content: fetched.content,
-              sourceType: opts.library ? "library" : opts.topic ? "topic" : "manual",
+              sourceType: resolveSourceType(opts.library, opts.topic),
               library: opts.library,
               version: opts.version,
               topicId: opts.topic,
