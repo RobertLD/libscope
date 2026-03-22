@@ -699,9 +699,8 @@ describe.runIf(isVecAvailable())(
 
         const leaked = results.filter((r) => r.library !== library);
         if (process.env.DEBUG && leaked.length > 0) {
-          console.log(
-            `  library="${library}" leakage: ${leaked.map((r) => `${r.documentId}(${r.library})`).join(", ")}`,
-          );
+          const leakageList = leaked.map((r) => `${r.documentId}(${r.library})`).join(", ");
+          console.log(`  library="${library}" leakage: ${leakageList}`);
         }
         expect(
           leaked,
