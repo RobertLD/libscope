@@ -70,7 +70,7 @@
     "pino": "^10.3.1",
     "pizzip": "^3.2.0",
     "sqlite-vec": "^0.1.0",
-    "undici": "^7.22.0",
+    "undici": "^7.24.5",
     "zod": "^4.3.6"
   },
   "optionalDependencies": {
@@ -97,13 +97,13 @@
   },
   "peerDependencies": {
     "tree-sitter": "^0.21.0",
-    "tree-sitter-javascript": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.0",
-    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-c": "^0.21.0",
     "tree-sitter-c-sharp": "^0.21.0",
     "tree-sitter-cpp": "^0.22.0",
-    "tree-sitter-c": "^0.21.0",
-    "tree-sitter-go": "^0.21.0"
+    "tree-sitter-go": "^0.21.0",
+    "tree-sitter-javascript": "^0.21.0",
+    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-typescript": "^0.21.0"
   },
   "peerDependenciesMeta": {
     "tree-sitter": {
