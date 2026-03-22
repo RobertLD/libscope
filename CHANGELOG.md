@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0](https://github.com/RobertLD/libscope/compare/v1.7.2...v1.8.0) (2026-03-22)
+
+
+### Features
+
+* **cli:** expose spider/crawl flags on the add command ([#467](https://github.com/RobertLD/libscope/issues/467)) ([25861e2](https://github.com/RobertLD/libscope/commit/25861e279612fe1db2607c03975e3ed845907210))
+
+
+### Bug Fixes
+
+* **quality:** eliminate negated conditions in ternary expressions (S7735) ([#478](https://github.com/RobertLD/libscope/issues/478)) ([90950d7](https://github.com/RobertLD/libscope/commit/90950d762884b0c9a1cbc9dfcfca24c652eabf6c)), closes [#471](https://github.com/RobertLD/libscope/issues/471)
+* **quality:** extract nested template literals to variables (S4624) ([#480](https://github.com/RobertLD/libscope/issues/480)) ([3e9be2c](https://github.com/RobertLD/libscope/commit/3e9be2c9a94552639740355ff5446e74d9856e97))
+* **quality:** move inner helper functions to module scope (S7721) ([#479](https://github.com/RobertLD/libscope/issues/479)) ([ae17bd8](https://github.com/RobertLD/libscope/commit/ae17bd89c5a410639dacb9756de616b286e775bc))
+* **quality:** prefer Number.parseInt/parseFloat/isNaN over globals (S7773) ([#477](https://github.com/RobertLD/libscope/issues/477)) ([7e76bba](https://github.com/RobertLD/libscope/commit/7e76bba288f6abfe12c380eabc4970502a04bf1c))
+* **quality:** reduce cognitive complexity of spiderUrl generator (S3776) ([#476](https://github.com/RobertLD/libscope/issues/476)) ([595ec42](https://github.com/RobertLD/libscope/commit/595ec42230364f36e1cd0a9741b02b4a685ee0d7))
+* **security:** force flatted &gt;=3.4.2 to fix prototype pollution CVE ([#475](https://github.com/RobertLD/libscope/issues/475)) ([56ddf70](https://github.com/RobertLD/libscope/commit/56ddf706602c5e0c18320947f85cfeff4022bd54)), closes [#474](https://github.com/RobertLD/libscope/issues/474)
+
 ## [1.7.2](https://github.com/RobertLD/libscope/compare/v1.7.1...v1.7.2) (2026-03-19)
 
 
