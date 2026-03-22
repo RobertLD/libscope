@@ -1385,7 +1385,7 @@ tagCmd
         console.log("No tags found. Add tags with: libscope tag add <docId> <tags...>");
       } else {
         for (const t of allTags) {
-          console.log(`  ${t.name} (${t.documentCount} doc${t.documentCount !== 1 ? "s" : ""})`);
+          console.log(`  ${t.name} (${t.documentCount} doc${t.documentCount === 1 ? "" : "s"})`);
         }
       }
     } finally {

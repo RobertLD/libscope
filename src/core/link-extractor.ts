@@ -201,7 +201,7 @@ export function extractWikilinks(content: string): string[] {
     if (!inner.includes("[[")) {
       // [[PageName|alias]] → extract PageName (before the pipe)
       const pipeIdx = inner.indexOf("|");
-      const pageName = (pipeIdx === -1 ? inner : inner.slice(0, pipeIdx)).trim();
+      const pageName = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
       if (pageName) {
         seen.add(pageName);
       }
