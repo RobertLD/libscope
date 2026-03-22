@@ -185,7 +185,10 @@ async function handleSingleDocSubmit(
 /** Fire-and-forget helper: creates a task, runs `work` in background, returns task ID response. */
 function startAsyncTask(
   type: TaskType,
-  work: (signal: AbortSignal, onProgress: (current: number, total: number) => void) => Promise<string>,
+  work: (
+    signal: AbortSignal,
+    onProgress: (current: number, total: number) => void,
+  ) => Promise<string>,
 ): { content: Array<{ type: "text"; text: string }> } {
   const { task, signal } = taskRegistry.create(type);
   taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
