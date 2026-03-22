@@ -642,7 +642,7 @@ async function handleAddTagsToDocument(ctx: RouteContext, docId: string): Promis
 
 function handleSuggestTags(ctx: RouteContext, docId: string): void {
   const limitRaw = ctx.url.searchParams.get("limit");
-  const limit = limitRaw ? parseInt(limitRaw, 10) : 5;
+  const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 5;
   const suggestions = suggestTags(ctx.db, docId, limit);
   sendJson(ctx.res, 200, { documentId: docId, suggestions }, elapsed(ctx.start));
 }

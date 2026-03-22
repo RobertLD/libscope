@@ -90,7 +90,7 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
 
     if (response.status === 429) {
       const retryAfter = response.headers.get("Retry-After");
-      const parsed = retryAfter ? parseInt(retryAfter, 10) : NaN;
+      const parsed = retryAfter ? Number.parseInt(retryAfter, 10) : NaN;
       const delayMs = Number.isNaN(parsed) ? Math.pow(2, attempt) * 1000 : parsed * 1000;
       log.warn({ attempt, delayMs }, "Rate limited (429), backing off");
       lastError = new LibScopeError(
@@ -183,38 +183,38 @@ export function convertOneNoteHtml(html: string): string {
   let processed = html;
 
   // Remove style attributes
-  processed = processed.replace(/ style="[^"]*"/gi, "");
+  processed = processed.replaceAll(/ style="[^"]*"/gi, "");
 
   // Remove OneNote metadata divs
-  processed = processed.replace(/<div[^>]*data-id="[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "");
+  processed = processed.replaceAll(/<div[^>]*data-id="[^"]*"[^>]*>[\s\S]*?<\/div>/gi, "");
 
   // cite → blockquote
-  processed = processed.replace(/<cite>([\s\S]*?)<\/cite>/gi, "<blockquote>$1</blockquote>");
+  processed = processed.replaceAll(/<cite>([\s\S]*?)<\/cite>/gi, "<blockquote>$1</blockquote>");
 
   // Completed checkboxes — replace with plain text marker before nhm
-  processed = processed.replace(
+  processed = processed.replaceAll(
     /<p[^>]*data-tag="to-do:completed"[^>]*>([\s\S]*?)<\/p>/gi,
     "CHECKDONE7X9Z $1\n",
   );
 
   // Uncompleted checkboxes
-  processed = processed.replace(
+  processed = processed.replaceAll(
     /<p[^>]*data-tag="to-do"[^>]*>([\s\S]*?)<\/p>/gi,
     "CHECKTODO7X9Z $1\n",
   );
 
   // Ink annotations → placeholder token
-  processed = processed.replace(
+  processed = processed.replaceAll(
     /<div[^>]*class="[^"]*InkNode[^"]*"[^>]*>[\s\S]*?<\/div>/gi,
     "INKPLACEHOLDER7X9Z",
   );
-  processed = processed.replace(/<ink[^>]*>[\s\S]*?<\/ink>/gi, "INKPLACEHOLDER7X9Z");
+  processed = processed.replaceAll(/<ink[^>]*>[\s\S]*?<\/ink>/gi, "INKPLACEHOLDER7X9Z");
 
   // Embedded images → placeholder token
-  processed = processed.replace(/<img[^>]*>/gi, "IMGPLACEHOLDER7X9Z");
+  processed = processed.replaceAll(/<img[^>]*>/gi, "IMGPLACEHOLDER7X9Z");
 
   // Embedded files → [attached: filename] token
-  processed = processed.replace(
+  processed = processed.replaceAll(
     /<object[^>]*data-attachment="([^"]*)"[^>]*>[\s\S]*?<\/object>/gi,
     "FILEATTACH7X9Z$1ENDATTACH7X9Z",
   );
@@ -227,7 +227,7 @@ export function convertOneNoteHtml(html: string): string {
   md = md.replaceAll(/CHECKTODO7X9Z\s*/g, "- [ ] ");
   md = md.replaceAll("INKPLACEHOLDER7X9Z", "[handwritten content]");
   md = md.replaceAll("IMGPLACEHOLDER7X9Z", "[image]");
-  md = md.replace(/FILEATTACH7X9Z([^\s]+?)ENDATTACH7X9Z/g, "[attached: $1]");
+  md = md.replaceAll(/FILEATTACH7X9Z([^\s]+?)ENDATTACH7X9Z/g, "[attached: $1]");
 
   return md;
 }

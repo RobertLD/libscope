@@ -10,8 +10,8 @@ export async function handleGraphRequest(
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
-  const rawThreshold = parseFloat(url.searchParams.get("threshold") ?? "0.85");
-  const rawMaxNodes = parseInt(url.searchParams.get("maxNodes") ?? "200", 10);
+  const rawThreshold = Number.parseFloat(url.searchParams.get("threshold") ?? "0.85");
+  const rawMaxNodes = Number.parseInt(url.searchParams.get("maxNodes") ?? "200", 10);
   const topic = url.searchParams.get("topic") ?? undefined;
   const tag = url.searchParams.get("tag") ?? undefined;
 

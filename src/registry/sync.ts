@@ -27,8 +27,8 @@ function acquireSyncLock(cacheDir: string): string | null {
   if (existsSync(lockPath)) {
     try {
       const content = readFileSync(lockPath, "utf-8").trim();
-      const pid = parseInt(content, 10);
-      if (!isNaN(pid)) {
+      const pid = Number.parseInt(content, 10);
+      if (!Number.isNaN(pid)) {
         // Check whether the PID is still alive
         try {
           process.kill(pid, 0);

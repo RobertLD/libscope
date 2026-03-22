@@ -155,11 +155,11 @@ async function handleRateLimit(response: Response): Promise<boolean> {
   const resetHeader = response.headers.get("x-ratelimit-reset");
 
   const isRateLimited = response.status === 429;
-  const isApproaching = remaining !== null && parseInt(remaining, 10) < RATE_LIMIT_THRESHOLD;
+  const isApproaching = remaining !== null && Number.parseInt(remaining, 10) < RATE_LIMIT_THRESHOLD;
 
   if (!isRateLimited && !isApproaching) return false;
 
-  const resetTime = resetHeader ? parseInt(resetHeader, 10) * 1000 : Date.now() + 60_000;
+  const resetTime = resetHeader ? Number.parseInt(resetHeader, 10) * 1000 : Date.now() + 60_000;
   const waitMs = Math.max(resetTime - Date.now(), 1000);
   const log = getLogger();
   log.warn({ remaining, waitMs }, "Rate limit approaching, backing off");
