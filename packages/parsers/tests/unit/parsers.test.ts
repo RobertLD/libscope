@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { getParserForFile, getSupportedExtensions } from "../../src/core/parsers/index.js";
-import { MarkdownParser } from "../../src/core/parsers/markdown.js";
-import { PlainTextParser } from "../../src/core/parsers/text.js";
-import { JsonParser } from "../../src/core/parsers/json-parser.js";
-import { YamlParser } from "../../src/core/parsers/yaml.js";
-import { CsvParser } from "../../src/core/parsers/csv.js";
-import { HtmlParser } from "../../src/core/parsers/html.js";
-import { ValidationError } from "../../src/errors.js";
+import { getParserForFile, getSupportedExtensions } from "../../src/index.js";
+import { MarkdownParser } from "../../src/markdown.js";
+import { PlainTextParser } from "../../src/text.js";
+import { JsonParser } from "../../src/json-parser.js";
+import { YamlParser } from "../../src/yaml.js";
+import { CsvParser } from "../../src/csv.js";
+import { HtmlParser } from "../../src/html.js";
+import { ParseError } from "../../src/errors.js";
 
 describe("getParserForFile", () => {
   it("returns parser for .md files", () => {
@@ -120,8 +120,8 @@ describe("JsonParser", () => {
     expect(result).toContain("```");
   });
 
-  it("throws ValidationError for invalid JSON", async () => {
-    await expect(parser.parse(Buffer.from("{invalid}"))).rejects.toThrow(ValidationError);
+  it("throws ParseError for invalid JSON", async () => {
+    await expect(parser.parse(Buffer.from("{invalid}"))).rejects.toThrow(ParseError);
   });
 });
 
@@ -142,9 +142,9 @@ describe("YamlParser", () => {
     expect(result).toContain("```");
   });
 
-  it("throws ValidationError for invalid YAML", async () => {
+  it("throws ParseError for invalid YAML", async () => {
     const input = "invalid: yaml: content: [";
-    await expect(parser.parse(Buffer.from(input))).rejects.toThrow(ValidationError);
+    await expect(parser.parse(Buffer.from(input))).rejects.toThrow(ParseError);
   });
 });
 
@@ -195,10 +195,10 @@ describe("CsvParser", () => {
 });
 
 describe("PdfParser", () => {
-  let parser: InstanceType<typeof import("../../src/core/parsers/pdf.js").PdfParser>;
+  let parser: InstanceType<typeof import("../../src/pdf.js").PdfParser>;
 
   beforeAll(async () => {
-    const { PdfParser } = await import("../../src/core/parsers/pdf.js");
+    const { PdfParser } = await import("../../src/pdf.js");
     parser = new PdfParser();
   });
 
@@ -206,16 +206,16 @@ describe("PdfParser", () => {
     expect(parser.extensions).toEqual([".pdf"]);
   });
 
-  it("throws ValidationError for invalid PDF content", async () => {
-    await expect(parser.parse(Buffer.from("not a pdf"))).rejects.toThrow(ValidationError);
+  it("throws ParseError for invalid PDF content", async () => {
+    await expect(parser.parse(Buffer.from("not a pdf"))).rejects.toThrow(ParseError);
   });
 });
 
 describe("WordParser", () => {
-  let parser: InstanceType<typeof import("../../src/core/parsers/word.js").WordParser>;
+  let parser: InstanceType<typeof import("../../src/word.js").WordParser>;
 
   beforeAll(async () => {
-    const { WordParser } = await import("../../src/core/parsers/word.js");
+    const { WordParser } = await import("../../src/word.js");
     parser = new WordParser();
   });
 
@@ -223,8 +223,8 @@ describe("WordParser", () => {
     expect(parser.extensions).toEqual([".docx"]);
   });
 
-  it("throws ValidationError for invalid Word content", async () => {
-    await expect(parser.parse(Buffer.from("not a docx"))).rejects.toThrow(ValidationError);
+  it("throws ParseError for invalid Word content", async () => {
+    await expect(parser.parse(Buffer.from("not a docx"))).rejects.toThrow(ParseError);
   });
 });
 

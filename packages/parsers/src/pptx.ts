@@ -1,5 +1,5 @@
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 
 /** Parses PPTX files using pizzip. */
 export class PptxParser implements DocumentParser {
@@ -11,7 +11,7 @@ export class PptxParser implements DocumentParser {
       const mod = await import("pizzip");
       PizZip = mod.default;
     } catch (err) {
-      throw new ValidationError(
+      throw new ParseError(
         'PPTX parsing requires the "pizzip" package. Install it with: npm install pizzip',
         err,
       );
@@ -50,7 +50,7 @@ export class PptxParser implements DocumentParser {
     }
 
     if (slides.length === 0) {
-      throw new ValidationError("PPTX file contains no readable slides");
+      throw new ParseError("PPTX file contains no readable slides");
     }
 
     return slides.join("\n\n");

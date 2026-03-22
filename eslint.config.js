@@ -4,7 +4,10 @@ import prettierConfig from "eslint-config-prettier";
 
 export default [
   {
-    files: ["src/**/*.ts", "tests/**/*.ts"],
+    ignores: ["**/dist/**"],
+  },
+  {
+    files: ["src/**/*.ts", "tests/**/*.ts", "packages/parsers/src/**/*.ts", "packages/parsers/tests/**/*.ts"],
     languageOptions: {
       parser: tsParser,
       parserOptions: {

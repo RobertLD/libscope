@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 
 /** Parses EPUB files using epub2. */
 export class EpubParser implements DocumentParser {
@@ -15,7 +15,7 @@ export class EpubParser implements DocumentParser {
       const mod = await import("epub2");
       EPub = mod.EPub;
     } catch (err) {
-      throw new ValidationError(
+      throw new ParseError(
         'EPUB parsing requires the "epub2" package. Install it with: npm install epub2',
         err,
       );
@@ -50,7 +50,7 @@ export class EpubParser implements DocumentParser {
       }
 
       if (chapters.length === 0) {
-        throw new ValidationError("EPUB file contains no readable chapters");
+        throw new ParseError("EPUB file contains no readable chapters");
       }
 
       return chapters.join("\n\n");
