@@ -185,11 +185,14 @@ async function handleSingleDocSubmit(
 /** Fire-and-forget helper: creates a task, runs `work` in background, returns task ID response. */
 function startAsyncTask(
   type: TaskType,
-  work: () => Promise<string>,
+  work: (signal: AbortSignal, onProgress: (current: number, total: number) => void) => Promise<string>,
 ): { content: Array<{ type: "text"; text: string }> } {
   const { task, signal } = taskRegistry.create(type);
   taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
-  void work().then(
+  const onProgress = (current: number, total: number): void => {
+    taskRegistry.update(task.id, { progress: { current, total } });
+  };
+  void work(signal, onProgress).then(
     (result) => {
       if (signal.aborted) {
         taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
@@ -848,59 +851,27 @@ async function main(): Promise<void> {
       const { reindex } = await import("../core/reindex.js");
 
       if (params.async) {
-        const { task, signal } = taskRegistry.create("reindex_library");
-        taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
-
-        void reindex(db, provider, {
-          documentIds: params.documentIds,
-          since: params.since,
-          before: params.before,
-          batchSize: params.batchSize,
-          onProgress: (p) => {
-            if (signal.aborted) throw new Error("Task cancelled");
-            taskRegistry.update(task.id, { progress: { current: p.completed, total: p.total } });
-          },
-        }).then(
-          (result) => {
-            const text =
-              `Reindex complete.\n` +
-              `Total chunks: ${result.total}\n` +
-              `Updated: ${result.completed}\n` +
-              `Failed: ${result.failed}` +
-              (result.failedChunkIds.length > 0
-                ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
-                : "");
-            if (signal.aborted) {
-              taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
-            } else {
-              taskRegistry.update(task.id, {
-                status: "completed",
-                completedAt: new Date(),
-                result: text,
-              });
-            }
-          },
-          (err: unknown) => {
-            if (signal.aborted) {
-              taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
-            } else {
-              taskRegistry.update(task.id, {
-                status: "failed",
-                completedAt: new Date(),
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          },
-        );
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Task queued. ID: ${task.id}\nUse get-task to check status.`,
+        return startAsyncTask("reindex_library", async (signal, onProgress) => {
+          const result = await reindex(db, provider, {
+            documentIds: params.documentIds,
+            since: params.since,
+            before: params.before,
+            batchSize: params.batchSize,
+            onProgress: (p) => {
+              if (signal.aborted) throw new Error("Task cancelled");
+              onProgress(p.completed, p.total);
             },
-          ],
-        };
+          });
+          return (
+            `Reindex complete.\n` +
+            `Total chunks: ${result.total}\n` +
+            `Updated: ${result.completed}\n` +
+            `Failed: ${result.failed}` +
+            (result.failedChunkIds.length > 0
+              ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
+              : "")
+          );
+        });
       }
 
       const result = await reindex(db, provider, {
@@ -1009,51 +980,18 @@ async function main(): Promise<void> {
       const { installPack } = await import("../core/packs.js");
 
       if (params.async) {
-        const { task, signal } = taskRegistry.create("install_pack");
-        taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
-
-        void installPack(db, provider, params.nameOrPath, {
-          registryUrl: params.registryUrl,
-          onProgress: (current, total) => {
-            if (signal.aborted) throw new Error("Task cancelled");
-            taskRegistry.update(task.id, { progress: { current, total } });
-          },
-        }).then(
-          (result) => {
-            const text = result.alreadyInstalled
-              ? `Pack "${result.packName}" is already installed.`
-              : `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`;
-            if (signal.aborted) {
-              taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
-            } else {
-              taskRegistry.update(task.id, {
-                status: "completed",
-                completedAt: new Date(),
-                result: text,
-              });
-            }
-          },
-          (err: unknown) => {
-            if (signal.aborted) {
-              taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
-            } else {
-              taskRegistry.update(task.id, {
-                status: "failed",
-                completedAt: new Date(),
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          },
-        );
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Task queued. ID: ${task.id}\nUse get-task to check status.`,
+        return startAsyncTask("install_pack", async (signal, onProgress) => {
+          const result = await installPack(db, provider, params.nameOrPath, {
+            registryUrl: params.registryUrl,
+            onProgress: (current, total) => {
+              if (signal.aborted) throw new Error("Task cancelled");
+              onProgress(current, total);
             },
-          ],
-        };
+          });
+          return result.alreadyInstalled
+            ? `Pack "${result.packName}" is already installed.`
+            : `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`;
+        });
       }
 
       const result = await installPack(db, provider, params.nameOrPath, {
