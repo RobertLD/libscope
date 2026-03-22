@@ -302,7 +302,7 @@ export function extractElementByPattern(
     if (matchesAttr) {
       const contentStart = m.index + m[0].length;
       const closeIdx = findClosingTagIndex(html, tagName, contentStart);
-      return closeIdx === -1 ? null : html.slice(contentStart, closeIdx);
+      return closeIdx >= 0 ? html.slice(contentStart, closeIdx) : null;
     }
   }
 

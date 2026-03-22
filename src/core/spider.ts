@@ -234,7 +234,7 @@ function scanPastTag(input: string, start: number): number {
     if (ch === ">") return i + 1;
     if (ch === '"' || ch === "'") {
       const close = input.indexOf(ch, i + 1);
-      i = close === -1 ? input.length : close + 1;
+      i = close >= 0 ? close + 1 : input.length;
     } else {
       i++;
     }
