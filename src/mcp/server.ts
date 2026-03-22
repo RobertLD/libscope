@@ -35,6 +35,8 @@ import { initLogger, getLogger } from "../logger.js";
 import { ConfigError, ValidationError } from "../errors.js";
 import { errorResponse, withErrorHandling } from "./errors.js";
 export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
+import { taskRegistry } from "./tasks.js";
+import type { TaskType } from "./tasks.js";
 
 /** Build SpiderOptions from submit-document params. */
 function buildSpiderOptions(
@@ -176,6 +178,46 @@ async function handleSingleDocSubmit(
           `Chunks: ${result.chunkCount}` +
           (url ? `\nSource: ${url}` : ""),
       },
+    ],
+  };
+}
+
+/** Fire-and-forget helper: creates a task, runs `work` in background, returns task ID response. */
+function startAsyncTask(
+  type: TaskType,
+  work: (
+    signal: AbortSignal,
+    onProgress: (current: number, total: number) => void,
+  ) => Promise<string>,
+): { content: Array<{ type: "text"; text: string }> } {
+  const { task, signal } = taskRegistry.create(type);
+  taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
+  const onProgress = (current: number, total: number): void => {
+    taskRegistry.update(task.id, { progress: { current, total } });
+  };
+  void work(signal, onProgress).then(
+    (result) => {
+      if (signal.aborted) {
+        taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
+      } else {
+        taskRegistry.update(task.id, { status: "completed", completedAt: new Date(), result });
+      }
+    },
+    (err: unknown) => {
+      if (signal.aborted) {
+        taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
+      } else {
+        taskRegistry.update(task.id, {
+          status: "failed",
+          completedAt: new Date(),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  );
+  return {
+    content: [
+      { type: "text" as const, text: `Task queued. ID: ${task.id}\nUse get-task to check status.` },
     ],
   };
 }
@@ -549,12 +591,29 @@ async function main(): Promise<void> {
         .array(z.string())
         .optional()
         .describe("Glob patterns for URLs to skip (e.g. ['*/changelog*', '*/api/v1/*'])."),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, start indexing in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const fetchOptions = {
         allowPrivateUrls: config.indexing.allowPrivateUrls,
         allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
       };
+
+      if (params.async) {
+        return startAsyncTask("index_document", async () => {
+          if (params.spider) {
+            const r = await handleSpiderSubmit(db, provider, params, fetchOptions);
+            return r.content[0]?.text ?? "Done";
+          }
+          const r = await handleSingleDocSubmit(db, provider, params, fetchOptions);
+          return r.content[0]?.text ?? "Done";
+        });
+      }
 
       if (params.spider) {
         return handleSpiderSubmit(db, provider, params, fetchOptions);
@@ -784,9 +843,39 @@ async function main(): Promise<void> {
         .max(500)
         .optional()
         .describe("Chunks per embedding batch (default: 50)"),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run reindexing in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { reindex } = await import("../core/reindex.js");
+
+      if (params.async) {
+        return startAsyncTask("reindex_library", async (signal, onProgress) => {
+          const result = await reindex(db, provider, {
+            documentIds: params.documentIds,
+            since: params.since,
+            before: params.before,
+            batchSize: params.batchSize,
+            onProgress: (p) => {
+              if (signal.aborted) throw new Error("Task cancelled");
+              onProgress(p.completed, p.total);
+            },
+          });
+          return (
+            `Reindex complete.\n` +
+            `Total chunks: ${result.total}\n` +
+            `Updated: ${result.completed}\n` +
+            `Failed: ${result.failed}` +
+            (result.failedChunkIds.length > 0
+              ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
+              : "")
+          );
+        });
+      }
 
       const result = await reindex(db, provider, {
         documentIds: params.documentIds,
@@ -827,6 +916,12 @@ async function main(): Promise<void> {
         .describe(
           "Thread handling: aggregate (default) combines thread into one doc, separate creates one doc per reply",
         ),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { syncSlack: doSyncSlack } = await import("../connectors/slack.js");
@@ -837,6 +932,23 @@ async function main(): Promise<void> {
         excludeChannels: params.excludeChannels,
         threadMode: params.threadMode ?? ("aggregate" as const),
       };
+
+      if (params.async) {
+        return startAsyncTask("sync_connector", async () => {
+          const result = await doSyncSlack(db, provider, slackConfig);
+          const slackErrorLines = result.errors
+            .map((e) => `  #${e.channel}: ${e.error}`)
+            .join("\n");
+          const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
+          return (
+            `Slack sync complete.\n` +
+            `Channels: ${result.channels}\n` +
+            `Messages indexed: ${result.messagesIndexed}\n` +
+            `Threads indexed: ${result.threadsIndexed}` +
+            slackErrors
+          );
+        });
+      }
 
       const result = await doSyncSlack(db, provider, slackConfig);
 
@@ -860,9 +972,31 @@ async function main(): Promise<void> {
     {
       nameOrPath: z.string().describe("Pack name (from registry) or local .json file path"),
       registryUrl: z.string().optional().describe("Custom registry URL"),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run installation in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { installPack } = await import("../core/packs.js");
+
+      if (params.async) {
+        return startAsyncTask("install_pack", async (signal, onProgress) => {
+          const result = await installPack(db, provider, params.nameOrPath, {
+            registryUrl: params.registryUrl,
+            onProgress: (current, total) => {
+              if (signal.aborted) throw new Error("Task cancelled");
+              onProgress(current, total);
+            },
+          });
+          return result.alreadyInstalled
+            ? `Pack "${result.packName}" is already installed.`
+            : `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`;
+        });
+      }
+
       const result = await installPack(db, provider, params.nameOrPath, {
         registryUrl: params.registryUrl,
       });
@@ -934,17 +1068,42 @@ async function main(): Promise<void> {
     {
       accessToken: z.string().describe("Microsoft Graph API access token"),
       notebookName: z.string().optional().describe("Specific notebook name to sync (default: all)"),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { syncOneNote } = await import("../connectors/onenote.js");
 
-      const result = await syncOneNote(db, provider, {
+      const oneNoteConfig = {
         clientId: "",
         tenantId: "common",
         accessToken: params.accessToken,
         notebooks: params.notebookName ? [params.notebookName] : ["all"],
-        excludeSections: [],
-      });
+        excludeSections: [] as string[],
+      };
+
+      if (params.async) {
+        return startAsyncTask("sync_connector", async () => {
+          const result = await syncOneNote(db, provider, oneNoteConfig);
+          const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+          const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
+          return (
+            `OneNote sync complete.\n` +
+            `Notebooks: ${result.notebooks}\n` +
+            `Sections: ${result.sections}\n` +
+            `Pages added: ${result.pagesAdded}\n` +
+            `Pages updated: ${result.pagesUpdated}\n` +
+            `Pages deleted: ${result.pagesDeleted}` +
+            oneNoteErrors
+          );
+        });
+      }
+
+      const result = await syncOneNote(db, provider, oneNoteConfig);
 
       const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
       const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
@@ -975,14 +1134,37 @@ async function main(): Promise<void> {
         .array(z.string())
         .optional()
         .describe("List of Notion page/database IDs to exclude from sync"),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { syncNotion } = await import("../connectors/notion.js");
-      const result = await syncNotion(db, provider, {
+
+      const notionConfig = {
         token: params.token,
         lastSync: params.lastSync,
         excludePages: params.excludePages,
-      });
+      };
+
+      if (params.async) {
+        return startAsyncTask("sync_connector", async () => {
+          const result = await syncNotion(db, provider, notionConfig);
+          const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+          const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
+          return (
+            `Notion sync complete.\n` +
+            `Pages indexed: ${result.pagesIndexed}\n` +
+            `Databases indexed: ${result.databasesIndexed}` +
+            notionErrors
+          );
+        });
+      }
+
+      const result = await syncNotion(db, provider, notionConfig);
 
       const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
       const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
@@ -1002,15 +1184,38 @@ async function main(): Promise<void> {
     "Sync an Obsidian vault into the knowledge base. Parses wikilinks, frontmatter, embeds, and tags with incremental sync support.",
     {
       vaultPath: z.string().describe("Absolute path to the Obsidian vault directory"),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { syncObsidianVault } = await import("../connectors/obsidian.js");
 
-      const result = await syncObsidianVault(db, provider, {
+      const obsidianConfig = {
         vaultPath: params.vaultPath,
-        topicMapping: "folder",
-        excludePatterns: [],
-      });
+        topicMapping: "folder" as const,
+        excludePatterns: [] as string[],
+      };
+
+      if (params.async) {
+        return startAsyncTask("sync_connector", async () => {
+          const result = await syncObsidianVault(db, provider, obsidianConfig);
+          const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
+          const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
+          return (
+            `Obsidian vault sync complete.\n` +
+            `Added: ${result.added}\n` +
+            `Updated: ${result.updated}\n` +
+            `Deleted: ${result.deleted}` +
+            obsidianErrors
+          );
+        });
+      }
+
+      const result = await syncObsidianVault(db, provider, obsidianConfig);
 
       const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
       const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
@@ -1038,16 +1243,41 @@ async function main(): Promise<void> {
         .optional()
         .describe("Space keys to sync, or ['all'] (default: ['all'])"),
       excludeSpaces: z.array(z.string()).optional().describe("Space keys to exclude"),
+      async: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
+        ),
     },
     withErrorHandling(async (params) => {
       const { syncConfluence } = await import("../connectors/confluence.js");
-      const result = await syncConfluence(db, provider, {
+
+      const confluenceConfig = {
         baseUrl: params.baseUrl,
         email: params.email,
         token: params.token,
         spaces: params.spaces ?? ["all"],
         excludeSpaces: params.excludeSpaces,
-      });
+      };
+
+      if (params.async) {
+        return startAsyncTask("sync_connector", async () => {
+          const result = await syncConfluence(db, provider, confluenceConfig);
+          const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
+          const confluenceErrors =
+            result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
+          return (
+            `Confluence sync complete.\n` +
+            `Spaces: ${result.spaces}\n` +
+            `Pages indexed: ${result.pagesIndexed}\n` +
+            `Pages updated: ${result.pagesUpdated}` +
+            confluenceErrors
+          );
+        });
+      }
+
+      const result = await syncConfluence(db, provider, confluenceConfig);
 
       const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
       const confluenceErrors = result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
@@ -1341,6 +1571,71 @@ async function main(): Promise<void> {
       deleteWebhook(db, params.id);
       return {
         content: [{ type: "text" as const, text: `✓ Webhook "${params.id}" deleted.` }],
+      };
+    }),
+  );
+
+  // Tool: get-task
+  server.tool(
+    "get-task",
+    "Get the current status, progress, and result of an async background task",
+    {
+      taskId: z.string().describe("Task ID returned by an async operation"),
+    },
+    withErrorHandling((params) => {
+      const task = taskRegistry.get(params.taskId);
+      if (!task) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Task ${params.taskId} not found or has expired (tasks are kept for 1 hour after completion).`,
+            },
+          ],
+        };
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    }),
+  );
+
+  // Tool: cancel-task
+  server.tool(
+    "cancel-task",
+    "Request cancellation of a pending or running async background task",
+    {
+      taskId: z.string().describe("Task ID to cancel"),
+    },
+    withErrorHandling((params) => {
+      const outcome = taskRegistry.cancel(params.taskId);
+      if (outcome === "not_found") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Task ${params.taskId} not found or has expired.`,
+            },
+          ],
+        };
+      }
+      if (outcome === "already_terminal") {
+        const task = taskRegistry.get(params.taskId);
+        const status = task?.status ?? "unknown";
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Task ${params.taskId} cannot be cancelled (current status: ${status}).`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Cancellation requested for task ${params.taskId}. Running operations will stop at the next checkpoint.`,
+          },
+        ],
       };
     }),
   );
