@@ -71,6 +71,22 @@ describe("config", () => {
   });
 });
 
+function makeConfig(overrides: Partial<LibScopeConfig> = {}): LibScopeConfig {
+  return {
+    embedding: {
+      provider: "local",
+      ollamaUrl: "http://localhost:11434",
+      ollamaModel: "nomic-embed-text",
+      openaiModel: "text-embedding-3-small",
+      ...overrides.embedding,
+    },
+    database: { path: "/tmp/test-libscope/libscope.db", ...overrides.database },
+    indexing: { maxDocumentSize: 100 * 1024 * 1024, ...overrides.indexing },
+    logging: { level: "info", ...overrides.logging },
+    ...("llm" in overrides ? { llm: overrides.llm } : {}),
+  };
+}
+
 describe("validateConfig", () => {
   let warnSpy: ReturnType<typeof vi.fn>;
   const savedEnv: Record<string, string | undefined> = {};
@@ -103,22 +119,6 @@ describe("validateConfig", () => {
       }
     }
   });
-
-  function makeConfig(overrides: Partial<LibScopeConfig> = {}): LibScopeConfig {
-    return {
-      embedding: {
-        provider: "local",
-        ollamaUrl: "http://localhost:11434",
-        ollamaModel: "nomic-embed-text",
-        openaiModel: "text-embedding-3-small",
-        ...overrides.embedding,
-      },
-      database: { path: "/tmp/test-libscope/libscope.db", ...overrides.database },
-      indexing: { maxDocumentSize: 100 * 1024 * 1024, ...overrides.indexing },
-      logging: { level: "info", ...overrides.logging },
-      ...("llm" in overrides ? { llm: overrides.llm } : {}),
-    };
-  }
 
   it("should pass validation silently for local provider", () => {
     const config = makeConfig();

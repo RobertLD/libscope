@@ -2,6 +2,60 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TreeSitterChunker } from "../../src/lite/chunker-treesitter.js";
 import { ValidationError } from "../../src/errors.js";
 
+interface MockNode {
+  type: string;
+  text: string;
+  startPosition: { row: number; column: number };
+  endPosition: { row: number; column: number };
+  childCount: number;
+  child: (i: number) => MockNode | null;
+  namedChildCount: number;
+  namedChild: (i: number) => MockNode | null;
+}
+
+/**
+ * Helper: create a mock TSNode that simulates tree-sitter node shape.
+ */
+function makeMockNode(
+  type: string,
+  text: string,
+  startRow: number,
+  endRow: number,
+  children: MockNode[] = [],
+): MockNode {
+  return {
+    type,
+    text,
+    startPosition: { row: startRow, column: 0 },
+    endPosition: { row: endRow, column: 0 },
+    childCount: children.length,
+    child: (i: number) => children[i] ?? null,
+    namedChildCount: children.length,
+    namedChild: (i: number) => children[i] ?? null,
+  };
+}
+
+/**
+ * Create a chunker with mocked tree-sitter internals for testing
+ * the algorithm without requiring tree-sitter to be installed.
+ */
+function createMockedChunker(rootChildren: ReturnType<typeof makeMockNode>[]): TreeSitterChunker {
+  const instance = new TreeSitterChunker();
+
+  const rootNode = makeMockNode("program", "", 0, 100, rootChildren);
+
+  // Mock the private getParser and loadGrammar methods
+  // @ts-expect-error — accessing private method for testing
+  instance.getParser = vi.fn().mockResolvedValue({
+    setLanguage: vi.fn(),
+    parse: vi.fn().mockReturnValue({ rootNode }),
+  });
+  // @ts-expect-error — accessing private method for testing
+  instance.loadGrammar = vi.fn().mockResolvedValue({});
+
+  return instance;
+}
+
 describe("TreeSitterChunker", () => {
   let chunker: TreeSitterChunker;
 
@@ -73,62 +127,6 @@ describe("TreeSitterChunker", () => {
   });
 
   describe("chunk() — with mocked tree-sitter", () => {
-    interface MockNode {
-      type: string;
-      text: string;
-      startPosition: { row: number; column: number };
-      endPosition: { row: number; column: number };
-      childCount: number;
-      child: (i: number) => MockNode | null;
-      namedChildCount: number;
-      namedChild: (i: number) => MockNode | null;
-    }
-
-    /**
-     * Helper: create a mock TSNode that simulates tree-sitter node shape.
-     */
-    function makeMockNode(
-      type: string,
-      text: string,
-      startRow: number,
-      endRow: number,
-      children: MockNode[] = [],
-    ): MockNode {
-      return {
-        type,
-        text,
-        startPosition: { row: startRow, column: 0 },
-        endPosition: { row: endRow, column: 0 },
-        childCount: children.length,
-        child: (i: number) => children[i] ?? null,
-        namedChildCount: children.length,
-        namedChild: (i: number) => children[i] ?? null,
-      };
-    }
-
-    /**
-     * Create a chunker with mocked tree-sitter internals for testing
-     * the algorithm without requiring tree-sitter to be installed.
-     */
-    function createMockedChunker(
-      rootChildren: ReturnType<typeof makeMockNode>[],
-    ): TreeSitterChunker {
-      const instance = new TreeSitterChunker();
-
-      const rootNode = makeMockNode("program", "", 0, 100, rootChildren);
-
-      // Mock the private getParser and loadGrammar methods
-      // @ts-expect-error — accessing private method for testing
-      instance.getParser = vi.fn().mockResolvedValue({
-        setLanguage: vi.fn(),
-        parse: vi.fn().mockReturnValue({ rootNode }),
-      });
-      // @ts-expect-error — accessing private method for testing
-      instance.loadGrammar = vi.fn().mockResolvedValue({});
-
-      return instance;
-    }
-
     it("should chunk TypeScript code at function boundaries", async () => {
       const importNode = makeMockNode("import_statement", 'import { foo } from "bar";', 0, 0);
       const fn1 = makeMockNode(

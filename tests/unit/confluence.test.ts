@@ -46,6 +46,26 @@ function makePageDetail(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function mockFetchResponse(body: unknown, ok = true, status = 200): Response {
+  return {
+    ok,
+    status,
+    statusText: ok ? "OK" : "Error",
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+    headers: new Headers(),
+    redirected: false,
+    type: "basic",
+    url: "",
+    clone: () => mockFetchResponse(body, ok, status),
+    body: null,
+    bodyUsed: false,
+    arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    blob: () => Promise.resolve(new Blob()),
+    formData: () => Promise.resolve(new FormData()),
+  } as Response;
+}
+
 describe("Confluence connector", () => {
   let db: Database.Database;
   let provider: MockEmbeddingProvider;
@@ -62,26 +82,6 @@ describe("Confluence connector", () => {
     vi.restoreAllMocks();
     db.close();
   });
-
-  function mockFetchResponse(body: unknown, ok = true, status = 200): Response {
-    return {
-      ok,
-      status,
-      statusText: ok ? "OK" : "Error",
-      json: () => Promise.resolve(body),
-      text: () => Promise.resolve(JSON.stringify(body)),
-      headers: new Headers(),
-      redirected: false,
-      type: "basic",
-      url: "",
-      clone: () => mockFetchResponse(body, ok, status),
-      body: null,
-      bodyUsed: false,
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
-      blob: () => Promise.resolve(new Blob()),
-      formData: () => Promise.resolve(new FormData()),
-    } as Response;
-  }
 
   const baseConfig: ConfluenceConfig = {
     baseUrl: "https://acme.atlassian.net",
