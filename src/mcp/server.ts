@@ -297,9 +297,10 @@ async function main(): Promise<void> {
         `**Total results: ${totalCount}**\n\n` +
         results
           .map((r, i) => {
+            const libraryVersion = r.version ? ` v${r.version}` : "";
             let entry =
               `## Result ${i + 1}: ${r.title} (score: ${r.score.toFixed(2)})\n` +
-              (r.library ? `**Library:** ${r.library}${r.version ? ` v${r.version}` : ""}\n` : "") +
+              (r.library ? `**Library:** ${r.library}${libraryVersion}\n` : "") +
               (r.url ? `**Source:** ${r.url}\n` : "") +
               (r.avgRating ? `**Rating:** ${r.avgRating.toFixed(1)}/5\n` : "");
 
@@ -381,12 +382,11 @@ async function main(): Promise<void> {
       const doc = getDocument(db, params.documentId);
       const ratings = getDocumentRatings(db, params.documentId);
 
+      const docVersion = doc.version ? ` v${doc.version}` : "";
       const text =
         `# ${doc.title}\n\n` +
         `**Type:** ${doc.sourceType}\n` +
-        (doc.library
-          ? `**Library:** ${doc.library}${doc.version ? ` v${doc.version}` : ""}\n`
-          : "") +
+        (doc.library ? `**Library:** ${doc.library}${docVersion}\n` : "") +
         (doc.url ? `**Source:** ${doc.url}\n` : "") +
         `**Rating:** ${ratings.averageRating.toFixed(1)}/5 (${ratings.totalRatings} ratings)\n\n` +
         doc.content;
@@ -581,7 +581,10 @@ async function main(): Promise<void> {
       }
 
       const text = topics
-        .map((t) => `- **${t.name}** (\`${t.id}\`)${t.description ? `: ${t.description}` : ""}`)
+        .map((t) => {
+          const topicDesc = t.description ? `: ${t.description}` : "";
+          return `- **${t.name}** (\`${t.id}\`)${topicDesc}`;
+        })
         .join("\n");
 
       return { content: [{ type: "text" as const, text: `## Topics\n\n${text}` }] };
@@ -672,13 +675,15 @@ async function main(): Promise<void> {
       }
 
       const text = docs
-        .map(
-          (d) =>
+        .map((d) => {
+          const docLibVersion = d.version ? ` v${d.version}` : "";
+          return (
             `- **${d.title}** (\`${d.id}\`)` +
-            (d.library ? ` — ${d.library}${d.version ? ` v${d.version}` : ""}` : "") +
+            (d.library ? ` — ${d.library}${docLibVersion}` : "") +
             (d.url ? ` — [source](${d.url})` : "") +
-            ` (${d.sourceType})`,
-        )
+            ` (${d.sourceType})`
+          );
+        })
         .join("\n");
 
       return {
@@ -835,14 +840,14 @@ async function main(): Promise<void> {
 
       const result = await doSyncSlack(db, provider, slackConfig);
 
+      const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
+      const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
       const text =
         `Slack sync complete.\n` +
         `Channels: ${result.channels}\n` +
         `Messages indexed: ${result.messagesIndexed}\n` +
         `Threads indexed: ${result.threadsIndexed}` +
-        (result.errors.length > 0
-          ? `\nErrors:\n${result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n")}`
-          : "");
+        slackErrors;
 
       return { content: [{ type: "text" as const, text }] };
     }),
@@ -941,6 +946,8 @@ async function main(): Promise<void> {
         excludeSections: [],
       });
 
+      const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+      const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
       const text =
         `OneNote sync complete.\n` +
         `Notebooks: ${result.notebooks}\n` +
@@ -948,9 +955,7 @@ async function main(): Promise<void> {
         `Pages added: ${result.pagesAdded}\n` +
         `Pages updated: ${result.pagesUpdated}\n` +
         `Pages deleted: ${result.pagesDeleted}` +
-        (result.errors.length > 0
-          ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join("; ")}`
-          : "");
+        oneNoteErrors;
 
       return { content: [{ type: "text" as const, text }] };
     }),
@@ -979,13 +984,13 @@ async function main(): Promise<void> {
         excludePages: params.excludePages,
       });
 
+      const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+      const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
       const text =
         `Notion sync complete.\n` +
         `Pages indexed: ${result.pagesIndexed}\n` +
         `Databases indexed: ${result.databasesIndexed}` +
-        (result.errors.length > 0
-          ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join("; ")}`
-          : "");
+        notionErrors;
 
       return { content: [{ type: "text" as const, text }] };
     }),
@@ -1007,14 +1012,14 @@ async function main(): Promise<void> {
         excludePatterns: [],
       });
 
+      const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
+      const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
       const text =
         `Obsidian vault sync complete.\n` +
         `Added: ${result.added}\n` +
         `Updated: ${result.updated}\n` +
         `Deleted: ${result.deleted}` +
-        (result.errors.length > 0
-          ? `\nErrors: ${result.errors.map((e) => `${e.file}: ${e.error}`).join(", ")}`
-          : "");
+        obsidianErrors;
 
       return { content: [{ type: "text" as const, text }] };
     }),
@@ -1044,14 +1049,14 @@ async function main(): Promise<void> {
         excludeSpaces: params.excludeSpaces,
       });
 
+      const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
+      const confluenceErrors = result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
       const text =
         `Confluence sync complete.\n` +
         `Spaces: ${result.spaces}\n` +
         `Pages indexed: ${result.pagesIndexed}\n` +
         `Pages updated: ${result.pagesUpdated}` +
-        (result.errors.length > 0
-          ? `\nErrors: ${result.errors.map((e) => `${e.page}: ${e.error}`).join(", ")}`
-          : "");
+        confluenceErrors;
 
       return { content: [{ type: "text" as const, text }] };
     }),
@@ -1108,11 +1113,12 @@ async function main(): Promise<void> {
         params.linkType as LinkType,
         params.label,
       );
+      const linkLabel = link.label ? ` — ${link.label}` : "";
       return {
         content: [
           {
             type: "text" as const,
-            text: `✓ Link created: ${link.sourceId} → ${link.targetId} (${link.linkType})${link.label ? ` — ${link.label}` : ""}`,
+            text: `✓ Link created: ${link.sourceId} → ${link.targetId} (${link.linkType})${linkLabel}`,
           },
         ],
       };
@@ -1136,17 +1142,15 @@ async function main(): Promise<void> {
       if (outgoing.length > 0) {
         lines.push("**Outgoing links:**");
         for (const l of outgoing) {
-          lines.push(
-            `  → [${l.linkType}] ${l.targetTitle} (${l.targetId})${l.label ? ` — ${l.label}` : ""}`,
-          );
+          const outLabel = l.label ? ` — ${l.label}` : "";
+          lines.push(`  → [${l.linkType}] ${l.targetTitle} (${l.targetId})${outLabel}`);
         }
       }
       if (incoming.length > 0) {
         lines.push("**Incoming links:**");
         for (const l of incoming) {
-          lines.push(
-            `  ← [${l.linkType}] ${l.sourceTitle} (${l.sourceId})${l.label ? ` — ${l.label}` : ""}`,
-          );
+          const inLabel = l.label ? ` — ${l.label}` : "";
+          lines.push(`  ← [${l.linkType}] ${l.sourceTitle} (${l.sourceId})${inLabel}`);
         }
       }
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };

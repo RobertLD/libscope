@@ -1051,7 +1051,8 @@ topicsCmd
         console.log("No topics found. Create one with: libscope topics create <name>");
       } else {
         for (const t of topics) {
-          console.log(`  ${t.id} — ${t.name}${t.description ? ` (${t.description})` : ""}`);
+          const topicDesc = t.description ? ` (${t.description})` : "";
+          console.log(`  ${t.id} — ${t.name}${topicDesc}`);
         }
       }
     } finally {
@@ -1143,14 +1144,16 @@ program
       if (outgoing.length > 0) {
         console.log("\nOutgoing links:");
         for (const l of outgoing) {
-          console.log(`  → [${l.linkType}] ${l.targetTitle}${l.label ? ` — ${l.label}` : ""}`);
+          const outLinkLabel = l.label ? ` — ${l.label}` : "";
+          console.log(`  → [${l.linkType}] ${l.targetTitle}${outLinkLabel}`);
           console.log(`    ID: ${l.id}  Target: ${l.targetId}`);
         }
       }
       if (incoming.length > 0) {
         console.log("\nIncoming links:");
         for (const l of incoming) {
-          console.log(`  ← [${l.linkType}] ${l.sourceTitle}${l.label ? ` — ${l.label}` : ""}`);
+          const inLinkLabel = l.label ? ` — ${l.label}` : "";
+          console.log(`  ← [${l.linkType}] ${l.sourceTitle}${inLinkLabel}`);
           console.log(`    ID: ${l.id}  Source: ${l.sourceId}`);
         }
       }
@@ -1220,8 +1223,10 @@ docsCmd
         console.log(`Found ${docs.length} documents:\n`);
         for (const d of docs) {
           console.log(`  ${d.id}  ${d.title}`);
-          if (d.library)
-            console.log(`    Library: ${d.library}${d.version ? ` v${d.version}` : ""}`);
+          if (d.library) {
+            const listDocVersion = d.version ? ` v${d.version}` : "";
+            console.log(`    Library: ${d.library}${listDocVersion}`);
+          }
           if (d.url) console.log(`    URL: ${d.url}`);
           console.log(`    Type: ${d.sourceType}  |  Updated: ${d.updatedAt}`);
           console.log();
@@ -1242,8 +1247,10 @@ docsCmd
       console.log(`\n# ${doc.title}\n`);
       console.log(`ID: ${doc.id}`);
       console.log(`Type: ${doc.sourceType}`);
-      if (doc.library)
-        console.log(`Library: ${doc.library}${doc.version ? ` v${doc.version}` : ""}`);
+      if (doc.library) {
+        const showDocVersion = doc.version ? ` v${doc.version}` : "";
+        console.log(`Library: ${doc.library}${showDocVersion}`);
+      }
       if (doc.url) console.log(`URL: ${doc.url}`);
       console.log(`Submitted by: ${doc.submittedBy}`);
       console.log(`Created: ${doc.createdAt}`);
