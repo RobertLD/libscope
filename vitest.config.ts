@@ -1,6 +1,13 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      // Map @libscope/parsers to TypeScript source so vitest doesn't need a pre-built dist
+      "@libscope/parsers": resolve(import.meta.dirname, "packages/parsers/src/index.ts"),
+    },
+  },
   test: {
     globals: true,
     root: ".",
@@ -22,6 +29,7 @@ export default defineConfig({
         "src/providers/index.ts",
         "src/providers/embedding.ts",
         "src/web/graph-api.ts",
+        "src/core/parsers/index.ts",
       ],
       thresholds: {
         statements: 75,

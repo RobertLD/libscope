@@ -3,6 +3,10 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "./dist-test",
+    "baseUrl": ".",
+    "paths": {
+      "@libscope/parsers": ["./packages/parsers/src/index.ts"]
+    },
     "declaration": false,
     "declarationMap": false,
     "noUnusedLocals": false,

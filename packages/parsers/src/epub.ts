@@ -5,6 +5,23 @@ import { randomUUID } from "node:crypto";
 import type { DocumentParser } from "./index.js";
 import { ParseError } from "./errors.js";
 
+/** Strip HTML tags from a string in O(n) time without backtracking. */
+function stripHtmlTags(input: string): string {
+  let result = "";
+  let inTag = false;
+  for (const char of input) {
+    if (char === "<") {
+      inTag = true;
+      result += " ";
+    } else if (char === ">") {
+      inTag = false;
+    } else if (!inTag) {
+      result += char;
+    }
+  }
+  return result;
+}
+
 /** Parses EPUB files using epub2. */
 export class EpubParser implements DocumentParser {
   readonly extensions = [".epub"];
@@ -36,11 +53,8 @@ export class EpubParser implements DocumentParser {
             .getChapterAsync;
           if (!getChapter) continue;
           const html: string = await getChapter.call(epub, item.id);
-          // Strip HTML tags to get plain text
-          const text = html
-            .replaceAll(/<[^>]+>/g, " ")
-            .replaceAll(/\s+/g, " ")
-            .trim();
+          // Strip HTML tags and collapse whitespace
+          const text = stripHtmlTags(html).replaceAll(/\s+/g, " ").trim();
           if (text.length > 0) {
             chapters.push(text);
           }
