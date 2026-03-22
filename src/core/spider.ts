@@ -491,15 +491,7 @@ export async function* spiderUrl(
     if (visited.has(url)) continue;
     visited.add(url);
 
-    if (depth > 0) {
-      const skipped = await shouldSkipNonSeedUrl(url, config, robotsCache, stats, log);
-      if (skipped) continue;
-    }
-
-    if (stats.pagesFetched >= config.maxPages) {
-      stats.abortReason = "maxPages";
-      break;
-    }
+    if (depth > 0 && (await shouldSkipNonSeedUrl(url, config, robotsCache, stats, log))) continue;
 
     const raw = await fetchSpiderPage(url, config, stats, log);
     if (!raw) continue;
