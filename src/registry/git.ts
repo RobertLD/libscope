@@ -16,7 +16,7 @@ const execFile = promisify(execFileCb);
 
 /** Default timeout for git operations (60 seconds), capped at 5 minutes. */
 const GIT_TIMEOUT_MS = Math.min(
-  parseInt(process.env.LIBSCOPE_GIT_TIMEOUT_MS ?? "60000", 10) || 60000,
+  Number.parseInt(process.env.LIBSCOPE_GIT_TIMEOUT_MS ?? "60000", 10) || 60000,
   300000, // cap at 5 minutes
 );
 

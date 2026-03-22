@@ -119,7 +119,7 @@ const _pkg = _require("../../package.json") as { version: string };
 
 /** Parse a CLI option string as an integer, exiting with an error if the value is not a valid number. */
 function parseIntOption(value: string, name: string): number {
-  const n = parseInt(value, 10);
+  const n = Number.parseInt(value, 10);
   if (Number.isNaN(n)) {
     console.error(`Error: "${value}" is not a valid number for ${name}`);
     process.exit(1);
@@ -273,8 +273,8 @@ async function promptRegistryChoice(
     });
   });
 
-  const choice = parseInt(answer, 10) - 1;
-  if (isNaN(choice) || choice < 0 || choice >= sources.length) return -1;
+  const choice = Number.parseInt(answer, 10) - 1;
+  if (Number.isNaN(choice) || choice < 0 || choice >= sources.length) return -1;
   return choice;
 }
 
@@ -877,7 +877,7 @@ program
       const { db } = initializeApp();
       try {
         const limit = parseIntOption(opts.limit, "--limit");
-        const minScore = opts.minScore !== undefined ? parseFloat(opts.minScore) : undefined;
+        const minScore = opts.minScore !== undefined ? Number.parseFloat(opts.minScore) : undefined;
         const tags = opts.tags ? opts.tags.split(",").map((t) => t.trim()) : undefined;
 
         let result;
@@ -1400,7 +1400,7 @@ tagCmd
   .action((documentId: string, opts: { limit: string }) => {
     const { db } = initializeApp();
     try {
-      const limit = parseInt(opts.limit, 10);
+      const limit = Number.parseInt(opts.limit, 10);
       const suggestions = suggestTags(db, documentId, limit);
       if (suggestions.length === 0) {
         console.log("No tag suggestions found for this document.");
@@ -1760,7 +1760,7 @@ program
     try {
       console.log("Scanning for duplicates...\n");
       const groups = await findDuplicates(db, provider, {
-        threshold: parseFloat(opts.threshold),
+        threshold: Number.parseFloat(opts.threshold),
         strategy: opts.strategy as "exact" | "semantic" | "both",
       });
 

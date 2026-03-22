@@ -131,8 +131,8 @@ function resolveRegistryName(url: string, explicitName?: string): string {
 
 /** Parse and validate a non-negative integer option. Exits on invalid input. */
 function parseNonNegativeInt(value: string, optionName: string): number {
-  const n = parseInt(value, 10);
-  if (isNaN(n) || n < 0) {
+  const n = Number.parseInt(value, 10);
+  if (Number.isNaN(n) || n < 0) {
     console.error(`Error: "${optionName}" must be a non-negative integer.`);
     process.exit(1);
   }
