@@ -82,6 +82,26 @@ describe("convertSlackMrkdwn", () => {
   });
 });
 
+function setupChannelList(channels: Array<{ id: string; name: string }> = []): void {
+  mockFetch.mockImplementationOnce(() =>
+    Promise.resolve(slackOk({ channels, response_metadata: {} })),
+  );
+}
+
+function setupMessages(messages: Array<Record<string, unknown>> = []): void {
+  mockFetch.mockImplementationOnce(() =>
+    Promise.resolve(slackOk({ messages, response_metadata: {} })),
+  );
+}
+
+function setupUserInfo(user: Record<string, unknown>): void {
+  mockFetch.mockImplementationOnce(() => Promise.resolve(slackOk({ user })));
+}
+
+function setupThreadReplies(messages: Array<Record<string, unknown>> = []): void {
+  mockFetch.mockImplementationOnce(() => Promise.resolve(slackOk({ messages })));
+}
+
 describe("syncSlack", () => {
   let db: Database.Database;
   let provider: MockEmbeddingProvider;
@@ -103,26 +123,6 @@ describe("syncSlack", () => {
     channels: ["general"],
     threadMode: "aggregate",
   };
-
-  function setupChannelList(channels: Array<{ id: string; name: string }> = []): void {
-    mockFetch.mockImplementationOnce(() =>
-      Promise.resolve(slackOk({ channels, response_metadata: {} })),
-    );
-  }
-
-  function setupMessages(messages: Array<Record<string, unknown>> = []): void {
-    mockFetch.mockImplementationOnce(() =>
-      Promise.resolve(slackOk({ messages, response_metadata: {} })),
-    );
-  }
-
-  function setupUserInfo(user: Record<string, unknown>): void {
-    mockFetch.mockImplementationOnce(() => Promise.resolve(slackOk({ user })));
-  }
-
-  function setupThreadReplies(messages: Array<Record<string, unknown>> = []): void {
-    mockFetch.mockImplementationOnce(() => Promise.resolve(slackOk({ messages })));
-  }
 
   it("lists and filters channels", async () => {
     setupChannelList([

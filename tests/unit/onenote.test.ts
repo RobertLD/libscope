@@ -59,6 +59,37 @@ function makeConfig(overrides?: Partial<OneNoteConfig>): OneNoteConfig {
   };
 }
 
+function setupGraphMocks(
+  notebooks: Array<{ id: string; displayName: string }> = [
+    { id: "nb1", displayName: "Work Notebook" },
+  ],
+  sections: Array<{ id: string; displayName: string }> = [
+    { id: "sec1", displayName: "Project Notes" },
+  ],
+  pages: Array<{ id: string; title: string; lastModifiedDateTime: string }> = [
+    { id: "pg1", title: "Meeting Notes", lastModifiedDateTime: "2024-01-15T10:00:00Z" },
+  ],
+  pageHtml: string = "<h1>Meeting Notes</h1><p>Discussion points</p>",
+): void {
+  mockFetch((url: string, init?: RequestInit) => {
+    const accept = (init?.headers as Record<string, string>)?.Accept ?? "";
+
+    if (url.includes("/me/onenote/notebooks") && !url.includes("/sections")) {
+      return jsonResponse({ value: notebooks });
+    }
+    if (url.includes("/sections") && !url.includes("/pages")) {
+      return jsonResponse({ value: sections });
+    }
+    if (url.includes("/pages") && !url.includes("/content")) {
+      return jsonResponse({ value: pages });
+    }
+    if (url.includes("/content") || accept === "text/html") {
+      return htmlResponse(pageHtml);
+    }
+    return new Response("Not found", { status: 404 });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -253,37 +284,6 @@ describe("OneNote Connector", () => {
   // -------------------------------------------------------------------------
 
   describe("syncOneNote", () => {
-    function setupGraphMocks(
-      notebooks: Array<{ id: string; displayName: string }> = [
-        { id: "nb1", displayName: "Work Notebook" },
-      ],
-      sections: Array<{ id: string; displayName: string }> = [
-        { id: "sec1", displayName: "Project Notes" },
-      ],
-      pages: Array<{ id: string; title: string; lastModifiedDateTime: string }> = [
-        { id: "pg1", title: "Meeting Notes", lastModifiedDateTime: "2024-01-15T10:00:00Z" },
-      ],
-      pageHtml: string = "<h1>Meeting Notes</h1><p>Discussion points</p>",
-    ): void {
-      mockFetch((url: string, init?: RequestInit) => {
-        const accept = (init?.headers as Record<string, string>)?.Accept ?? "";
-
-        if (url.includes("/me/onenote/notebooks") && !url.includes("/sections")) {
-          return jsonResponse({ value: notebooks });
-        }
-        if (url.includes("/sections") && !url.includes("/pages")) {
-          return jsonResponse({ value: sections });
-        }
-        if (url.includes("/pages") && !url.includes("/content")) {
-          return jsonResponse({ value: pages });
-        }
-        if (url.includes("/content") || accept === "text/html") {
-          return htmlResponse(pageHtml);
-        }
-        return new Response("Not found", { status: 404 });
-      });
-    }
-
     it("performs full sync creating topics and indexing pages", async () => {
       setupGraphMocks();
 
