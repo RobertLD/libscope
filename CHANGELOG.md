@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0](https://github.com/RobertLD/libscope/compare/v1.8.0...v1.9.0) (2026-04-06)
+
+
+### Features
+
+* **mcp:** add async task support for long-running operations ([#485](https://github.com/RobertLD/libscope/issues/485)) ([#487](https://github.com/RobertLD/libscope/issues/487)) ([c31fc3b](https://github.com/RobertLD/libscope/commit/c31fc3bfe3f768e9fe214a1c1b7de345edc6a5d5))
+
 ## [1.8.0](https://github.com/RobertLD/libscope/compare/v1.7.2...v1.8.0) (2026-03-22)
 
 
