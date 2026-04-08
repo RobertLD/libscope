@@ -1,0 +1,42 @@
+{
+  "name": "@libscope/parsers",
+  "version": "1.0.0",
+  "description": "Format parsers (PDF, DOCX, EPUB, PPTX, CSV, JSON, YAML, HTML → text/markdown) for libscope",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "csv-parse": "^6.1.0",
+    "epub2": "^3.0.2",
+    "js-yaml": "^4.1.1",
+    "node-html-markdown": "^2.0.0",
+    "pizzip": "^3.2.0"
+  },
+  "optionalDependencies": {
+    "mammoth": "^1.11.0",
+    "pdf-parse": "^2.4.5"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.3.3",
+    "@types/pdf-parse": "^1.1.5",
+    "@vitest/coverage-v8": "^4.0.18",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.18"
+  }
+}

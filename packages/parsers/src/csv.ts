@@ -1,5 +1,5 @@
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 import { parse } from "csv-parse/sync";
 
 /** Parses CSV files, converting to a Markdown table. */
@@ -36,10 +36,7 @@ export class CsvParser implements DocumentParser {
       return Promise.resolve(lines.join("\n"));
     } catch (err) {
       return Promise.reject(
-        new ValidationError(
-          `Invalid CSV: ${err instanceof Error ? err.message : String(err)}`,
-          err,
-        ),
+        new ParseError(`Invalid CSV: ${err instanceof Error ? err.message : String(err)}`, err),
       );
     }
   }

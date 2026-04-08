@@ -1,5 +1,5 @@
 import { NodeHtmlMarkdown } from "node-html-markdown";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 import type { DocumentParser } from "./index.js";
 
 const nhm = new NodeHtmlMarkdown({ ignore: ["script", "style", "nav"] });
@@ -17,7 +17,7 @@ export class HtmlParser implements DocumentParser {
       return Promise.resolve(markdown.replaceAll(/\n{3,}/g, "\n\n").trimEnd());
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown HTML parsing error";
-      throw new ValidationError(`Failed to parse HTML: ${message}`);
+      throw new ParseError(`Failed to parse HTML: ${message}`);
     }
   }
 }

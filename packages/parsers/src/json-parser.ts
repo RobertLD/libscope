@@ -1,5 +1,5 @@
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 
 /** Parses JSON files, outputting a fenced code block. */
 export class JsonParser implements DocumentParser {
@@ -13,10 +13,7 @@ export class JsonParser implements DocumentParser {
       return Promise.resolve("```json\n" + formatted + "\n```");
     } catch (err) {
       return Promise.reject(
-        new ValidationError(
-          `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
-          err,
-        ),
+        new ParseError(`Invalid JSON: ${err instanceof Error ? err.message : String(err)}`, err),
       );
     }
   }

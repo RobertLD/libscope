@@ -1,5 +1,5 @@
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 import yaml from "js-yaml";
 
 /** Parses YAML files, outputting a fenced code block. */
@@ -14,10 +14,7 @@ export class YamlParser implements DocumentParser {
       return Promise.resolve("```yaml\n" + text.trimEnd() + "\n```");
     } catch (err) {
       return Promise.reject(
-        new ValidationError(
-          `Invalid YAML: ${err instanceof Error ? err.message : String(err)}`,
-          err,
-        ),
+        new ParseError(`Invalid YAML: ${err instanceof Error ? err.message : String(err)}`, err),
       );
     }
   }

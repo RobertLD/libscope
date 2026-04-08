@@ -933,35 +933,22 @@ async function main(): Promise<void> {
         threadMode: params.threadMode ?? ("aggregate" as const),
       };
 
+      const syncSlack = async (): Promise<string> => {
+        const result = await doSyncSlack(db, provider, slackConfig);
+        const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
+        const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
+        return (
+          `Slack sync complete.\n` +
+          `Channels: ${result.channels}\n` +
+          `Messages indexed: ${result.messagesIndexed}\n` +
+          `Threads indexed: ${result.threadsIndexed}` +
+          slackErrors
+        );
+      };
       if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await doSyncSlack(db, provider, slackConfig);
-          const slackErrorLines = result.errors
-            .map((e) => `  #${e.channel}: ${e.error}`)
-            .join("\n");
-          const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
-          return (
-            `Slack sync complete.\n` +
-            `Channels: ${result.channels}\n` +
-            `Messages indexed: ${result.messagesIndexed}\n` +
-            `Threads indexed: ${result.threadsIndexed}` +
-            slackErrors
-          );
-        });
+        return startAsyncTask("sync_connector", syncSlack);
       }
-
-      const result = await doSyncSlack(db, provider, slackConfig);
-
-      const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
-      const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
-      const text =
-        `Slack sync complete.\n` +
-        `Channels: ${result.channels}\n` +
-        `Messages indexed: ${result.messagesIndexed}\n` +
-        `Threads indexed: ${result.threadsIndexed}` +
-        slackErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return { content: [{ type: "text" as const, text: await syncSlack() }] };
     }),
   );
 
@@ -1086,37 +1073,24 @@ async function main(): Promise<void> {
         excludeSections: [] as string[],
       };
 
+      const syncOneNoteWork = async (): Promise<string> => {
+        const result = await syncOneNote(db, provider, oneNoteConfig);
+        const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+        const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
+        return (
+          `OneNote sync complete.\n` +
+          `Notebooks: ${result.notebooks}\n` +
+          `Sections: ${result.sections}\n` +
+          `Pages added: ${result.pagesAdded}\n` +
+          `Pages updated: ${result.pagesUpdated}\n` +
+          `Pages deleted: ${result.pagesDeleted}` +
+          oneNoteErrors
+        );
+      };
       if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncOneNote(db, provider, oneNoteConfig);
-          const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-          const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
-          return (
-            `OneNote sync complete.\n` +
-            `Notebooks: ${result.notebooks}\n` +
-            `Sections: ${result.sections}\n` +
-            `Pages added: ${result.pagesAdded}\n` +
-            `Pages updated: ${result.pagesUpdated}\n` +
-            `Pages deleted: ${result.pagesDeleted}` +
-            oneNoteErrors
-          );
-        });
+        return startAsyncTask("sync_connector", syncOneNoteWork);
       }
-
-      const result = await syncOneNote(db, provider, oneNoteConfig);
-
-      const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-      const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
-      const text =
-        `OneNote sync complete.\n` +
-        `Notebooks: ${result.notebooks}\n` +
-        `Sections: ${result.sections}\n` +
-        `Pages added: ${result.pagesAdded}\n` +
-        `Pages updated: ${result.pagesUpdated}\n` +
-        `Pages deleted: ${result.pagesDeleted}` +
-        oneNoteErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return { content: [{ type: "text" as const, text: await syncOneNoteWork() }] };
     }),
   );
 
@@ -1150,31 +1124,21 @@ async function main(): Promise<void> {
         excludePages: params.excludePages,
       };
 
+      const syncNotionWork = async (): Promise<string> => {
+        const result = await syncNotion(db, provider, notionConfig);
+        const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+        const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
+        return (
+          `Notion sync complete.\n` +
+          `Pages indexed: ${result.pagesIndexed}\n` +
+          `Databases indexed: ${result.databasesIndexed}` +
+          notionErrors
+        );
+      };
       if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncNotion(db, provider, notionConfig);
-          const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-          const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
-          return (
-            `Notion sync complete.\n` +
-            `Pages indexed: ${result.pagesIndexed}\n` +
-            `Databases indexed: ${result.databasesIndexed}` +
-            notionErrors
-          );
-        });
+        return startAsyncTask("sync_connector", syncNotionWork);
       }
-
-      const result = await syncNotion(db, provider, notionConfig);
-
-      const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-      const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
-      const text =
-        `Notion sync complete.\n` +
-        `Pages indexed: ${result.pagesIndexed}\n` +
-        `Databases indexed: ${result.databasesIndexed}` +
-        notionErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return { content: [{ type: "text" as const, text: await syncNotionWork() }] };
     }),
   );
 
@@ -1200,33 +1164,22 @@ async function main(): Promise<void> {
         excludePatterns: [] as string[],
       };
 
+      const syncObsidianWork = async (): Promise<string> => {
+        const result = await syncObsidianVault(db, provider, obsidianConfig);
+        const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
+        const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
+        return (
+          `Obsidian vault sync complete.\n` +
+          `Added: ${result.added}\n` +
+          `Updated: ${result.updated}\n` +
+          `Deleted: ${result.deleted}` +
+          obsidianErrors
+        );
+      };
       if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncObsidianVault(db, provider, obsidianConfig);
-          const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
-          const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
-          return (
-            `Obsidian vault sync complete.\n` +
-            `Added: ${result.added}\n` +
-            `Updated: ${result.updated}\n` +
-            `Deleted: ${result.deleted}` +
-            obsidianErrors
-          );
-        });
+        return startAsyncTask("sync_connector", syncObsidianWork);
       }
-
-      const result = await syncObsidianVault(db, provider, obsidianConfig);
-
-      const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
-      const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
-      const text =
-        `Obsidian vault sync complete.\n` +
-        `Added: ${result.added}\n` +
-        `Updated: ${result.updated}\n` +
-        `Deleted: ${result.deleted}` +
-        obsidianErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return { content: [{ type: "text" as const, text: await syncObsidianWork() }] };
     }),
   );
 
@@ -1261,34 +1214,23 @@ async function main(): Promise<void> {
         excludeSpaces: params.excludeSpaces,
       };
 
+      const syncConfluenceWork = async (): Promise<string> => {
+        const result = await syncConfluence(db, provider, confluenceConfig);
+        const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
+        const confluenceErrors =
+          result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
+        return (
+          `Confluence sync complete.\n` +
+          `Spaces: ${result.spaces}\n` +
+          `Pages indexed: ${result.pagesIndexed}\n` +
+          `Pages updated: ${result.pagesUpdated}` +
+          confluenceErrors
+        );
+      };
       if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncConfluence(db, provider, confluenceConfig);
-          const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
-          const confluenceErrors =
-            result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
-          return (
-            `Confluence sync complete.\n` +
-            `Spaces: ${result.spaces}\n` +
-            `Pages indexed: ${result.pagesIndexed}\n` +
-            `Pages updated: ${result.pagesUpdated}` +
-            confluenceErrors
-          );
-        });
+        return startAsyncTask("sync_connector", syncConfluenceWork);
       }
-
-      const result = await syncConfluence(db, provider, confluenceConfig);
-
-      const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
-      const confluenceErrors = result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
-      const text =
-        `Confluence sync complete.\n` +
-        `Spaces: ${result.spaces}\n` +
-        `Pages indexed: ${result.pagesIndexed}\n` +
-        `Pages updated: ${result.pagesUpdated}` +
-        confluenceErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return { content: [{ type: "text" as const, text: await syncConfluenceWork() }] };
     }),
   );
 

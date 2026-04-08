@@ -1,5 +1,5 @@
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 
 /** Parses PDF files using pdf-parse. */
 export class PdfParser implements DocumentParser {
@@ -11,7 +11,7 @@ export class PdfParser implements DocumentParser {
       const mod = await import("pdf-parse");
       PDFParse = mod.PDFParse;
     } catch (err) {
-      throw new ValidationError(
+      throw new ParseError(
         'PDF parsing requires the "pdf-parse" package. Install it with: npm install pdf-parse',
         err,
       );
@@ -22,7 +22,7 @@ export class PdfParser implements DocumentParser {
       const result = await parser.getText();
       return result.text;
     } catch (err) {
-      throw new ValidationError(
+      throw new ParseError(
         `Failed to parse PDF: ${err instanceof Error ? err.message : String(err)}`,
         err,
       );

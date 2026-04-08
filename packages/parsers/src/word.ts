@@ -1,5 +1,5 @@
 import type { DocumentParser } from "./index.js";
-import { ValidationError } from "../../errors.js";
+import { ParseError } from "./errors.js";
 
 /** Parses Word (.docx) files using mammoth. */
 export class WordParser implements DocumentParser {
@@ -10,7 +10,7 @@ export class WordParser implements DocumentParser {
     try {
       mammoth = await import("mammoth");
     } catch (err) {
-      throw new ValidationError(
+      throw new ParseError(
         'Word document parsing requires the "mammoth" package. Install it with: npm install mammoth',
         err,
       );
@@ -20,7 +20,7 @@ export class WordParser implements DocumentParser {
       const result = await mammoth.extractRawText({ buffer: content });
       return result.value;
     } catch (err) {
-      throw new ValidationError(
+      throw new ParseError(
         `Failed to parse Word document: ${err instanceof Error ? err.message : String(err)}`,
         err,
       );
