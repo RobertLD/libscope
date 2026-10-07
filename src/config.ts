@@ -112,33 +112,70 @@ function compact<T extends Record<string, unknown>>(obj: T): Compact<T> {
   return out as Compact<T>;
 }
 
-/** Collect config values from LIBSCOPE_* env vars. Only variables that are set appear in the result. */
+/** Return the first value that is set and non-empty. */
+function firstSet(...values: Array<string | undefined>): string | undefined {
+  return values.find((v) => v !== undefined && v !== "");
+}
+
+/**
+ * Collect config values from env vars. Only variables that are set appear in the result.
+ *
+ * API keys follow one rule for embedding and LLM providers:
+ * LIBSCOPE_<P>_API_KEY > <P>_API_KEY > config file.
+ */
 function getEnvOverrides(): ConfigLayer {
   const env = process.env;
   const provider = env["LIBSCOPE_EMBEDDING_PROVIDER"];
   const llmProvider = env["LIBSCOPE_LLM_PROVIDER"];
-  const llmModel = env["LIBSCOPE_LLM_MODEL"];
-  const validLlmProvider = isLlmProvider(llmProvider);
+  const openaiApiKey = firstSet(env["LIBSCOPE_OPENAI_API_KEY"], env["OPENAI_API_KEY"]);
+  const anthropicApiKey = firstSet(env["LIBSCOPE_ANTHROPIC_API_KEY"], env["ANTHROPIC_API_KEY"]);
 
   return {
     embedding: compact({
       provider: isEmbeddingProvider(provider) ? provider : undefined,
-      openaiApiKey: env["LIBSCOPE_OPENAI_API_KEY"],
+      openaiApiKey,
       ollamaUrl: env["LIBSCOPE_OLLAMA_URL"],
+      ollamaModel: env["LIBSCOPE_OLLAMA_MODEL"],
     }),
-    llm:
-      validLlmProvider || llmModel
-        ? compact({
-            provider: validLlmProvider ? llmProvider : undefined,
-            model: llmModel,
-            anthropicApiKey: env["LIBSCOPE_ANTHROPIC_API_KEY"],
-          })
-        : {},
+    llm: compact({
+      provider: isLlmProvider(llmProvider) ? llmProvider : undefined,
+      model: env["LIBSCOPE_LLM_MODEL"],
+      openaiApiKey,
+      anthropicApiKey,
+    }),
     indexing: compact({
       allowPrivateUrls: truthy(env["LIBSCOPE_ALLOW_PRIVATE_URLS"]),
       allowSelfSignedCerts: truthy(env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"]),
     }),
   };
+}
+
+/** Config keys that hold secrets: masked by `config show`/`config get`, never written by `config set`. */
+export const SECRET_CONFIG_KEYS = [
+  "embedding.openaiApiKey",
+  "llm.openaiApiKey",
+  "llm.anthropicApiKey",
+] as const;
+
+function hasApiKey(layer: ConfigLayer): boolean {
+  return Boolean(
+    layer.embedding?.openaiApiKey ?? layer.llm?.openaiApiKey ?? layer.llm?.anthropicApiKey,
+  );
+}
+
+/** Mask a secret for display: `sk-…abcd` for long values, `****` otherwise. */
+export function maskSecret(value: string): string {
+  return value.length >= 12 ? `${value.slice(0, 3)}…${value.slice(-4)}` : "****";
+}
+
+/** Return a copy of the config with every API key masked (for display). */
+export function maskConfigSecrets(config: LibScopeConfig): LibScopeConfig {
+  const masked: LibScopeConfig = structuredClone(config);
+  const { embedding, llm } = masked;
+  if (embedding.openaiApiKey) embedding.openaiApiKey = maskSecret(embedding.openaiApiKey);
+  if (llm?.openaiApiKey) llm.openaiApiKey = maskSecret(llm.openaiApiKey);
+  if (llm?.anthropicApiKey) llm.anthropicApiKey = maskSecret(llm.anthropicApiKey);
+  return masked;
 }
 
 let _configCache: LibScopeConfig | null = null;
@@ -161,16 +198,17 @@ export function loadConfig(): LibScopeConfig {
   const projectConfig = loadJsonFile(getProjectConfigPath());
   const envOverrides = getEnvOverrides();
 
-  if (
-    userConfig.embedding?.openaiApiKey ||
-    userConfig.llm?.openaiApiKey ||
-    userConfig.llm?.anthropicApiKey
-  ) {
-    getLogger().warn(
-      "API keys found in config file (~/.libscope/config.json). " +
-        "This is deprecated — please use environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY) instead. " +
-        "Keys in the config file will no longer be written back after the next save.",
-    );
+  for (const [path, layer] of [
+    [getUserConfigPath(), userConfig],
+    [getProjectConfigPath(), projectConfig],
+  ] as const) {
+    if (hasApiKey(layer)) {
+      getLogger().warn(
+        `API keys found in config file ${path}. Prefer environment variables ` +
+          "(LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY, LIBSCOPE_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY); " +
+          "they take precedence over keys in config files.",
+      );
+    }
   }
 
   const config: LibScopeConfig = {
@@ -210,27 +248,28 @@ export function loadConfig(): LibScopeConfig {
   return config;
 }
 
+const OPENAI_KEY_HINT = "Set LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY";
+
 /** Check embedding and LLM provider configuration for missing keys/URLs. */
 function validateProviderConfig(config: LibScopeConfig, warnings: string[]): void {
-  if (config.embedding.provider === "openai") {
-    const hasKey = config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
-    if (!hasKey) {
-      warnings.push(
-        'embedding.provider is "openai" but no API key found. Set embedding.openaiApiKey or OPENAI_API_KEY env var.',
-      );
-    }
+  if (config.embedding.provider === "openai" && !config.embedding.openaiApiKey) {
+    warnings.push(
+      `embedding.provider is "openai" but no API key found. ${OPENAI_KEY_HINT} (or embedding.openaiApiKey in a config file).`,
+    );
   }
   if (config.embedding.provider === "ollama" && !config.embedding.ollamaUrl) {
     warnings.push('embedding.provider is "ollama" but embedding.ollamaUrl is not set.');
   }
-  if (config.llm?.provider === "openai") {
-    const hasKey =
-      config.llm.openaiApiKey ?? config.embedding.openaiApiKey ?? process.env["OPENAI_API_KEY"];
-    if (!hasKey) {
-      warnings.push(
-        'llm.provider is "openai" but no API key found. Set llm.openaiApiKey or OPENAI_API_KEY env var.',
-      );
-    }
+  const llm = config.llm;
+  if (llm?.provider === "openai" && !(llm.openaiApiKey ?? config.embedding.openaiApiKey)) {
+    warnings.push(
+      `llm.provider is "openai" but no API key found. ${OPENAI_KEY_HINT} (or llm.openaiApiKey in a config file).`,
+    );
+  }
+  if (llm?.provider === "anthropic" && !llm.anthropicApiKey) {
+    warnings.push(
+      'llm.provider is "anthropic" but no API key found. Set LIBSCOPE_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY (or llm.anthropicApiKey in a config file).',
+    );
   }
 }
 

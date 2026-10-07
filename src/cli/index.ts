@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { loadConfig, saveUserConfig } from "../config.js";
+import { loadConfig, saveUserConfig, maskConfigSecrets } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument, indexFile } from "../core/indexing.js";
@@ -1552,7 +1552,7 @@ configCmd
   .action(() => {
     setupLogging(program.opts<ProgramOpts>());
     const config = loadConfig();
-    console.log(JSON.stringify(config, null, 2));
+    console.log(JSON.stringify(maskConfigSecrets(config), null, 2));
   });
 
 interface ProgramOpts {

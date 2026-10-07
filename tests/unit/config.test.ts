@@ -144,11 +144,22 @@ describe("validateConfig", () => {
     expect(warnings).toHaveLength(0);
   });
 
-  it("should not warn when embedding provider is openai with OPENAI_API_KEY env", () => {
+  it("should validate the resolved config only (env keys are resolved by loadConfig)", () => {
     process.env["OPENAI_API_KEY"] = "sk-env-test";
     const config = makeConfig({ embedding: { provider: "openai" } });
     const warnings = validateConfig(config);
-    expect(warnings).toHaveLength(0);
+    expect(warnings[0]).toContain("LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY");
+  });
+
+  it("should warn when llm provider is anthropic without API key", () => {
+    const config = makeConfig({ llm: { provider: "anthropic" } });
+    const warnings = validateConfig(config);
+    expect(warnings.some((w) => w.includes("LIBSCOPE_ANTHROPIC_API_KEY"))).toBe(true);
+  });
+
+  it("should not warn when llm provider is anthropic with a key", () => {
+    const config = makeConfig({ llm: { provider: "anthropic", anthropicApiKey: "sk-ant" } });
+    expect(validateConfig(config)).toHaveLength(0);
   });
 
   it("should warn when llm provider is openai without API key", () => {

@@ -78,14 +78,14 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini
 
 Supported providers: `openai`, `ollama`, `anthropic`, `passthrough`.
 
-The `anthropic` provider uses Anthropic's Claude models. Set the API key via config or environment variable:
+The `anthropic` provider uses Anthropic's Claude models. Set the API key with an environment variable (`LIBSCOPE_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`):
 
 ```bash
 export LIBSCOPE_LLM_PROVIDER=anthropic
 export LIBSCOPE_ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Or in your config file, set `llm.provider` to `"anthropic"` and `llm.anthropicApiKey` to your key. You can optionally set `llm.model` to choose a specific Claude model.
+The key is read even when `LIBSCOPE_LLM_PROVIDER` is not set, so you can set `llm.provider` to `"anthropic"` in a config file and keep the key in the environment. A `llm.anthropicApiKey` value in a config file also works, but environment variables take precedence. You can optionally set `llm.model` to choose a specific Claude model.
 
 The `passthrough` provider is for advanced integrations where you supply your own LLM responses externally. When set, the `ask` command emits an event stream that your application handles rather than calling an LLM directly.
 
@@ -94,13 +94,20 @@ The `passthrough` provider is for advanced integrations where you supply your ow
 | Variable                           | Description                                        | Default                  |
 | ---------------------------------- | -------------------------------------------------- | ------------------------ |
 | `LIBSCOPE_EMBEDDING_PROVIDER`      | Embedding provider (`local` / `ollama` / `openai`) | `local`                  |
-| `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key                                     | —                        |
+| `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key (embeddings and LLM)                | —                        |
+| `OPENAI_API_KEY`                   | Used when `LIBSCOPE_OPENAI_API_KEY` is not set     | —                        |
 | `LIBSCOPE_OLLAMA_URL`              | Ollama server URL                                  | `http://localhost:11434` |
+| `LIBSCOPE_OLLAMA_MODEL`            | Ollama embedding model                             | `nomic-embed-text`       |
 | `LIBSCOPE_LLM_PROVIDER`            | LLM provider for RAG (`openai` / `ollama` / `anthropic`) | —                  |
 | `LIBSCOPE_LLM_MODEL`               | LLM model override                                 | —                        |
 | `LIBSCOPE_ANTHROPIC_API_KEY`       | Anthropic API key (for Claude models)              | —                        |
+| `ANTHROPIC_API_KEY`                | Used when `LIBSCOPE_ANTHROPIC_API_KEY` is not set  | —                        |
 | `LIBSCOPE_ALLOW_PRIVATE_URLS`      | Allow fetching from private/internal IPs           | `false`                  |
 | `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates                | `false`                  |
+| `LIBSCOPE_WORKSPACE`               | Active workspace for this shell                    | `default`                |
+| `LIBSCOPE_API_KEY`                 | REST API key (`Authorization: Bearer <key>`)       | —                        |
+| `LIBSCOPE_SECRET_KEY`              | Encrypts stored webhook secrets                    | —                        |
+| `LIBSCOPE_VERBOSE`                 | `1` prints structured JSON logs (stderr) in the CLI | —                       |
 | `ONENOTE_CLIENT_ID`                | Microsoft app registration client ID               | —                        |
 | `ONENOTE_TENANT_ID`                | Microsoft tenant ID                                | `common`                 |
 | `NOTION_TOKEN`                     | Notion integration token                           | —                        |
@@ -108,7 +115,9 @@ The `passthrough` provider is for advanced integrations where you supply your ow
 | `CONFLUENCE_EMAIL`                 | Confluence user email                              | —                        |
 | `CONFLUENCE_TOKEN`                 | Confluence API token                               | —                        |
 
-Environment variables always take precedence over config files.
+Environment variables always take precedence over config files. LibScope does not load `.env` files; export the variables in your shell or MCP client config.
+
+API keys use one rule for embeddings and the LLM: `LIBSCOPE_<PROVIDER>_API_KEY`, then `<PROVIDER>_API_KEY` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), then the key in a config file. `libscope config show` masks keys.
 
 ## Workspaces
 
