@@ -113,7 +113,7 @@ async function validateUrl(url: string, allowPrivateUrls = false): Promise<strin
   for (const addr of addresses) {
     if (!allowPrivateUrls && isPrivateIP(addr)) {
       throw new FetchError(
-        `Blocked request to private/internal IP ${addr} (resolved from ${hostname}). Set LIBSCOPE_ALLOW_PRIVATE_URLS=true to allow.`,
+        `Blocked request to private/internal IP ${addr} (resolved from ${hostname}). Set LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS=true to allow.`,
       );
     }
   }

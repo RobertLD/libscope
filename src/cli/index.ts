@@ -5,6 +5,9 @@ import {
   loadConfig,
   maskConfigSecrets,
   getUserConfigPath,
+  getSecretsPath,
+  getConfigFileFor,
+  maskSecret,
   CONFIG_KEY_NAMES,
   setUserConfigValue,
   unsetUserConfigValue,
@@ -1574,12 +1577,15 @@ function runConfigAction(fn: () => void): void {
 configCmd
   .command("set <key> <value>")
   .description(
-    `Set a value in the user config file. Keys: ${CONFIG_KEY_NAMES.join(", ")}. API keys must be set with environment variables.`,
+    `Set a value in the user config file. Keys: ${CONFIG_KEY_NAMES.join(", ")}. ` +
+      `API keys are written to ${getSecretsPath()} (mode 0600), never to config.json.`,
   )
   .action((key: string, value: string) => {
     runConfigAction(() => {
       const stored = setUserConfigValue(key, value);
-      console.log(`✓ ${key} set to: ${String(stored)}`);
+      const file = getConfigFileFor(key);
+      const shown = file === getSecretsPath() ? maskSecret(String(stored)) : String(stored);
+      console.log(`✓ ${key} set to: ${shown} (${file})`);
     });
   });
 
@@ -1595,11 +1601,13 @@ configCmd
 
 configCmd
   .command("unset <key>")
-  .description("Remove a key from the user config file (the default or other layers apply)")
+  .description(
+    "Remove a key from the user config file, or from the secrets file for API keys (the default or other layers apply)",
+  )
   .action((key: string) => {
     runConfigAction(() => {
       const removed = unsetUserConfigValue(key);
-      console.log(removed ? `✓ ${key} removed` : `${key} is not set in ${getUserConfigPath()}`);
+      console.log(removed ? `✓ ${key} removed` : `${key} is not set in ${getConfigFileFor(key)}`);
     });
   });
 

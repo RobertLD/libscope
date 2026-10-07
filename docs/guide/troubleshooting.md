@@ -198,7 +198,7 @@ If you are fetching from a server with a self-signed certificate:
 ```bash
 libscope config set indexing.allowSelfSignedCerts true
 # or
-export LIBSCOPE_ALLOW_SELF_SIGNED_CERTS=true
+export LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS=true
 ```
 
 For internal/private URLs (RFC 1918 address ranges):
@@ -206,7 +206,7 @@ For internal/private URLs (RFC 1918 address ranges):
 ```bash
 libscope config set indexing.allowPrivateUrls true
 # or
-export LIBSCOPE_ALLOW_PRIVATE_URLS=true
+export LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS=true
 ```
 
 ### Import is very slow for large directories

@@ -3,6 +3,8 @@ import {
   buildContextPrompt,
   extractSources,
   createLlmProvider,
+  isPassthroughMode,
+  resolveLlmProviderName,
   DEFAULT_SYSTEM_PROMPT,
   type LlmProvider,
 } from "../../src/core/rag.js";
@@ -216,7 +218,8 @@ describe("createLlmProvider", () => {
   it("creates an OpenAI provider when configured", () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },
-      llm: { provider: "openai", openaiApiKey: "sk-test", model: "gpt-4o" },
+      llm: { provider: "openai", model: "gpt-4o" },
+      openai: { apiKey: "sk-test" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -255,7 +258,8 @@ describe("createLlmProvider", () => {
   it("uses default model for OpenAI when not specified", () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },
-      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      llm: { provider: "openai" },
+      openai: { apiKey: "sk-test" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -265,10 +269,11 @@ describe("createLlmProvider", () => {
     expect(provider.model).toBe("gpt-4o-mini");
   });
 
-  it("falls back to embedding API key for OpenAI provider", () => {
+  it("uses the shared OpenAI key for embeddings and the LLM", () => {
     const config: LibScopeConfig = {
-      embedding: { provider: "openai", openaiApiKey: "sk-embed" },
+      embedding: { provider: "openai" },
       llm: { provider: "openai" },
+      openai: { apiKey: "sk-shared" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -399,7 +404,8 @@ describe("createLlmProvider", () => {
   it("handles OpenAI empty choices response", async () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },
-      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      llm: { provider: "openai" },
+      openai: { apiKey: "sk-test" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -422,7 +428,8 @@ describe("createLlmProvider", () => {
   it("handles OpenAI unknown status codes", async () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },
-      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      llm: { provider: "openai" },
+      openai: { apiKey: "sk-test" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -445,7 +452,8 @@ describe("createLlmProvider", () => {
   it("handles OpenAI 429 rate limit", async () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },
-      llm: { provider: "openai", openaiApiKey: "sk-test" },
+      llm: { provider: "openai" },
+      openai: { apiKey: "sk-test" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -480,7 +488,8 @@ describe("createLlmProvider", () => {
   it("sanitizes OpenAI error messages (does not leak response body)", async () => {
     const config: LibScopeConfig = {
       embedding: { provider: "local" },
-      llm: { provider: "openai", model: "gpt-4o", openaiApiKey: "sk-test" },
+      llm: { provider: "openai", model: "gpt-4o" },
+      openai: { apiKey: "sk-test" },
       database: { path: ":memory:" },
       indexing: { maxDocumentSize: 1024 },
       logging: { level: "silent" },
@@ -592,6 +601,107 @@ describe("askQuestionStream", () => {
       expect(mockLlm.complete).not.toHaveBeenCalled();
     } finally {
       vi.mocked(searchModule.searchDocuments).mockRestore();
+    }
+  });
+});
+
+describe('llm.provider "auto"', () => {
+  function autoConfig(overrides: Partial<LibScopeConfig> = {}): LibScopeConfig {
+    return {
+      embedding: { provider: "local" },
+      llm: { provider: "auto" },
+      database: {},
+      indexing: { maxDocumentSize: 1024, allowPrivateUrls: false, allowSelfSignedCerts: false },
+      logging: { level: "silent" },
+      ...overrides,
+    };
+  }
+
+  it("resolves to passthrough under MCP, even when API keys are set", () => {
+    const config = autoConfig({ openai: { apiKey: "sk-x" } });
+    expect(resolveLlmProviderName(config, { surface: "mcp" })).toBe("passthrough");
+    expect(isPassthroughMode(config, { surface: "mcp" })).toBe(true);
+    expect(() => createLlmProvider(config, { surface: "mcp" })).toThrow(/passthrough/);
+  });
+
+  it.each(["cli", "api", "sdk", undefined] as const)(
+    "is not passthrough on surface %s",
+    (surface) => {
+      expect(isPassthroughMode(autoConfig(), { surface })).toBe(false);
+    },
+  );
+
+  it("picks openai when an OpenAI key is set", () => {
+    const config = autoConfig({
+      openai: { apiKey: "sk-x" },
+      anthropic: { apiKey: "sk-ant" },
+    });
+    expect(resolveLlmProviderName(config, { surface: "cli" })).toBe("openai");
+    expect(createLlmProvider(config).model).toBe("gpt-4o-mini");
+  });
+
+  it("picks anthropic when only an Anthropic key is set", () => {
+    const config = autoConfig({ anthropic: { apiKey: "sk-ant" } });
+    expect(resolveLlmProviderName(config)).toBe("anthropic");
+    expect(createLlmProvider(config).model).toBe("claude-3-5-haiku-20241022");
+  });
+
+  it("picks ollama when llm.url is set", () => {
+    const config = autoConfig({ llm: { provider: "auto", url: "http://gpu:11434" } });
+    expect(resolveLlmProviderName(config)).toBe("ollama");
+    expect(createLlmProvider(config).model).toBe("llama3.2");
+  });
+
+  it("picks ollama when the embedding provider is ollama", () => {
+    const config = autoConfig({ embedding: { provider: "ollama" } });
+    expect(resolveLlmProviderName(config)).toBe("ollama");
+  });
+
+  it("returns null and createLlmProvider throws a hint when nothing is configured", () => {
+    const config = autoConfig();
+    expect(resolveLlmProviderName(config)).toBeNull();
+    expect(() => createLlmProvider(config)).toThrow(/No LLM provider configured.*OPENAI_API_KEY/);
+  });
+
+  it("treats a missing llm section as auto", () => {
+    const config = autoConfig({ openai: { apiKey: "sk-x" } });
+    delete config.llm;
+    expect(resolveLlmProviderName(config)).toBe("openai");
+  });
+
+  it("an explicit provider is used on every surface", () => {
+    const config = autoConfig({ llm: { provider: "ollama" }, openai: { apiKey: "sk-x" } });
+    expect(resolveLlmProviderName(config, { surface: "mcp" })).toBe("ollama");
+    expect(isPassthroughMode(autoConfig({ llm: { provider: "passthrough" } }))).toBe(true);
+  });
+
+  it("the ollama LLM uses llm.url, then embedding.url", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ response: "hi" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const fromEmbedding = createLlmProvider(
+        autoConfig({
+          embedding: { provider: "ollama", url: "http://embed:11434" },
+          llm: { provider: "ollama" },
+        }),
+      );
+      await fromEmbedding.complete("q");
+      const fromLlm = createLlmProvider(
+        autoConfig({
+          embedding: { provider: "ollama", url: "http://embed:11434" },
+          llm: { provider: "ollama", url: "http://llm:11434" },
+        }),
+      );
+      await fromLlm.complete("q");
+      expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+        "http://embed:11434/api/generate",
+        "http://llm:11434/api/generate",
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
