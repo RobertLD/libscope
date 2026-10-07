@@ -10,6 +10,7 @@ const NOT_FOUND_HINTS: Record<string, string> = {
   WEBHOOK_NOT_FOUND: "List webhooks with `libscope webhooks list`.",
   LINK_NOT_FOUND: "Link IDs are shown by `libscope docs links <documentId>`.",
   PACK_NOT_FOUND: "List installed packs with `libscope pack list`.",
+  VERSION_NOT_FOUND: "List saved versions with `libscope docs history <documentId>`.",
 };
 
 /** Next step to suggest for an error, if any. */
