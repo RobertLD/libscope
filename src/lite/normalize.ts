@@ -2,73 +2,36 @@ import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { getParserForFile } from "../core/parsers/index.js";
 import { fetchAndConvert } from "../core/url-fetcher.js";
-import type { RawInput } from "./types.js";
+
+/** Raw input that normalizeRawInput turns into a title and markdown content. */
+export type RawInput =
+  | { type: "file"; path: string; title?: string | undefined }
+  | { type: "url"; url: string; title?: string | undefined }
+  | { type: "text"; content: string; title: string }
+  | { type: "buffer"; buffer: Buffer; filename: string; title?: string | undefined };
 
 export interface NormalizedInput {
   title: string;
   content: string;
-  chunks?: string[];
 }
 
-// Code extensions that trigger tree-sitter attempt
-const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"]);
-
-type TreeSitterChunkerType = import("./chunker-treesitter.js").TreeSitterChunker;
-let treeSitterChunker: TreeSitterChunkerType | null = null;
-let treeSitterLoaded = false;
-
-async function getTreeSitterChunker(): Promise<TreeSitterChunkerType | null> {
-  if (treeSitterLoaded) return treeSitterChunker;
-  treeSitterLoaded = true;
-  try {
-    const { TreeSitterChunker } = await import("./chunker-treesitter.js");
-    treeSitterChunker = new TreeSitterChunker();
-  } catch {
-    /* optional dep not installed — graceful fallback */
-  }
-  return treeSitterChunker;
-}
-
-function extToLang(ext: string): string {
-  const map: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    mjs: "javascript",
-    cjs: "javascript",
-    py: "python",
-  };
-  return map[ext.slice(1)] ?? ext.slice(1);
-}
-
-/** Shared path for file and buffer inputs: tree-sitter for code, else the registered parser. */
+/** Parse a file's bytes with the registered parser for its extension, else as UTF-8 text. */
 async function normalizeBuffer(
   buf: Buffer,
   filename: string,
   explicitTitle: string | undefined,
 ): Promise<NormalizedInput> {
-  const ext = extname(filename).toLowerCase();
-  const title = explicitTitle ?? basename(filename, ext);
-
-  if (CODE_EXTENSIONS.has(ext)) {
-    const chunker = await getTreeSitterChunker();
-    const lang = extToLang(ext);
-    if (chunker?.supports(lang)) {
-      const codeChunks = await chunker.chunk(buf.toString("utf-8"), lang);
-      return {
-        title,
-        content: codeChunks[0]?.content ?? "",
-        chunks: codeChunks.map((c) => c.content),
-      };
-    }
-  }
-
+  const title = explicitTitle ?? basename(filename, extname(filename));
   const parser = getParserForFile(filename);
   const content = parser ? await parser.parse(buf) : buf.toString("utf-8");
   return { title, content };
 }
 
+/**
+ * Turn a file, buffer, URL or text into `{ title, content }` for `scope.add({ title, content })`.
+ * Files and buffers use the parser for their extension (PDF, DOCX, HTML, ...); other files
+ * (e.g. source code) are read as UTF-8 text.
+ */
 export async function normalizeRawInput(input: RawInput): Promise<NormalizedInput> {
   switch (input.type) {
     case "text":

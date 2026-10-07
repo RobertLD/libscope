@@ -1,16 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { LibScopeLite } from "../../src/lite/index.js";
+import { createLite, ValidationError, type LibScope } from "../../src/lite/index.js";
+import { initLogger } from "../../src/logger.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 
 /**
- * Integration test: full LibScopeLite workflow.
- *
- * Uses a real in-memory SQLite database with MockEmbeddingProvider
- * to exercise the complete pipeline: indexBatch → search → getContext → rate.
+ * Integration test: the libscope/lite preset end to end on a real in-memory SQLite database
+ * with MockEmbeddingProvider: add -> search -> ask (passthrough context) -> rate -> delete.
  */
-describe("LibScopeLite integration", () => {
-  let lite: LibScopeLite;
-  let provider: MockEmbeddingProvider;
+describe("libscope/lite integration", () => {
+  let scope: LibScope;
 
   const corpus = [
     {
@@ -19,6 +17,7 @@ describe("LibScopeLite integration", () => {
         "The useState hook lets you add state to functional components. " +
         "Call useState with the initial state value and it returns an array with " +
         "the current state and a setter function. Re-renders happen when state changes.",
+      library: "react",
     },
     {
       title: "React useEffect Hook",
@@ -26,6 +25,7 @@ describe("LibScopeLite integration", () => {
         "useEffect runs side effects in functional components. " +
         "Pass a function and a dependency array. The effect re-runs when dependencies change. " +
         "Return a cleanup function for subscriptions or timers.",
+      library: "react",
     },
     {
       title: "TypeScript Generics",
@@ -41,132 +41,58 @@ describe("LibScopeLite integration", () => {
         "poll, check, and close. setTimeout and setInterval run in the timers phase. " +
         "setImmediate runs in the check phase, after I/O callbacks.",
     },
-    {
-      title: "SQL Indexes",
-      content:
-        "Database indexes speed up queries by creating sorted data structures. " +
-        "B-tree indexes are the default in most databases. " +
-        "Composite indexes cover multiple columns and follow the leftmost prefix rule.",
-    },
   ];
 
   beforeAll(async () => {
-    provider = new MockEmbeddingProvider();
-    lite = new LibScopeLite({ dbPath: ":memory:", provider });
-    await lite.indexBatch(corpus, { concurrency: 2 });
+    initLogger("silent");
+    scope = createLite({
+      dbPath: ":memory:",
+      provider: new MockEmbeddingProvider(),
+      config: { llm: { provider: "passthrough" } },
+    });
+    await Promise.all(corpus.map((doc) => scope.add(doc)));
   });
 
   afterAll(() => {
-    lite.close();
+    scope.close();
   });
 
-  describe("indexBatch → search", () => {
-    it("should find indexed documents via search", async () => {
-      const results = await lite.search("React hooks");
-      expect(results.length).toBeGreaterThan(0);
-    });
-
-    it("should return results with all expected fields", async () => {
-      const results = await lite.search("generics");
-      expect(results.length).toBeGreaterThan(0);
-
-      const r = results[0]!;
-      expect(typeof r.docId).toBe("string");
-      expect(typeof r.chunkId).toBe("string");
-      expect(typeof r.title).toBe("string");
-      expect(typeof r.content).toBe("string");
-      expect(typeof r.score).toBe("number");
-      expect(r.score).toBeGreaterThan(0);
-    });
-
-    it("should respect the limit option", async () => {
-      const results = await lite.search("Node.js", { limit: 2 });
-      expect(results.length).toBeLessThanOrEqual(2);
-    });
-
-    it("should return results for different queries", async () => {
-      const r1 = await lite.search("React useState");
-      const r2 = await lite.search("SQL database index");
-
-      expect(r1.length).toBeGreaterThan(0);
-      expect(r2.length).toBeGreaterThan(0);
-    });
+  it("search returns chunk results with document IDs", async () => {
+    const { items, total } = await scope.search({ query: "generics", limit: 2 });
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.length).toBeLessThanOrEqual(2);
+    expect(total).toBeGreaterThanOrEqual(items.length);
+    const r = items[0]!;
+    expect(typeof r.documentId).toBe("string");
+    expect(typeof r.chunkId).toBe("string");
+    expect(typeof r.score).toBe("number");
   });
 
-  describe("getContext", () => {
-    it("should return a context prompt string containing relevant content", async () => {
-      const context = await lite.getContext("How does the Node.js event loop work?");
-      expect(typeof context).toBe("string");
-      expect(context.length).toBeGreaterThan(0);
-    });
-
-    it("should include question in context", async () => {
-      const context = await lite.getContext("What are TypeScript generics?");
-      // The context prompt typically includes the question
-      expect(context).toContain("TypeScript generics");
-    });
+  it("filters by library", async () => {
+    const { items } = await scope.search({ query: "functional components", library: "react" });
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((r) => r.library === "react")).toBe(true);
   });
 
-  describe("rate", () => {
-    it("should rate a document found via search", async () => {
-      const results = await lite.search("React hooks");
-      expect(results.length).toBeGreaterThan(0);
-
-      const docId = results[0]!.docId;
-      // Should not throw
-      lite.rate(docId, 5);
-      lite.rate(docId, 3);
-    });
-
-    it("should reject invalid ratings", async () => {
-      // We need a valid doc ID first
-      const rateInvalid = async (): Promise<void> => {
-        const results = await lite.search("React");
-        const docId = results[0]!.docId;
-        lite.rate(docId, 0); // 0 is out of range
-      };
-      await expect(rateInvalid()).rejects.toThrow();
-    });
+  it("ask in passthrough mode returns the context prompt and sources", async () => {
+    const result = await scope.ask("How does the Node.js event loop work?");
+    expect(result.mode).toBe("context");
+    if (result.mode === "context") {
+      expect(result.contextPrompt).toContain("event loop");
+      expect(result.sources.length).toBeGreaterThan(0);
+    }
   });
 
-  describe("full pipeline: index → search → getContext → rate", () => {
-    it("should execute the complete workflow end-to-end", async () => {
-      // 1. Index additional docs
-      const extraLite = new LibScopeLite({
-        dbPath: ":memory:",
-        provider: new MockEmbeddingProvider(),
-      });
-      await extraLite.index([
-        {
-          title: "Docker Basics",
-          content:
-            "Docker containers package applications with their dependencies. " +
-            "Images are built from Dockerfiles. Containers run as isolated processes.",
-          library: "docker",
-        },
-        {
-          title: "Kubernetes Pods",
-          content:
-            "Kubernetes pods are the smallest deployable units. " +
-            "A pod can contain one or more containers sharing network and storage.",
-          library: "kubernetes",
-        },
-      ]);
+  it("rates, rejects an invalid rating, and deletes", async () => {
+    const { items } = await scope.search("React hooks");
+    const documentId = items[0]!.documentId;
+    await scope.docs.rate({ documentId, rating: 5 });
+    await expect(scope.docs.rate({ documentId, rating: 0 })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect((await scope.docs.get({ documentId })).ratings.totalRatings).toBe(1);
 
-      // 2. Search
-      const searchResults = await extraLite.search("Docker containers");
-      expect(searchResults.length).toBeGreaterThan(0);
-      expect(searchResults[0]!.title).toBeDefined();
-
-      // 3. Get context
-      const context = await extraLite.getContext("How does Docker work?");
-      expect(context.length).toBeGreaterThan(0);
-
-      // 4. Rate
-      const docId = searchResults[0]!.docId;
-      extraLite.rate(docId, 4);
-
-      extraLite.close();
-    });
+    await scope.docs.delete({ documentId });
+    expect((await scope.docs.list()).total).toBe(corpus.length - 1);
   });
 });

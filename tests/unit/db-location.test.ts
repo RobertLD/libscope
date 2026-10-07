@@ -163,12 +163,12 @@ describe("database location (temp HOME)", () => {
   describe("LibScope.create", () => {
     const local = { embedding: { provider: "local" } } as const;
 
-    it("opens the active workspace database (same as CLI/MCP)", () => {
+    it("opens the active workspace database (same as CLI/MCP)", async () => {
       const ls = LibScope.create({ config: local });
       try {
         expect(existsSync(wsDb("default"))).toBe(true);
         expect(existsSync(legacyDb())).toBe(false);
-        const stats = ls.stats();
+        const { stats } = await ls.overview();
         expect(stats.databaseSizeBytes).toBe(statSync(wsDb("default")).size);
         expect(stats.databaseSizeBytes).toBeGreaterThan(0);
       } finally {

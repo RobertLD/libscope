@@ -1,255 +1,58 @@
-export { indexDocument, indexFile, chunkContent } from "./indexing.js";
-export type {
-  IndexDocumentInput,
-  IndexFileOptions,
-  IndexedDocument,
-  ChunkOptions,
-} from "./indexing.js";
-
-export { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
-export type { DocumentParser } from "./parsers/index.js";
-
-export { checkDuplicate, findDuplicates } from "./dedup.js";
-export type { DedupResult, DedupOptions, DuplicateGroup } from "./dedup.js";
-
-export { searchDocuments } from "./search.js";
-export type {
-  SearchOptions,
-  SearchResult,
-  SearchMethod,
-  ScoreExplanation,
-  ContextChunk,
-} from "./search.js";
-
-export {
-  logSearch,
-  recordSearchQuery,
-  getStats,
-  getPopularDocuments,
-  getStaleDocuments,
-  getTopQueries,
-  getSearchTrends,
-  getSearchAnalytics,
-  getKnowledgeGaps,
-} from "./analytics.js";
-export type {
-  SearchLogEntry,
-  RecordSearchQueryInput,
-  OverviewStats,
-  PopularDocument,
-  StaleDocument,
-  TopQuery,
-  SearchTrend,
-  SearchAnalytics,
-  KnowledgeGap,
-} from "./analytics.js";
-
-export { rateDocument, getDocumentRatings, listRatings } from "./ratings.js";
-export type { RateDocumentInput, Rating, RatingSummary } from "./ratings.js";
-
-export { getDocument, deleteDocument, listDocuments, updateDocument } from "./documents.js";
-export type { Document, UpdateDocumentInput } from "./documents.js";
-
-export {
-  saveVersion,
-  getVersionHistory,
-  getVersion,
-  rollbackToVersion,
-  pruneVersions,
-  MAX_VERSIONS_DEFAULT,
-} from "./versioning.js";
-export type { DocumentVersion } from "./versioning.js";
-
-export {
-  createTopic,
-  listTopics,
-  getTopic,
-  deleteTopic,
-  renameTopic,
-  getDocumentsByTopic,
-  getTopicStats,
-} from "./topics.js";
-export type { Topic, CreateTopicInput, GetDocumentsByTopicOptions, TopicStats } from "./topics.js";
-
-export { fetchAndConvert, DEFAULT_FETCH_OPTIONS } from "./url-fetcher.js";
-export type { FetchedDocument, FetchOptions } from "./url-fetcher.js";
-
-export { exportKnowledgeBase, importFromBackup } from "./export.js";
-
-export { batchImport } from "./batch.js";
-export type {
-  BatchImportOptions,
-  BatchImportResult,
-  BatchProgress,
-  BatchFileResult,
-} from "./batch.js";
-
-export {
-  createTag,
-  deleteTag,
-  listTags,
-  addTagsToDocument,
-  removeTagsFromDocument,
-  getDocumentTags,
-  getDocumentsByTag,
-  suggestTags,
-} from "./tags.js";
-export type { Tag, TagWithCount, GetDocumentsByTagOptions } from "./tags.js";
-
-export { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "./watcher.js";
-export type { WatchOptions } from "./watcher.js";
-
-export {
-  askQuestion,
-  askQuestionStream,
-  createLlmProvider,
-  buildContextPrompt,
-  extractSources,
-} from "./rag.js";
-export type { RagOptions, RagResult, RagSource, RagStreamEvent, LlmProvider } from "./rag.js";
-
-export { reindex } from "./reindex.js";
-export type { ReindexOptions, ReindexResult, ReindexProgress } from "./reindex.js";
-
-export {
-  listAvailablePacks,
-  installPack,
-  removePack,
-  listInstalledPacks,
-  createPack,
-} from "./packs.js";
-export type {
-  KnowledgePack,
-  PackDocument,
-  PackInfo,
-  InstalledPack,
-  InstallResult,
-  CreatePackOptions,
-} from "./packs.js";
-
-export { indexRepository, parseRepoUrl } from "./repo.js";
-export type { RepoOptions, RepoResult } from "./repo.js";
-
-export {
-  syncOneNote,
-  disconnectOneNote,
-  authenticateDeviceCode,
-  refreshAccessToken,
-  convertOneNoteHtml,
-} from "../connectors/onenote.js";
-export type { OneNoteConfig, OneNoteSyncResult } from "../connectors/onenote.js";
-
-export {
-  syncObsidianVault,
-  parseObsidianMarkdown,
-  disconnectVault,
-} from "../connectors/obsidian.js";
-export type { ObsidianConfig, SyncResult } from "../connectors/obsidian.js";
-
-export { registerProvider, createEmbeddingProvider } from "../providers/index.js";
-export type { EmbeddingProvider } from "../providers/embedding.js";
-export type { ProviderFactory } from "../providers/index.js";
-
-export {
-  createWorkspace,
-  deleteWorkspace,
-  listWorkspaces,
-  getWorkspacePath,
-  getWorkspacesDir,
-  getActiveWorkspace,
-  setActiveWorkspace,
-  DEFAULT_WORKSPACE,
-} from "./workspace.js";
-export type { Workspace } from "./workspace.js";
-
-export { buildKnowledgeGraph, detectClusters } from "./graph.js";
-export type { KnowledgeGraph, GraphNode, GraphEdge, GraphOptions } from "./graph.js";
-
-export {
-  createLink,
-  getDocumentLinks,
-  deleteLink,
-  getPrerequisiteChain,
-  listLinks,
-} from "./links.js";
-export type { LinkType, DocumentLink, DocumentLinkWithTitle, DocumentLinks } from "./links.js";
-
-export { startApiServer } from "../api/server.js";
-export type { ApiServerOptions } from "../api/server.js";
-
-export { syncNotion, convertNotionBlocks, disconnectNotion } from "../connectors/notion.js";
-export type { NotionConfig, NotionSyncResult, NotionBlock } from "../connectors/notion.js";
-
-export { syncSlack, convertSlackMrkdwn, disconnectSlack } from "../connectors/slack.js";
-export type { SlackConfig, SlackSyncResult } from "../connectors/slack.js";
-
-export {
-  saveDbConnectorConfig,
-  loadDbConnectorConfig,
-  deleteDbConnectorConfig,
-  loadConnectorConfig,
-  saveConnectorConfig,
-  saveNamedConnectorConfig,
-  loadNamedConnectorConfig,
-  hasNamedConnectorConfig,
-  deleteConnectorDocuments,
-} from "../connectors/index.js";
-export type { ConnectorConfig } from "../connectors/index.js";
-
-export {
-  createSavedSearch,
-  listSavedSearches,
-  getSavedSearch,
-  deleteSavedSearch,
-  runSavedSearch,
-} from "./saved-searches.js";
-export type { SavedSearch } from "./saved-searches.js";
-
-export {
-  syncConfluence,
-  convertConfluenceStorage,
-  disconnectConfluence,
-} from "../connectors/confluence.js";
-export type { ConfluenceConfig, ConfluenceSyncResult } from "../connectors/confluence.js";
-
-export {
-  syncDocSite,
-  disconnectDocSite,
-  detectDocSiteType,
-  extractDocLinks,
-  extractDocTitle,
-  extractMainContent,
-  extractElementByPattern,
-  extractSitemapUrls,
-  normalizeUrl as normalizeDocUrl,
-} from "../connectors/docs.js";
-export type { DocSiteConfig, DocSiteSyncResult, DocSiteType } from "../connectors/docs.js";
-
-export { resolveSelector, bulkDelete, bulkRetag, bulkMove } from "./bulk.js";
-export type { BulkSelector, BulkResult } from "./bulk.js";
-
-export {
-  createWebhook,
-  listWebhooks,
-  getWebhook,
-  deleteWebhook,
-  updateWebhook,
-  signPayload,
-  buildPayload,
-  fireWebhooks,
-  redactWebhook,
-  WEBHOOK_EVENTS,
-} from "./webhooks.js";
-export type { Webhook, RedactedWebhook, WebhookEvent, WebhookPayload } from "./webhooks.js";
-
-export { ConnectorScheduler, loadScheduleEntries } from "./scheduler.js";
-export type { ScheduleConfig, SchedulerStatus } from "./scheduler.js";
-
-export { searchBatch, BATCH_SEARCH_MAX_REQUESTS } from "./batch-search.js";
-export type { BatchSearchRequest, BatchSearchResponse } from "./batch-search.js";
-
-export { pruneExpiredDocuments } from "./ttl.js";
-export type { PruneResult } from "./ttl.js";
-
+/**
+ * Package root (`import ... from "libscope"`): the LibScope class, its option and result
+ * types, and the error classes. Everything else is reached through LibScope methods.
+ * tests/unit/root-exports.test.ts lists the runtime exports so additions are deliberate.
+ */
 export { LibScope } from "../LibScope.js";
-export type { LibScopeOptions } from "../LibScope.js";
+export type {
+  LibScopeOptions,
+  RunOptions,
+  NamespaceName,
+  LibScopeNamespace,
+  LibScopeInput,
+  LibScopeOutput,
+  OperationInput,
+  OperationOutput,
+  AddInput,
+  AddResult,
+  SearchInput,
+  SearchOutput,
+  AskInput,
+  AskOutput,
+} from "../LibScope.js";
+
+export {
+  LibScopeError,
+  DatabaseError,
+  EmbeddingError,
+  ValidationError,
+  FetchError,
+  ConfigError,
+  NotFoundError,
+  DocumentNotFoundError,
+  ChunkNotFoundError,
+  TopicNotFoundError,
+} from "../errors.js";
+
+// Providers and hooks callers can pass to LibScope.create.
+export type { EmbeddingProvider } from "../providers/embedding.js";
+export type { LlmProvider } from "./rag.js";
+export type { Chunker } from "./indexing.js";
+export type { ConfigOverrides } from "./bootstrap.js";
+export type { LibScopeConfig } from "../config.js";
+
+// Result element types.
+export type { ListResult, ProgressEvent } from "./operations/types.js";
+export type { DocumentSummary } from "./operations/documents.js";
+export type { SearchResult, ContextChunk, ScoreExplanation } from "./search.js";
+export type {
+  AnswerResult,
+  PassthroughResult,
+  RagResult,
+  RagSource,
+  RagStreamEvent,
+} from "./rag.js";
+export type { IngestResult, IngestedDocument, IngestKind } from "./ingest.js";
+export type { DocumentView } from "./document-view.js";
+export type { Overview } from "./overview.js";
+export type { Task, TaskStatus } from "./tasks.js";
