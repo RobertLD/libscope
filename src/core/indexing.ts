@@ -574,6 +574,8 @@ export interface IndexFileOptions {
   expiresAt?: string | undefined;
   /** Custom chunker; see {@link Chunker}. */
   chunker?: Chunker | undefined;
+  /** Stored as the document URL; re-indexing a file with the same URL updates that document. */
+  url?: string | undefined;
 }
 
 /**
@@ -653,5 +655,6 @@ export async function indexFile(
     dedup: options.dedup,
     expiresAt: options.expiresAt,
     preChunked,
+    url: options.url,
   });
 }

@@ -157,7 +157,7 @@ async function initialSync(name: string, url: string): Promise<void> {
 }
 
 /** Register all `registry` subcommands on the given Commander program. */
-export function registerRegistryCommands(program: Command): void {
+export function register(program: Command): void {
   const registryCmd = program
     .command("registry")
     .description("Manage pack registries (git-backed)");

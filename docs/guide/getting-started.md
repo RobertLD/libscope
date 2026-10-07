@@ -12,15 +12,13 @@ npm install -g libscope
 
 Requires Node.js 20 or later.
 
-## Initialize
-
-Create the database:
+## Check the Setup
 
 ```bash
-libscope init
+libscope doctor
 ```
 
-This sets up a SQLite database at `~/.libscope/workspaces/default/libscope.db` (the active workspace's database) with vector search and full-text indexing. The command prints the path it used. On first run, it also downloads the local embedding model (~80MB).
+This shows the config files, the active workspace and its database (`~/.libscope/workspaces/default/libscope.db`), the embedding model, and which LLM `ask` will use. Each warning comes with the command that fixes it. You do not have to create anything first: the database is created when you add the first document (or run `libscope doctor --fix`). The first command that embeds text downloads the local embedding model (~80MB, once) and prints one line while it does.
 
 ## Index Some Documents
 
@@ -31,9 +29,14 @@ libscope add ./docs/getting-started.md --library my-lib
 # A URL (fetches and converts to markdown automatically)
 libscope add https://docs.example.com/guide
 
-# An entire directory
-libscope import ./docs/ --library my-lib --extensions .md,.mdx
+# An entire directory (keep it in sync with --watch)
+libscope add ./docs/ --library my-lib --include "*.md,*.mdx"
+
+# A GitHub or GitLab repository
+libscope add https://github.com/org/repo --path docs
 ```
+
+Each added document is printed with its ID. Add `--dry-run` to see what would be added.
 
 LibScope supports **Markdown** (`.md`, `.mdx`) and **plain text** natively. Additional formats — **PDF** (`.pdf`), **Word** (`.docx`), **EPUB** (`.epub`), and **PowerPoint** (`.pptx`) — are available via optional dependencies that install automatically. See the [README](/) for the full format table.
 
@@ -46,20 +49,27 @@ Each document gets chunked by heading, embedded into vectors, and stored in the 
 libscope search "how to authenticate"
 
 # Filtered by library and topic
-libscope search "API rate limiting" --library my-lib --topic security --limit 10
+libscope search "API rate limiting" --library my-lib --topic security -n 10
+
+# Interactive: type queries one after another
+libscope search
+
+# JSON for scripts
+libscope search "API rate limiting" --json
 ```
 
-Results are ranked by vector similarity, with optional FTS5 boosting for keyword matches.
+Results are ranked by vector similarity, with optional FTS5 boosting for keyword matches. Each result shows its document ID and chunk ID; `libscope docs show <documentId>` prints the whole document.
 
 ## Ask Questions
 
 If you have an LLM provider configured (OpenAI, Ollama, or Anthropic), you can ask questions and get synthesized answers with source citations:
 
 ```bash
+libscope config set openai.apiKey sk-...     # or anthropic.apiKey; stored in ~/.libscope/secrets.json
 libscope ask "What is the recommended auth flow?"
 ```
 
-See [Configuration](/guide/configuration) for LLM setup.
+Without an LLM, `ask` stops with a hint and `libscope doctor` shows what to set. See [Configuration](/guide/configuration) for LLM setup.
 
 ## Start the MCP Server
 
@@ -74,7 +84,7 @@ This starts a stdio-based MCP server that any compatible AI assistant can connec
 Run the local web dashboard to browse, search, and manage your knowledge base in a browser:
 
 ```bash
-libscope serve --dashboard
+libscope serve dashboard
 # opens at http://localhost:3377
 ```
 
@@ -86,22 +96,22 @@ Once you have content indexed you can enrich it:
 
 ```bash
 # Tag documents
-libscope tag add <doc-id> typescript,api,v2
+libscope docs tag <documentId> typescript,api,v2
 
 # Group into topics
 libscope topics create "backend"
 libscope topics create "auth" --parent backend
 
 # Save frequent searches
-libscope search "auth best practices" --save "Auth Docs"
+libscope searches save "Auth Docs" "auth best practices" --topic auth
 libscope searches run "Auth Docs"
 
 # Cross-reference documents
-libscope link <source-id> <target-id> --type prerequisite
+libscope docs link <documentId> <targetDocumentId> --type prerequisite
 
 # Bulk operations
-libscope bulk retag --library react --add-tags deprecated --dry-run
-libscope bulk move --library react --to new-topic-id
+libscope bulk retag --library react --add deprecated --dry-run
+libscope bulk move --library react --to frontend
 ```
 
 ## REST API
@@ -109,7 +119,7 @@ libscope bulk move --library react --to new-topic-id
 For programmatic access, start the REST API instead of the MCP server:
 
 ```bash
-libscope serve --api --port 3378
+libscope serve api --port 3378
 ```
 
 The OpenAPI 3.0 spec is served at `GET /openapi.json`. See [REST API Reference](/reference/rest-api) for full documentation.

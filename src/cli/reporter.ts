@@ -1,99 +1,47 @@
 /**
- * CLI output reporter — pretty human-readable output for interactive terminals.
- * In verbose/JSON mode, a SilentReporter is used so pino JSON logs handle output.
+ * Progress line for long-running operations. Written to stderr so `--json` output on stdout
+ * stays clean, and only on a terminal (nothing is written when stderr is redirected).
  */
+import type { ProgressEvent } from "../core/operations/index.js";
 
-const RESET = "\x1b[0m";
-const GREEN = "\x1b[32m";
-const YELLOW = "\x1b[33m";
-const RED = "\x1b[31m";
-const CYAN = "\x1b[36m";
-const DIM = "\x1b[2m";
-
-export interface CliReporter {
-  log(msg: string): void;
-  success(msg: string): void;
-  warn(msg: string): void;
-  error(msg: string): void;
-  progress(current: number, total: number, label: string): void;
-  clearProgress(): void;
+export interface ProgressLine {
+  update(event: ProgressEvent): void;
+  clear(): void;
 }
 
-function buildBar(pct: number, width = 20): string {
-  const filled = Math.round((pct / 100) * width);
-  return "\u2588".repeat(filled) + "\u2591".repeat(width - filled);
+function bar(done: number, total: number, width = 20): string {
+  const filled = Math.min(width, Math.round((done / total) * width));
+  return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-/** Pretty human-readable reporter. Uses ANSI colors and \r progress lines. */
-class PrettyReporter implements CliReporter {
-  private hasProgress = false;
-
-  log(msg: string): void {
-    this.clearProgress();
-    process.stdout.write(`${msg}\n`);
+/** Text of one progress line, e.g. "[████░░…] 40% (4/10) docs/a.md". */
+export function formatProgress(event: ProgressEvent): string {
+  const label = event.message ?? "";
+  const shortLabel = label.length > 50 ? `...${label.slice(-47)}` : label;
+  if (event.total !== undefined && event.total > 0) {
+    const pct = Math.round((event.done / event.total) * 100);
+    return `[${bar(event.done, event.total)}] ${pct}% (${event.done}/${event.total}) ${shortLabel}`;
   }
-
-  success(msg: string): void {
-    this.clearProgress();
-    process.stdout.write(`${GREEN}\u2713${RESET} ${msg}\n`);
-  }
-
-  warn(msg: string): void {
-    this.clearProgress();
-    process.stderr.write(`${YELLOW}\u26a0${RESET} ${msg}\n`);
-  }
-
-  error(msg: string): void {
-    this.clearProgress();
-    process.stderr.write(`${RED}\u2717${RESET} ${msg}\n`);
-  }
-
-  progress(current: number, total: number, label: string): void {
-    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-    const bar = buildBar(pct);
-    const truncatedLabel = label.length > 40 ? `${label.slice(0, 37)}...` : label;
-    const line = `${CYAN}[${bar}]${RESET} ${pct}% (${current}/${total}) ${DIM}${truncatedLabel}${RESET}`;
-    process.stdout.write(`\r${line}`);
-    this.hasProgress = true;
-  }
-
-  clearProgress(): void {
-    if (this.hasProgress) {
-      const width = process.stdout.columns ?? 80;
-      process.stdout.write(`\r${" ".repeat(width - 1)}\r`);
-      this.hasProgress = false;
-    }
-  }
+  return `(${event.done}) ${shortLabel}`;
 }
 
-/** No-op reporter: used in verbose/JSON mode where pino logs handle output. */
-class SilentReporter implements CliReporter {
-  log(_msg: string): void {
-    // intentionally empty — silent reporter
-  }
-  success(_msg: string): void {
-    // intentionally empty — silent reporter
-  }
-  warn(_msg: string): void {
-    // intentionally empty — silent reporter
-  }
-  error(_msg: string): void {
-    // intentionally empty — silent reporter
-  }
-  progress(_current: number, _total: number, _label: string): void {
-    // intentionally empty — silent reporter
-  }
-  clearProgress(): void {
-    // intentionally empty — silent reporter
-  }
-}
-
-/** Returns true if verbose mode is active (flag or env var). */
-export function isVerbose(verbose?: boolean): boolean {
-  return verbose === true || process.env["LIBSCOPE_VERBOSE"] === "1";
-}
-
-/** Create a reporter appropriate for the current mode. */
-export function createReporter(verbose?: boolean): CliReporter {
-  return isVerbose(verbose) ? new SilentReporter() : new PrettyReporter();
+export function createProgressLine(stream: NodeJS.WriteStream = process.stderr): ProgressLine {
+  let shown = false;
+  const width = (): number => stream.columns ?? 80;
+  return {
+    update(event: ProgressEvent): void {
+      if (!stream.isTTY) return;
+      stream.write(
+        `\r${formatProgress(event)
+          .slice(0, width() - 1)
+          .padEnd(width() - 1)}`,
+      );
+      shown = true;
+    },
+    clear(): void {
+      if (!shown) return;
+      stream.write(`\r${" ".repeat(width() - 1)}\r`);
+      shown = false;
+    },
+  };
 }

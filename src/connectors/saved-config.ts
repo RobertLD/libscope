@@ -1,7 +1,7 @@
 /**
  * Saved connector configs: one file per named connector in ~/.libscope/connectors/<name>.json
- * (mode 0600). `libscope connect <type>` writes them, and `connect <type> --sync`, the
- * scheduler and the MCP sync tools read them.
+ * (mode 0600). `libscope connect <type>` writes them; `libscope sync`, the scheduler and the
+ * sync operation read them.
  */
 import type Database from "better-sqlite3";
 import { ConfigError, ValidationError } from "../errors.js";
@@ -33,7 +33,7 @@ export function isConnectorType(value: unknown): value is ConnectorType {
 export interface SavedConnectorFields {
   /** Connector type the config belongs to. */
   connectorType?: ConnectorType | undefined;
-  /** Cron schedule set by `libscope schedule set`. */
+  /** Cron schedule set by `libscope connect <type> --schedule`. */
   schedule?: { cronExpression: string } | undefined;
 }
 

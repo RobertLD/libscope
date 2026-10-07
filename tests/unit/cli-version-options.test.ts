@@ -14,7 +14,7 @@ vi.mock("../../src/registry/publish.js", () => ({
 }));
 
 import { program } from "../../src/cli/index.js";
-import { registerRegistryCommands } from "../../src/cli/commands/registry.js";
+import { register as registerRegistryCommands } from "../../src/cli/commands/registry.js";
 import { unpublishPack } from "../../src/registry/publish.js";
 
 const pkgVersion = (
@@ -73,8 +73,8 @@ describe("CLI subcommand version flags", () => {
 
   it.each([
     [["add"], ["doc.md"]],
-    [["import"], ["./docs"]],
-    [["import-batch"], ["./docs"]],
+    [["search"], ["query"]],
+    [["docs", "list"], []],
     [["docs", "update"], ["doc-1"]],
   ])("%j accepts --lib-version", async (path, positional) => {
     const opts = await parseWithStubbedAction(path, [...positional, "--lib-version", "2.1.0"]);

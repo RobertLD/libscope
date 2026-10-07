@@ -7,7 +7,7 @@
  */
 import type Database from "better-sqlite3";
 import { readdirSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { globToRegExp, toPosixPath } from "../utils/glob.js";
@@ -230,6 +230,7 @@ async function ingestFile(ctx: IngestContext, input: IngestInput): Promise<Inges
   const path = input.source ?? "";
   if (input.dryRun) return { ...result, planned: [path] };
   const doc = await indexFile(ctx.db, ctx.provider, path, {
+    url: resolve(path),
     title: input.title,
     topic: input.topic,
     library: input.library,
@@ -258,6 +259,7 @@ async function ingestDirectory(ctx: IngestContext, input: IngestInput): Promise<
     ctx.signal?.throwIfAborted();
     try {
       const doc = await indexFile(ctx.db, ctx.provider, file, {
+        url: resolve(file),
         topic: input.topic,
         library: input.library,
         version: input.version,

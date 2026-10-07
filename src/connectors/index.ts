@@ -161,7 +161,7 @@ export function loadNamedConnectorConfig<T>(name: string): T {
   const filePath = namedConfigPath(name);
   if (!existsSync(filePath)) {
     throw new ConfigError(
-      `No connector config found for "${name}". Run 'libscope connect ${name}' first.`,
+      `No connector config found for "${name}". Run 'libscope connect <type> --name ${name}' first.`,
     );
   }
   const raw = readFileSync(filePath, "utf-8");

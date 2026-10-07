@@ -109,7 +109,7 @@ describe.skipIf(!vecAvailable)("vector index metadata (sqlite-vec)", () => {
     expect(change).toThrow(
       /configured embedding model \(ollama\/mxbai-embed-large, 1024 dimensions\)/,
     );
-    expect(change).toThrow(/libscope reindex --rebuild/);
+    expect(change).toThrow(/libscope admin reindex --rebuild/);
     // A bare vector size is checked against the table too.
     expect(() => createVectorTable(db, 1024)).toThrow(
       /does not match the configured embedding model \(1024 dimensions\)/,

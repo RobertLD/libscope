@@ -5,6 +5,7 @@
  * Connector settings are the saved configs in ~/.libscope/connectors/<name>.json.
  */
 import type Database from "better-sqlite3";
+import cron from "node-cron";
 import { z } from "zod";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { NotFoundError, ValidationError } from "../errors.js";
@@ -13,6 +14,7 @@ import {
   hasNamedConnectorConfig,
   listNamedConnectorConfigs,
   loadNamedConnectorConfig,
+  saveNamedConnectorConfig,
 } from "./index.js";
 import {
   isConnectorType,
@@ -287,6 +289,45 @@ export interface ConnectionInfo {
   lastSync?: string | undefined;
   /** Status of the most recent recorded run, if any. */
   lastRun?: { status: string; startedAt: string; error: string | null } | undefined;
+}
+
+/**
+ * Create or update saved connection `name` of type `type`: `settings` (undefined values
+ * ignored) are merged over the connection's saved settings and checked against the type's
+ * config schema. `schedule`: a cron expression sets it, null removes it, undefined keeps it.
+ * Returns the merged settings (including secrets).
+ */
+export function saveConnection(
+  name: string,
+  type: string,
+  settings: Record<string, unknown>,
+  options: { schedule?: string | null | undefined } = {},
+): Record<string, unknown> {
+  const connector = getConnector(type);
+  const saved = hasNamedConnectorConfig(name)
+    ? loadSavedConnectorConfig<Record<string, unknown>>(connector.type, name)
+    : {};
+  const merged: Record<string, unknown> = { ...saved };
+  for (const [key, value] of Object.entries(settings)) {
+    if (value !== undefined) merged[key] = value;
+  }
+  const parsed = connector.configSchema.safeParse(merged);
+  if (!parsed.success) {
+    const fields = [...new Set(parsed.error.issues.map((issue) => issue.path.join(".")))];
+    throw new ValidationError(`Invalid ${connector.label} settings: ${fields.join(", ")}`);
+  }
+  if (options.schedule === null) {
+    delete merged["schedule"];
+  } else if (options.schedule !== undefined) {
+    if (!cron.validate(options.schedule)) {
+      throw new ValidationError(
+        `Invalid cron expression "${options.schedule}" (example: "0 */6 * * *" = every 6 hours)`,
+      );
+    }
+    merged["schedule"] = { cronExpression: options.schedule };
+  }
+  saveNamedConnectorConfig(name, { ...merged, connectorType: connector.type });
+  return merged;
 }
 
 /** Hide secret values of a saved config (the field stays so users see it is set). */
