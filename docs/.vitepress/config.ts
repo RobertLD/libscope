@@ -34,6 +34,10 @@ export default defineConfig({
             link: "/changelog",
           },
           {
+            text: "Migrating to 2.0",
+            link: "/migration-v2",
+          },
+          {
             text: "Contributing",
             link: "/contributing",
           },
@@ -48,6 +52,7 @@ export default defineConfig({
           items: [
             { text: "Getting Started", link: "/guide/getting-started" },
             { text: "Configuration", link: "/guide/configuration" },
+            { text: "Migrating to 2.0", link: "/migration-v2" },
           ],
         },
         {
