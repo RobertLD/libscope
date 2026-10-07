@@ -6,7 +6,7 @@ import PizZip from "pizzip";
 import type Database from "better-sqlite3";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
-import { batchImport } from "../../src/core/batch.js";
+import { ingest } from "../../src/core/ingest.js";
 import { FileWatcher, readWatchedFile } from "../../src/core/watcher.js";
 import { initLogger } from "../../src/logger.js";
 
@@ -47,7 +47,7 @@ function documentContent(db: Database.Database, id: string): { content: string; 
     .get(id) as { content: string; source: string };
 }
 
-describe("integration: import-batch and watch use the parser registry", () => {
+describe("integration: directory ingest and watch use the parser registry", () => {
   let db: Database.Database;
   let provider: MockEmbeddingProvider;
   let dir: string;
@@ -67,19 +67,20 @@ describe("integration: import-batch and watch use the parser registry", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("batchImport indexes parsed DOCX text and skips unsupported files", async () => {
+  it("directory ingest indexes parsed DOCX text and skips unsupported files", async () => {
     const pngPath = join(dir, "logo.png");
     writeFileSync(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 
-    const result = await batchImport(db, provider, [docxPath, pngPath], {
-      sourceType: "model-generated",
-    });
+    const result = await ingest(
+      { db, provider },
+      { source: dir, kind: "directory", sourceType: "model-generated" },
+    );
 
-    expect(result.completed).toBe(1);
-    expect(result.failed).toBe(0);
-    expect(result.skipped).toBe(1);
+    expect(result.documents).toHaveLength(1);
+    expect(result.errors).toEqual([]);
+    expect(result.skipped).toEqual([{ source: pngPath, reason: "unsupported file format" }]);
 
-    const doc = documentContent(db, result.results[0]!.documentId!);
+    const doc = documentContent(db, result.documents[0]!.documentId);
     expect(doc.content).toContain(DOCX_TEXT);
     expect(doc.content).not.toContain("word/document.xml");
     expect(doc.source).toBe("model-generated");
