@@ -49,7 +49,7 @@ The existing `pack install` command now resolves packs from your configured regi
 libscope pack install react-docs
 
 # Install a specific version
-libscope pack install react-docs --version 1.2.0
+libscope pack install react-docs --pack-version 1.2.0
 # or
 libscope pack install react-docs@1.2.0
 
@@ -89,7 +89,7 @@ This creates a git repo with the correct folder structure (`index.json`, `packs/
 
 ```bash
 # Publish a pack file to a registry you own
-libscope registry publish ./my-pack.json -r my-registry --version 1.0.0
+libscope registry publish ./my-pack.json -r my-registry --pack-version 1.0.0
 
 # Auto-bump patch version (from latest in registry)
 libscope registry publish ./my-pack.json -r my-registry
@@ -98,7 +98,9 @@ libscope registry publish ./my-pack.json -r my-registry
 libscope registry publish ./my-pack.json -r community --submit
 
 # Unpublish a specific version
-libscope registry unpublish my-pack -r my-registry --version 1.0.0
+libscope registry unpublish my-pack -r my-registry --pack-version 1.0.0
+# or
+libscope registry unpublish my-pack@1.0.0 -r my-registry
 ```
 
 Publishing assembles the pack into the registry's folder structure, generates a SHA-256 checksum, updates `index.json` and `pack.json`, and commits + pushes. The `--submit` flag pushes to a `feature/add-<pack-name>` branch instead — you then create a pull request manually.
@@ -109,7 +111,7 @@ Every published pack version includes a `checksum.sha256` file. On install, libs
 
 ## Versioning
 
-Pack versions follow [semver](https://semver.org/) (e.g. `1.0.0`, `1.2.3`). When you publish without `--version`, the patch version is auto-bumped from the latest. Old versions are preserved in the registry. `pack install` defaults to the latest version unless you specify one.
+Pack versions follow [semver](https://semver.org/) (e.g. `1.0.0`, `1.2.3`). When you publish without `--pack-version`, the patch version is auto-bumped from the latest. Old versions are preserved in the registry. `pack install` defaults to the latest version unless you specify one.
 
 ## MCP Usage
 

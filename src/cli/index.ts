@@ -15,8 +15,9 @@ import { createLink, getDocumentLinks, deleteLink, getPrerequisiteChain } from "
 import type { LinkType } from "../core/links.js";
 import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { spiderUrl } from "../core/spider.js";
 import type { SpiderOptions } from "../core/spider.js";
@@ -340,7 +341,7 @@ async function handlePackConflict(
 /** Try to resolve a pack from git registries; returns true if installed. */
 async function tryGitRegistryInstall(
   nameOrPath: string,
-  opts: { fromRegistry?: string; version?: string; yes?: boolean },
+  opts: { fromRegistry?: string; packVersion?: string; yes?: boolean },
   db: ReturnType<typeof getDatabase>,
   provider: EmbeddingProvider,
   installOpts: {
@@ -354,7 +355,7 @@ async function tryGitRegistryInstall(
   if (isLocalFile || loadRegistries().length === 0) return false;
 
   const { name: packName, version: specVersion } = parsePackSpecifier(nameOrPath);
-  const version = opts.version ?? specVersion;
+  const version = opts.packVersion ?? specVersion;
 
   const { resolved, conflict, warnings } = resolvePackFromRegistries(packName, {
     version,
@@ -398,7 +399,7 @@ async function executePackInstall(
   opts: {
     registry?: string;
     fromRegistry?: string;
-    version?: string;
+    packVersion?: string;
     yes?: boolean;
     batchSize?: string;
     resumeFrom?: string;
@@ -512,7 +513,7 @@ async function runSpiderAdd(
   opts: {
     topic?: string;
     library?: string;
-    version?: string;
+    libVersion?: string;
     dedup?: string;
     maxPages?: number;
     maxDepth?: number;
@@ -538,7 +539,7 @@ async function runSpiderAdd(
         content: page.content,
         sourceType,
         library: opts.library,
-        version: opts.version,
+        version: opts.libVersion,
         topicId: opts.topic,
         url: page.url,
         dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
@@ -568,7 +569,7 @@ program
   )
   .option("--topic <topicId>", "Assign to a topic")
   .option("--library <name>", "Mark as library documentation")
-  .option("--version <version>", "Library version")
+  .option("--lib-version <version>", "Library version")
   .option("--title <title>", "Override document title")
   .option("--format <ext>", "Force file format (e.g. .pdf, .csv, .yaml)")
   .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
@@ -588,7 +589,7 @@ program
       opts: {
         topic?: string;
         library?: string;
-        version?: string;
+        libVersion?: string;
         title?: string;
         format?: string;
         dedup?: string;
@@ -618,7 +619,7 @@ program
               content: fetched.content,
               sourceType: resolveSourceType(opts.library, opts.topic),
               library: opts.library,
-              version: opts.version,
+              version: opts.libVersion,
               topicId: opts.topic,
               url: fileOrUrl,
               dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
@@ -631,7 +632,7 @@ program
             title: opts.title,
             topic: opts.topic,
             library: opts.library,
-            version: opts.version,
+            version: opts.libVersion,
             format: opts.format,
             dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
           });
@@ -651,7 +652,7 @@ program
   .description("Bulk import files from a directory (supports all document formats)")
   .option("--topic <topicId>", "Assign all to a topic")
   .option("--library <name>", "Mark all as library documentation")
-  .option("--version <version>", "Library version")
+  .option("--lib-version <version>", "Library version")
   .option(
     "--extensions <exts>",
     "Comma-separated file extensions to include",
@@ -664,7 +665,7 @@ program
       opts: {
         topic?: string;
         library?: string;
-        version?: string;
+        libVersion?: string;
         extensions: string;
         dedup?: string;
       },
@@ -689,7 +690,7 @@ program
             const result = await indexFile(db, provider, file, {
               topic: opts.topic,
               library: opts.library,
-              version: opts.version,
+              version: opts.libVersion,
               dedup: opts.dedup as "skip" | "warn" | "force" | undefined,
             });
 
@@ -722,7 +723,7 @@ program
   .option("--dry-run", "Preview files without importing")
   .option("--topic <topicId>", "Assign all to a topic")
   .option("--library <name>", "Mark all as library documentation")
-  .option("--version <version>", "Library version")
+  .option("--lib-version <version>", "Library version")
   .action(
     async (
       directory: string,
@@ -732,7 +733,7 @@ program
         dryRun?: boolean;
         topic?: string;
         library?: string;
-        version?: string;
+        libVersion?: string;
       },
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
@@ -762,7 +763,7 @@ program
         const result = await batchImport(db, provider, files, {
           concurrency: parseIntOption(opts.concurrency, "--concurrency"),
           library: opts.library,
-          version: opts.version,
+          version: opts.libVersion,
           topicId: opts.topic,
           onProgress: (progress) => {
             const done = progress.completed + progress.failed;
@@ -1295,7 +1296,7 @@ docsCmd
   .option("--title <title>", "New title")
   .option("--content <content>", "New content (will re-chunk and re-index)")
   .option("--library <name>", "New library name")
-  .option("--version <ver>", "New version")
+  .option("--lib-version <ver>", "New library version")
   .option("--url <url>", "New URL")
   .option("--topic <topicId>", "New topic ID")
   .action(
@@ -1305,7 +1306,7 @@ docsCmd
         title?: string;
         content?: string;
         library?: string;
-        version?: string;
+        libVersion?: string;
         url?: string;
         topic?: string;
       },
@@ -1314,7 +1315,7 @@ docsCmd
       try {
         const metadata: Record<string, string | null | undefined> = {};
         if (opts.library !== undefined) metadata.library = opts.library;
-        if (opts.version !== undefined) metadata.version = opts.version;
+        if (opts.libVersion !== undefined) metadata.version = opts.libVersion;
         if (opts.url !== undefined) metadata.url = opts.url;
         if (opts.topic !== undefined) metadata.topicId = opts.topic;
 
@@ -2097,7 +2098,10 @@ packCmd
   )
   .option("--registry <url>", "Custom registry URL (for URL-based registries)")
   .option("--from-registry <name>", "Install from a specific git registry by name")
-  .option("--version <semver>", "Install a specific version (for git registries)")
+  .option(
+    "--pack-version <semver>",
+    "Install a specific version (for git registries; or use name@version)",
+  )
   .option("-y, --yes", "Non-interactive mode (fail on conflicts instead of prompting)")
   .option("--batch-size <n>", "Number of documents to embed per batch (default: 10)")
   .option("--resume-from <n>", "Skip the first N documents (resume a partial install)")
@@ -2108,7 +2112,7 @@ packCmd
       opts: {
         registry?: string;
         fromRegistry?: string;
-        version?: string;
+        packVersion?: string;
         yes?: boolean;
         batchSize?: string;
         resumeFrom?: string;
@@ -2181,7 +2185,7 @@ packCmd
   .requiredOption("--name <name>", "Pack name")
   .option("--from <sources...>", "Source folder(s), file(s), or URL(s) to build pack from")
   .option("--topic <topic>", "Filter documents by topic ID (database mode only)")
-  .option("--version <version>", "Pack version (default: 1.0.0)")
+  .option("--pack-version <version>", "Pack version (default: 1.0.0)")
   .option("--description <desc>", "Pack description")
   .option("--author <author>", "Pack author")
   .option("--output <path>", "Output file path")
@@ -2196,7 +2200,7 @@ packCmd
       name: string;
       from?: string[];
       topic?: string;
-      version?: string;
+      packVersion?: string;
       description?: string;
       author?: string;
       output?: string;
@@ -2213,7 +2217,7 @@ packCmd
         const pack = await createPackFromSource({
           name: opts.name,
           from: opts.from,
-          version: opts.version,
+          version: opts.packVersion,
           description: opts.description,
           author: opts.author,
           outputPath,
@@ -2238,7 +2242,7 @@ packCmd
         try {
           const pack = createPack(db, {
             name: opts.name,
-            version: opts.version,
+            version: opts.packVersion,
             description: opts.description,
             author: opts.author,
             topic: opts.topic,
@@ -3049,4 +3053,23 @@ scheduleCmd
 // Registry commands
 registerRegistryCommands(program);
 
-program.parse();
+/** True when this module is the process entry point (the `libscope` bin), not an import. */
+function isCliEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  const self = realpathSync(fileURLToPath(import.meta.url));
+  // Node also accepts an entry path without the ".js" extension.
+  return [entry, `${entry}.js`].some((candidate) => {
+    try {
+      return realpathSync(candidate) === self;
+    } catch {
+      return false;
+    }
+  });
+}
+
+if (isCliEntryPoint()) {
+  program.parse();
+}
+
+export { program };

@@ -28,7 +28,7 @@ You can export documents from your knowledge base as a pack:
 libscope pack create \
   --name "react-docs" \
   --topic react \
-  --version 1.0.0 \
+  --pack-version 1.0.0 \
   --description "React documentation" \
   --author "team"
 ```
