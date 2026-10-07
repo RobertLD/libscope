@@ -24,7 +24,7 @@ Each file also stores `connectorType` and, after `libscope schedule set`, a `sch
 
 `--sync` on any connect command re-runs the saved config (`--name` selects which one). Other options on the command line are ignored with `--sync`. After each successful sync, `lastSync` is set to the time the sync started.
 
-To sync a saved config on a schedule, set a cron expression. Schedules run while the API server is running (`libscope serve --api`):
+To sync a saved config on a schedule, set a cron expression. Schedules run while the API server is running (`libscope serve api`):
 
 ```bash
 libscope schedule set notion "0 */6 * * *"

@@ -4,6 +4,5 @@ dist
 *.md
 tests
 coverage
-sdk-python
-sdk-go
+sdk
 .github
