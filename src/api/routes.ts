@@ -55,7 +55,7 @@ import {
 import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
 import { spiderUrl } from "../core/spider.js";
-import type { SpiderOptions, SpiderStats } from "../core/spider.js";
+import type { SpiderOptions } from "../core/spider.js";
 import { loadReposConfig, createRepoLibScope } from "./indexing/repoConfig.js";
 import { indexRepo, type IndexJobStats } from "./indexing/repoIndexer.js";
 
@@ -99,133 +99,6 @@ function parseUrl(req: IncomingMessage): URL {
 
 function extractPathSegments(pathname: string): string[] {
   return pathname.split("/").filter(Boolean);
-}
-
-/** Match a path like /api/v1/documents/:id and return the id, or null. */
-function matchDocumentId(segments: string[]): string | null {
-  // ["api", "v1", "documents", "<id>"]
-  if (
-    segments.length === 4 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "documents"
-  ) {
-    const id = segments[3];
-    // Exclude sub-paths that are named routes
-    if (id === "url") return null;
-    return id ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/documents/:id/tags */
-function matchDocumentTags(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "documents" &&
-    segments[4] === "tags"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/documents/:id/suggest-tags */
-function matchDocumentSuggestTags(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "documents" &&
-    segments[4] === "suggest-tags"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/documents/:id/links */
-function matchDocumentLinks(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "documents" &&
-    segments[4] === "links"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/links/:id */
-function matchLinkId(segments: string[]): string | null {
-  if (
-    segments.length === 4 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "links"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/searches/:id */
-function matchSearchId(segments: string[]): string | null {
-  if (
-    segments.length === 4 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "searches"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/searches/:id/run */
-function matchSearchRun(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "searches" &&
-    segments[4] === "run"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/webhooks/:id */
-function matchWebhookId(segments: string[]): string | null {
-  if (
-    segments.length === 4 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "webhooks"
-  ) {
-    const id = segments[3];
-    return id ?? null;
-  }
-  return null;
-}
-
-/** Match /api/v1/webhooks/:id/test */
-function matchWebhookTest(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "webhooks" &&
-    segments[4] === "test"
-  ) {
-    return segments[3] ?? null;
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +339,6 @@ async function handleSpiderUrl(
   const spiderOptions = buildSpiderOptions(b, fetchOptions);
   const indexedDocs: Array<{ id: string; title: string; url: string }> = [];
   const errors: Array<{ url: string; error: string }> = [];
-  let stats: SpiderStats = { pagesFetched: 0, pagesCrawled: 0, pagesSkipped: 0, errors };
 
   const gen = spiderUrl(urlStr, spiderOptions);
   let result = await gen.next();
@@ -488,10 +360,7 @@ async function handleSpiderUrl(
     result = await gen.next();
   }
   // result.value is SpiderStats when done (generator is exhausted)
-  if (result.done && result.value) {
-    stats = result.value;
-    stats.errors = errors;
-  }
+  const stats = result.value;
 
   sendJson(
     ctx.res,
@@ -925,20 +794,6 @@ function handleDeleteWebhook(ctx: RouteContext, webhookId: string): void {
 // Repo indexing webhook handler
 // ---------------------------------------------------------------------------
 
-/** Match /api/v1/index/jobs/:jobId */
-function matchIndexJobId(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "index" &&
-    segments[3] === "jobs"
-  ) {
-    return segments[4] ?? null;
-  }
-  return null;
-}
-
 function handleGetIndexJob(ctx: RouteContext, jobId: string): void {
   const job = repoIndexJobs.get(jobId);
   if (!job) {
@@ -946,20 +801,6 @@ function handleGetIndexJob(ctx: RouteContext, jobId: string): void {
     return;
   }
   sendJson(ctx.res, 200, job, elapsed(ctx.start));
-}
-
-/** Match /api/v1/index/repos/:repoSlug */
-function matchRepoSlugForIndex(segments: string[]): string | null {
-  if (
-    segments.length === 5 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === "index" &&
-    segments[3] === "repos"
-  ) {
-    return segments[4] ?? null;
-  }
-  return null;
 }
 
 async function handleIndexRepo(ctx: RouteContext, repoSlug: string): Promise<void> {
@@ -1058,164 +899,6 @@ function handleRouteError(
 }
 
 // ---------------------------------------------------------------------------
-// Path-based route matching helpers (for segment-matched routes)
-// ---------------------------------------------------------------------------
-
-function isApiV1Path(segments: string[], resource: string): boolean {
-  return (
-    segments.length === 3 &&
-    segments[0] === "api" &&
-    segments[1] === "v1" &&
-    segments[2] === resource
-  );
-}
-
-function isBulkPath(segments: string[]): boolean {
-  return (
-    segments.length === 4 && segments[0] === "api" && segments[1] === "v1" && segments[2] === "bulk"
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Segment-based route dispatcher (document/:id, links, searches, webhooks, bulk)
-// ---------------------------------------------------------------------------
-
-/** Dispatch single-document CRUD routes (GET/DELETE/PATCH /documents/:id). */
-async function dispatchDocumentCrudRoutes(
-  ctx: RouteContext,
-  docId: string,
-  method: string,
-): Promise<boolean> {
-  if (method === "GET") {
-    handleGetDocument(ctx, docId);
-    return true;
-  }
-  if (method === "DELETE") {
-    handleDeleteDocument(ctx, docId);
-    return true;
-  }
-  if (method === "PATCH") {
-    await handleUpdateDocument(ctx, docId);
-    return true;
-  }
-  return false;
-}
-
-/** Dispatch document-related segment routes (tags, suggest, CRUD, links). */
-async function dispatchDocumentRoutes(
-  ctx: RouteContext,
-  segments: string[],
-  method: string,
-): Promise<boolean> {
-  const tagDocId = matchDocumentTags(segments);
-  if (tagDocId && method === "POST") {
-    await handleAddTagsToDocument(ctx, tagDocId);
-    return true;
-  }
-  const suggestDocId = matchDocumentSuggestTags(segments);
-  if (suggestDocId && method === "GET") {
-    handleSuggestTags(ctx, suggestDocId);
-    return true;
-  }
-  const docId = matchDocumentId(segments);
-  if (docId) return dispatchDocumentCrudRoutes(ctx, docId, method);
-  const linksDocId = matchDocumentLinks(segments);
-  if (linksDocId && method === "GET") {
-    handleGetDocumentLinks(ctx, linksDocId);
-    return true;
-  }
-  if (linksDocId && method === "POST") {
-    await handleCreateDocumentLink(ctx, linksDocId);
-    return true;
-  }
-  const linkId = matchLinkId(segments);
-  if (linkId && method === "DELETE") {
-    handleDeleteLink(ctx, linkId);
-    return true;
-  }
-  return false;
-}
-
-/** Dispatch webhook segment routes. */
-async function dispatchWebhookRoutes(
-  ctx: RouteContext,
-  segments: string[],
-  method: string,
-): Promise<boolean> {
-  if (isApiV1Path(segments, "webhooks") && method === "GET") {
-    handleListWebhooks(ctx);
-    return true;
-  }
-  if (isApiV1Path(segments, "webhooks") && method === "POST") {
-    await handleCreateWebhook(ctx);
-    return true;
-  }
-  const webhookTestId = matchWebhookTest(segments);
-  if (webhookTestId && method === "POST") {
-    await handleTestWebhook(ctx, webhookTestId);
-    return true;
-  }
-  const webhookId = matchWebhookId(segments);
-  if (webhookId && method === "DELETE") {
-    handleDeleteWebhook(ctx, webhookId);
-    return true;
-  }
-  return false;
-}
-
-/** Dispatch search, bulk, and webhook segment routes. */
-async function dispatchMiscSegmentRoutes(
-  ctx: RouteContext,
-  segments: string[],
-  method: string,
-): Promise<boolean> {
-  const searchRunId = matchSearchRun(segments);
-  if (searchRunId && method === "POST") {
-    await handleRunSavedSearch(ctx, searchRunId);
-    return true;
-  }
-  if (isApiV1Path(segments, "searches") && method === "GET") {
-    handleListSavedSearches(ctx);
-    return true;
-  }
-  if (isApiV1Path(segments, "searches") && method === "POST") {
-    await handleCreateSavedSearch(ctx);
-    return true;
-  }
-  if (isBulkPath(segments) && method === "POST") {
-    const operation = segments[3] as string;
-    await handleBulkOperation(ctx, operation);
-    return true;
-  }
-  const savedSearchId = matchSearchId(segments);
-  if (savedSearchId && method === "DELETE") {
-    handleDeleteSavedSearch(ctx, savedSearchId);
-    return true;
-  }
-  const indexJobId = matchIndexJobId(segments);
-  if (indexJobId && method === "GET") {
-    handleGetIndexJob(ctx, indexJobId);
-    return true;
-  }
-  const repoSlug = matchRepoSlugForIndex(segments);
-  if (repoSlug && method === "POST") {
-    await handleIndexRepo(ctx, repoSlug);
-    return true;
-  }
-  return dispatchWebhookRoutes(ctx, segments, method);
-}
-
-async function dispatchSegmentRoutes(
-  ctx: RouteContext,
-  segments: string[],
-  method: string,
-): Promise<boolean> {
-  const docHandled = await dispatchDocumentRoutes(ctx, segments, method);
-  if (docHandled) return true;
-  return dispatchMiscSegmentRoutes(ctx, segments, method);
-}
-
-// ---------------------------------------------------------------------------
 // Pathname-based route dispatcher (simple /api/v1/... paths)
 // ---------------------------------------------------------------------------
 
@@ -1250,6 +933,77 @@ async function dispatchPathnameRoutes(
 }
 
 // ---------------------------------------------------------------------------
+// Pattern-based route dispatcher (/documents/:id, links, searches, webhooks, bulk, index)
+// ---------------------------------------------------------------------------
+
+interface PatternRoute {
+  method: string;
+  parts: string[];
+  handler: (ctx: RouteContext, param: string) => void | Promise<void>;
+  /** A param value this route must not match (it belongs to a literal route). */
+  exclude?: string | undefined;
+}
+
+/** Build a pattern route from "METHOD /path/:param" (at most one ":param" segment). */
+function route(spec: string, handler: PatternRoute["handler"], exclude?: string): PatternRoute {
+  const [method = "", path = ""] = spec.split(" ");
+  return { method, parts: extractPathSegments(path), handler, exclude };
+}
+
+/**
+ * Match path segments against pattern parts. Returns the ":param" segment value ("" when the
+ * pattern has no param), or null when the segments do not match.
+ */
+function matchPattern(parts: string[], segments: string[]): string | null {
+  if (parts.length !== segments.length) return null;
+  let param = "";
+  for (const [i, part] of parts.entries()) {
+    const segment = segments[i] ?? "";
+    if (part.startsWith(":")) param = segment;
+    else if (part !== segment) return null;
+  }
+  return param;
+}
+
+/** Pattern route table, checked in order after PATHNAME_ROUTES. */
+const PATTERN_ROUTES: PatternRoute[] = [
+  route("POST /api/v1/documents/:id/tags", handleAddTagsToDocument),
+  route("GET /api/v1/documents/:id/suggest-tags", handleSuggestTags),
+  route("GET /api/v1/documents/:id", handleGetDocument, "url"),
+  route("DELETE /api/v1/documents/:id", handleDeleteDocument, "url"),
+  route("PATCH /api/v1/documents/:id", handleUpdateDocument, "url"),
+  route("GET /api/v1/documents/:id/links", handleGetDocumentLinks),
+  route("POST /api/v1/documents/:id/links", handleCreateDocumentLink),
+  route("DELETE /api/v1/links/:id", handleDeleteLink),
+  route("POST /api/v1/searches/:id/run", handleRunSavedSearch),
+  route("GET /api/v1/searches", handleListSavedSearches),
+  route("POST /api/v1/searches", handleCreateSavedSearch),
+  route("POST /api/v1/bulk/:operation", handleBulkOperation),
+  route("DELETE /api/v1/searches/:id", handleDeleteSavedSearch),
+  route("GET /api/v1/index/jobs/:jobId", handleGetIndexJob),
+  route("POST /api/v1/index/repos/:repoSlug", handleIndexRepo),
+  route("GET /api/v1/webhooks", handleListWebhooks),
+  route("POST /api/v1/webhooks", handleCreateWebhook),
+  route("POST /api/v1/webhooks/:id/test", handleTestWebhook),
+  route("DELETE /api/v1/webhooks/:id", handleDeleteWebhook),
+];
+
+async function dispatchPatternRoutes(
+  ctx: RouteContext,
+  segments: string[],
+  method: string,
+): Promise<boolean> {
+  for (const r of PATTERN_ROUTES) {
+    if (r.method !== method) continue;
+    const param = matchPattern(r.parts, segments);
+    if (param === null || param === r.exclude) continue;
+    await r.handler(ctx, param);
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -1272,8 +1026,8 @@ export async function handleRequest(
     const pathnameHandled = await dispatchPathnameRoutes(ctx, pathname, method);
     if (pathnameHandled) return;
 
-    // Try segment-matched routes (document/:id, links, searches, webhooks, bulk)
-    const segmentHandled = await dispatchSegmentRoutes(ctx, segments, method);
+    // Try segment-pattern routes (document/:id, links, searches, webhooks, bulk, index)
+    const segmentHandled = await dispatchPatternRoutes(ctx, segments, method);
     if (segmentHandled) return;
 
     // Unknown route — don't leak method/pathname to prevent endpoint enumeration
