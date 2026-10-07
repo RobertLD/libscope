@@ -14,11 +14,6 @@ export interface ConfigKeyMeta {
   env?: readonly string[];
   /** Secret values are masked on display and stored in secrets.json, never in config.json. */
   secret?: boolean;
-  /**
-   * Config files may hold values outside the enum (names of providers registered at runtime
-   * with registerProvider). `config set` and env vars accept only the listed values.
-   */
-  openEnum?: boolean;
   /** Default text for the docs table when the default depends on other keys. */
   defaultText?: string;
 }
@@ -47,13 +42,7 @@ const nonEmpty = (): z.ZodString => z.string().trim().min(1);
 
 export const ConfigSchema = z.object({
   embedding: z.object({
-    provider: leaf(
-      z
-        .enum(EMBEDDING_PROVIDERS)
-        .default("local")
-        .describe("Embedding provider. A config file may also name a provider registered in code."),
-      { openEnum: true },
-    ),
+    provider: leaf(z.enum(EMBEDDING_PROVIDERS).default("local").describe("Embedding provider.")),
     model: leaf(
       nonEmpty()
         .optional()
@@ -167,7 +156,6 @@ export interface ConfigKeySpec {
   /** Env var names in priority order (canonical name first). */
   env: readonly string[];
   secret: boolean;
-  openEnum: boolean;
   description: string;
   /** Default value, or undefined when the key has no fixed default. */
   defaultValue: unknown;
@@ -226,7 +214,6 @@ function buildSpecs(): ConfigKeySpec[] {
         schema,
         env: [canonicalEnvName(section, field), ...(meta.env ?? [])],
         secret: meta.secret ?? false,
-        openEnum: meta.openEnum ?? false,
         description: schema.description ?? "",
         defaultValue: parsedDefault.success ? parsedDefault.data : undefined,
         defaultText: meta.defaultText,

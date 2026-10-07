@@ -304,9 +304,9 @@ describe("config layering (temp HOME and cwd)", () => {
       expect(messages(warn).some((m) => m.includes("LIBSCOPE_MCP_TOOLSETS"))).toBe(true);
     });
 
-    it("accepts a custom embedding provider name in a file", () => {
+    it("ignores an unknown embedding provider name in a file", () => {
       writeUserConfig({ embedding: { provider: "my-plugin" } });
-      expect(load().embedding.provider).toBe("my-plugin");
+      expect(load().embedding.provider).toBe("local");
     });
 
     it("drops unknown and old keys from the loaded config", () => {

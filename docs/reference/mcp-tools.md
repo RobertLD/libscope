@@ -255,7 +255,7 @@ Annotations: not destructive.
 
 ### install-pack
 
-Install a knowledge pack from a registry (name or name@version) or a local file
+Install a knowledge pack from a registry (name or name@version)
 
 Annotations: not destructive, idempotent.
 

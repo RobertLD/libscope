@@ -203,7 +203,7 @@ export function buildOpenApiSpec(routes: readonly ApiRoute[]): Record<string, un
       description:
         "Every /api/v1 route runs one LibScope operation (the same operations as the CLI, MCP server and SDK). Responses are `{ data, meta }`; errors are `{ error: { code, message } }`. Long-running operations answer 202 with a task ID.",
     },
-    servers: [{ url: "http://localhost:3378", description: "Default `libscope serve --api`" }],
+    servers: [{ url: "http://localhost:3378", description: "Default `libscope serve api`" }],
     security: [{}, { bearerAuth: [] }],
     paths,
     components: COMPONENTS,

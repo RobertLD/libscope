@@ -513,7 +513,7 @@ function validateConfluenceConfig(config: ConfluenceConfig): void {
   const confluenceType = config.type ?? "cloud";
   if (confluenceType === "cloud" && !config.email?.trim()) {
     throw new ValidationError(
-      "Confluence email is required for Cloud. For Server/Data Center, use --type server",
+      "Confluence email is required for Cloud. For Server/Data Center, use --server",
     );
   }
 }

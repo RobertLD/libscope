@@ -32,9 +32,9 @@ export function assertLocalFilesAllowed(ctx: OperationContext, what: string): vo
 export const installPackOperation = defineOperation({
   name: "install-pack",
   group: "packs",
-  summary: "Install a knowledge pack from a registry (name or name@version) or a local file",
+  summary: "Install a knowledge pack from a registry (name or name@version)",
   description:
-    "Packs are looked up in the local copies of the configured registries (run sync-registries to update them). Local .json/.json.gz files are accepted from the CLI and the Node.js API only.",
+    "Packs are looked up in the local copies of the configured registries (sync the registries to update them). The CLI and the Node.js API also accept a local .json/.json.gz file.",
   input: z.object({
     pack: z
       .string()

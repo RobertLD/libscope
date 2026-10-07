@@ -246,7 +246,6 @@ function warnIgnored(what: string, err: unknown): void {
  * lists (comma-separated).
  */
 function readFileValue(spec: ConfigKeySpec, value: unknown, source: string): unknown {
-  if (spec.openEnum && typeof value === "string" && value.trim() !== "") return value;
   try {
     if (
       typeof value === "string" &&

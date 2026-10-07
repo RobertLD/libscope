@@ -108,7 +108,7 @@ This list is generated from the routes (`npm run docs:gen`). The parameters of e
 
 | Method   | Path                        | Operation           | Status       | Description                                                                         |
 | -------- | --------------------------- | ------------------- | ------------ | ----------------------------------------------------------------------------------- |
-| `POST`   | `/api/v1/packs`             | `install-pack`      | `202` (task) | Install a knowledge pack from a registry (name or name@version) or a local file     |
+| `POST`   | `/api/v1/packs`             | `install-pack`      | `202` (task) | Install a knowledge pack from a registry (name or name@version)                     |
 | `DELETE` | `/api/v1/packs/:pack`       | `remove-pack`       | `200`        | Remove an installed pack and its documents                                          |
 | `GET`    | `/api/v1/packs`             | `list-packs`        | `200`        | List installed packs, or the packs available in the configured registries           |
 | `GET`    | `/api/v1/registries`        | `list-registries`   | `200`        | List the configured pack registries                                                 |
