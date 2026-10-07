@@ -15,6 +15,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { suggestTagsFromText } from "./tags.js";
 import { fetchAndConvert } from "./url-fetcher.js";
@@ -124,7 +125,7 @@ function writePackFile(filePath: string, pack: KnowledgePack): void {
 }
 
 /** Read a pack file, auto-detecting gzip by magic bytes or extension. */
-function readPackFile(filePath: string): string {
+export function readPackFile(filePath: string): string {
   const raw = readFileSync(filePath);
   if (raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]) {
     return gunzipSync(raw).toString("utf-8");
@@ -369,9 +370,7 @@ function insertBatchIntoDb(
   insertEmbedding: Database.Statement,
 ): number {
   const log = getLogger();
-  let batchInstalled = 0;
   const doInsert = db.transaction(() => {
-    batchInstalled = 0;
     for (const info of batch.docInfos) {
       insertDoc.run(
         info.docId,
@@ -398,11 +397,10 @@ function insertBatchIntoDb(
           }
         }
       }
-      batchInstalled++;
     }
   });
   doInsert();
-  return batchInstalled;
+  return batch.docInfos.length;
 }
 
 /** Install a pack from a local JSON file path or registry name. */
@@ -589,9 +587,7 @@ export function removePack(db: Database.Database, packName: string): void {
   const deleteTransaction = db.transaction(() => {
     for (const { id } of docIds) {
       try {
-        db.prepare(
-          "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-        ).run(id);
+        deleteChunkEmbeddings(db, [id]);
       } catch (err) {
         log.debug(
           { err, documentId: id },

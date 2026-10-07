@@ -8,6 +8,7 @@ import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
+import { deleteChunkEmbeddings } from "./documents.js";
 import { extractAndStoreDocumentLinks } from "./links.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 
@@ -334,9 +335,7 @@ function handleUrlDedup(
 
   log.info({ docId: existing.id, url }, "Document updated, re-indexing");
   try {
-    db.prepare(
-      "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-    ).run(existing.id);
+    deleteChunkEmbeddings(db, [existing.id]);
   } catch (err: unknown) {
     log.debug({ err, docId: existing.id }, "Skipped chunk_embeddings cleanup during re-index");
   }

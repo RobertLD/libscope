@@ -3,7 +3,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import type {
@@ -13,12 +12,7 @@ import type {
   RegistryConflict,
   ConflictResolution,
 } from "./types.js";
-import {
-  getRegistryCacheDir,
-  getPackManifestPath,
-  getPackDataPath,
-  PACK_MANIFEST_FILE,
-} from "./types.js";
+import { getRegistryCacheDir, getPackManifestPath, getPackDataPath } from "./types.js";
 import { loadRegistries } from "./config.js";
 import { readIndex } from "./git.js";
 import { verifyChecksum } from "./checksum.js";
@@ -86,22 +80,7 @@ export function findPackInRegistries(packName: string): {
  */
 export function readPackManifest(registryName: string, packName: string): PackManifest | null {
   const manifestPath = getPackManifestPath(registryName, packName);
-  if (!existsSync(manifestPath)) {
-    // Fall back: try reading from the packs directory directly
-    const cacheDir = getRegistryCacheDir(registryName);
-    const altPath = join(cacheDir, "packs", packName, PACK_MANIFEST_FILE);
-    if (!existsSync(altPath)) return null;
-    try {
-      return JSON.parse(readFileSync(altPath, "utf-8")) as PackManifest;
-    } catch (err) {
-      const log = getLogger();
-      log.warn(
-        { registryName, packName, err: err instanceof Error ? err.message : String(err) },
-        "Failed to parse pack manifest (alt path)",
-      );
-      return null;
-    }
-  }
+  if (!existsSync(manifestPath)) return null;
   try {
     return JSON.parse(readFileSync(manifestPath, "utf-8")) as PackManifest;
   } catch (err) {

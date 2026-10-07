@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "./indexing.js";
+import { deleteChunkEmbeddings } from "./documents.js";
 import { createChildLogger } from "../logger.js";
 
 export const DEFAULT_WATCH_EXTENSIONS = [".md", ".mdx", ".txt", ".rst"];
@@ -133,11 +134,7 @@ export class FileWatcher {
       if (!existing) return;
 
       try {
-        this.db
-          .prepare(
-            "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-          )
-          .run(existing.id);
+        deleteChunkEmbeddings(this.db, [existing.id]);
       } catch {
         // chunk_embeddings table may not exist
       }

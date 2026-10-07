@@ -4,7 +4,6 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import type {
@@ -25,7 +24,7 @@ import {
 import { getRegistry } from "./config.js";
 import { commitAndPush, fetchRegistry, git, clearIndexCache } from "./git.js";
 import { computeChecksum, writeChecksumFile } from "./checksum.js";
-import type { KnowledgePack } from "../core/packs.js";
+import { readPackFile, type KnowledgePack } from "../core/packs.js";
 
 /** Remove an entire pack directory and its entry from the index. */
 function removeEntirePack(packDir: string, cacheDir: string, packName: string): void {
@@ -100,20 +99,12 @@ function bumpPatchVersion(version: string): string {
   return `${parts[0]}.${parts[1]}.${Number.isNaN(patch) ? 1 : patch + 1}`;
 }
 
-/** Gzip magic number: first two bytes of a gzip stream. */
-const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
-
 /**
  * Read a pack JSON file (plain or gzip-compressed).
  * Auto-detects gzip by checking for magic bytes.
  */
 function readPackJson(filePath: string): KnowledgePack {
-  const raw = readFileSync(filePath);
-  const text =
-    raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]
-      ? gunzipSync(raw).toString("utf-8")
-      : raw.toString("utf-8");
-  return JSON.parse(text) as KnowledgePack;
+  return JSON.parse(readPackFile(filePath)) as KnowledgePack;
 }
 
 /** Validate that the registry exists and has a local cache; return the cache directory. */

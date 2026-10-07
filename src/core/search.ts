@@ -215,6 +215,13 @@ function reciprocalRankFusion(listA: SearchResult[], listB: SearchResult[]): Sea
   return computeRrfScores(map);
 }
 
+const ContextCurrentRowSchema = z.object({ chunk_index: z.number() }).optional();
+const ContextChunkRowSchema = z.object({
+  id: z.string(),
+  content: z.string(),
+  chunk_index: z.number(),
+});
+
 /** Fetch neighboring chunks for a given chunk within its document. */
 function fetchContextChunks(
   db: Database.Database,
@@ -222,9 +229,8 @@ function fetchContextChunks(
   documentId: string,
   contextSize: number,
 ): { before: ContextChunk[]; after: ContextChunk[] } {
-  const CurrentRowSchema = z.object({ chunk_index: z.number() }).optional();
   const currentRow = validateRow(
-    CurrentRowSchema,
+    ContextCurrentRowSchema,
     db
       .prepare(`SELECT chunk_index FROM chunks WHERE id = ? AND document_id = ?`)
       .get(chunkId, documentId),
@@ -235,9 +241,8 @@ function fetchContextChunks(
 
   const idx = currentRow.chunk_index;
 
-  const ChunkRowSchema = z.object({ id: z.string(), content: z.string(), chunk_index: z.number() });
   const beforeRows = validateRows(
-    ChunkRowSchema,
+    ContextChunkRowSchema,
     db
       .prepare(
         `SELECT id, content, chunk_index FROM chunks
@@ -249,7 +254,7 @@ function fetchContextChunks(
   );
 
   const afterRows = validateRows(
-    ChunkRowSchema,
+    ContextChunkRowSchema,
     db
       .prepare(
         `SELECT id, content, chunk_index FROM chunks
@@ -521,7 +526,7 @@ export async function searchDocuments(
   const candidateLimit = Math.min((offset + limit) * overfetchFactor, maxCandidateLimit);
 
   try {
-    const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit, 0);
+    const vectorResults = vectorSearch(db, options, vecBuffer, candidateLimit);
     let ftsResults: SearchResult[] | null = null;
     let ftsTotalCount = 0;
 
@@ -562,6 +567,102 @@ export async function searchDocuments(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Shared SQL fragments, row schemas and row -> SearchResult mapping
+// ---------------------------------------------------------------------------
+
+/** Document columns selected alongside every chunk search hit (alias `d`). */
+const DOC_RESULT_COLUMNS = `d.title,
+      d.source_type,
+      d.library,
+      d.version,
+      d.topic_id,
+      d.url`;
+
+/** Optional `avg_r.avg_rating` select column, present only when the rating join is used. */
+function ratingColumn(needsRatingJoin: boolean): string {
+  return needsRatingJoin ? ",\n      avg_r.avg_rating" : "";
+}
+
+/** Optional LEFT JOIN of per-document average ratings (alias `avg_r`, joined to `d`). */
+function ratingJoin(needsRatingJoin: boolean): string {
+  return needsRatingJoin
+    ? `
+    LEFT JOIN (
+      SELECT document_id, AVG(rating) AS avg_rating
+      FROM ratings
+      GROUP BY document_id
+    ) avg_r ON avg_r.document_id = d.id`
+    : "";
+}
+
+const BaseResultRowSchema = z.object({
+  chunk_id: z.string(),
+  document_id: z.string(),
+  chunk_content: z.string(),
+  title: z.string(),
+  source_type: z.string(),
+  library: z.string().nullable(),
+  version: z.string().nullable(),
+  topic_id: z.string().nullable(),
+  url: z.string().nullable(),
+});
+
+const RatedResultRowSchema = BaseResultRowSchema.extend({
+  avg_rating: z.number().nullable().optional(),
+});
+
+const VectorRowSchema = RatedResultRowSchema.extend({ distance: z.number() });
+const KeywordRowSchema = RatedResultRowSchema;
+const Fts5RowSchema = RatedResultRowSchema.extend({ fts_rank: z.number() });
+const RelatedRowSchema = BaseResultRowSchema.extend({ distance: z.number() });
+
+const LinkedChunkSchema = z.object({
+  id: z.string(),
+  document_id: z.string(),
+  content: z.string(),
+  chunk_index: z.number(),
+  title: z.string(),
+  source_type: z.string(),
+  library: z.string().nullable(),
+  version: z.string().nullable(),
+  topic_id: z.string().nullable(),
+  url: z.string().nullable(),
+});
+
+type ResultRow = z.infer<typeof BaseResultRowSchema> & {
+  avg_rating?: number | null | undefined;
+};
+
+/** Map a validated search row to a SearchResult with the given score and explanation. */
+function toResult(row: ResultRow, score: number, scoreExplanation: ScoreExplanation): SearchResult {
+  return {
+    documentId: row.document_id,
+    chunkId: row.chunk_id,
+    title: row.title,
+    content: row.chunk_content,
+    sourceType: row.source_type,
+    library: row.library,
+    version: row.version,
+    topicId: row.topic_id,
+    url: row.url,
+    score,
+    avgRating: row.avg_rating ?? null,
+    scoreExplanation,
+  };
+}
+
+/** Map a vector ANN row (with `distance`) to a SearchResult scored by similarity. */
+function vectorRowToResult(row: ResultRow & { distance: number }): SearchResult {
+  const similarity = 1 - row.distance;
+  return toResult(row, similarity, {
+    method: "vector" as SearchMethod,
+    rawScore: row.distance,
+    boostFactors: [],
+    details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
+  });
+}
+
 /** Pure vector search — returns candidates for fusion/pagination.
  *  `limit` should already account for offset (i.e. caller passes offset+limit). */
 function vectorSearch(
@@ -569,11 +670,7 @@ function vectorSearch(
   options: SearchOptions,
   vecBuffer: Buffer,
   limit: number,
-  _offset: number,
 ): SearchResponse {
-  // The caller already over-fetches; use the limit directly.
-  const annCandidateLimit = limit;
-
   const needsRatingJoin = options.minRating !== undefined;
 
   let sql = `
@@ -582,12 +679,7 @@ function vectorSearch(
       candidates.distance,
       c.document_id,
       c.content AS chunk_content,
-      d.title,
-      d.source_type,
-      d.library,
-      d.version,
-      d.topic_id,
-      d.url${needsRatingJoin ? ",\n      avg_r.avg_rating" : ""}
+      ${DOC_RESULT_COLUMNS}${ratingColumn(needsRatingJoin)}
     FROM (
       SELECT chunk_id, distance
       FROM chunk_embeddings
@@ -596,37 +688,16 @@ function vectorSearch(
       LIMIT ?
     ) candidates
     JOIN chunks c ON c.id = candidates.chunk_id
-    JOIN documents d ON d.id = c.document_id${
-      needsRatingJoin
-        ? `
-    LEFT JOIN (
-      SELECT document_id, AVG(rating) AS avg_rating
-      FROM ratings
-      GROUP BY document_id
-    ) avg_r ON avg_r.document_id = d.id`
-        : ""
-    }
+    JOIN documents d ON d.id = c.document_id${ratingJoin(needsRatingJoin)}
     WHERE 1=1
   `;
 
-  const params: unknown[] = [vecBuffer, annCandidateLimit];
+  // The caller already over-fetches; use the limit directly as the ANN candidate limit.
+  const params: unknown[] = [vecBuffer, limit];
   sql = appendFilters(sql, params, options, "d");
 
   sql += ` ORDER BY candidates.distance`;
 
-  const VectorRowSchema = z.object({
-    chunk_id: z.string(),
-    distance: z.number(),
-    document_id: z.string(),
-    chunk_content: z.string(),
-    title: z.string(),
-    source_type: z.string(),
-    library: z.string().nullable(),
-    version: z.string().nullable(),
-    topic_id: z.string().nullable(),
-    url: z.string().nullable(),
-    avg_rating: z.number().nullable().optional(),
-  });
   const rows = validateRows(VectorRowSchema, db.prepare(sql).all(...params), "vectorSearch.rows");
 
   // totalCount: if we got fewer rows than the ANN candidate limit, we know
@@ -637,28 +708,7 @@ function vectorSearch(
 
   return {
     totalCount,
-    results: rows.map((row) => {
-      const similarity = 1 - row.distance;
-      return {
-        documentId: row.document_id,
-        chunkId: row.chunk_id,
-        title: row.title,
-        content: row.chunk_content,
-        sourceType: row.source_type,
-        library: row.library,
-        version: row.version,
-        topicId: row.topic_id,
-        url: row.url,
-        score: similarity,
-        avgRating: row.avg_rating ?? null,
-        scoreExplanation: {
-          method: "vector" as SearchMethod,
-          rawScore: row.distance,
-          boostFactors: [],
-          details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
-        },
-      };
-    }),
+    results: rows.map((row) => vectorRowToResult(row)),
   };
 }
 
@@ -692,23 +742,9 @@ function keywordSearch(
       c.id AS chunk_id,
       c.document_id,
       c.content AS chunk_content,
-      d.title,
-      d.source_type,
-      d.library,
-      d.version,
-      d.topic_id,
-      d.url${needsRatingJoin ? ",\n      avg_r.avg_rating" : ""}
+      ${DOC_RESULT_COLUMNS}${ratingColumn(needsRatingJoin)}
     FROM chunks c
-    JOIN documents d ON d.id = c.document_id${
-      needsRatingJoin
-        ? `
-    LEFT JOIN (
-      SELECT document_id, AVG(rating) AS avg_rating
-      FROM ratings
-      GROUP BY document_id
-    ) avg_r ON avg_r.document_id = d.id`
-        : ""
-    }
+    JOIN documents d ON d.id = c.document_id${ratingJoin(needsRatingJoin)}
     WHERE (${likeConditions})
   `;
 
@@ -721,18 +757,6 @@ function keywordSearch(
   sql += " LIMIT ? OFFSET ?";
   params.push(limit, offset);
 
-  const KeywordRowSchema = z.object({
-    chunk_id: z.string(),
-    document_id: z.string(),
-    chunk_content: z.string(),
-    title: z.string(),
-    source_type: z.string(),
-    library: z.string().nullable(),
-    version: z.string().nullable(),
-    topic_id: z.string().nullable(),
-    url: z.string().nullable(),
-    avg_rating: z.number().nullable().optional(),
-  });
   const rows = validateRows(KeywordRowSchema, db.prepare(sql).all(...params), "keywordSearch.rows");
 
   const totalCount = lazyCount(
@@ -749,25 +773,12 @@ function keywordSearch(
     totalCount,
     results: rows.map((row, index) => {
       const rankScore = Math.max(0, 1 - index * 0.1);
-      return {
-        documentId: row.document_id,
-        chunkId: row.chunk_id,
-        title: row.title,
-        content: row.chunk_content,
-        sourceType: row.source_type,
-        library: row.library,
-        version: row.version,
-        topicId: row.topic_id,
-        url: row.url,
-        score: rankScore,
-        avgRating: row.avg_rating ?? null,
-        scoreExplanation: {
-          method: "keyword" as SearchMethod,
-          rawScore: rankScore,
-          boostFactors: [],
-          details: `Keyword LIKE match: rank=${index + 1}, score=${rankScore.toFixed(4)}`,
-        },
-      };
+      return toResult(row, rankScore, {
+        method: "keyword" as SearchMethod,
+        rawScore: rankScore,
+        boostFactors: [],
+        details: `Keyword LIKE match: rank=${index + 1}, score=${rankScore.toFixed(4)}`,
+      });
     }),
   };
 }
@@ -792,12 +803,13 @@ function sanitizeFtsWord(word: string): string {
   return word;
 }
 
+const RatingRowSchema = z.object({ document_id: z.string(), avg_rating: z.number().nullable() });
+
 /** Fetch avg ratings for a small set of documents and attach to results. */
 function attachRatings(db: Database.Database, results: SearchResult[]): SearchResult[] {
   if (results.length === 0) return results;
   const ids = [...new Set(results.map((r) => r.documentId))];
   const placeholders = ids.map(() => "?").join(", ");
-  const RatingRowSchema = z.object({ document_id: z.string(), avg_rating: z.number().nullable() });
   const rows = validateRows(
     RatingRowSchema,
     db
@@ -814,6 +826,14 @@ function attachRatings(db: Database.Database, results: SearchResult[]): SearchRe
   return results.map((r) => ({ ...r, avgRating: ratingMap.get(r.documentId) ?? null }));
 }
 
+const SourceChunkSchema = z.object({
+  id: z.string(),
+  document_id: z.string(),
+  content: z.string(),
+  chunk_index: z.number(),
+});
+const EmbeddingRowSchema = z.object({ embedding: z.instanceof(Buffer) });
+
 /**
  * Find chunks related to a given chunk by vector similarity.
  * Looks up the source chunk's embedding, then searches for similar chunks
@@ -828,12 +848,6 @@ export function getRelatedChunks(
   const minScore = options.minScore ?? 0;
 
   // Look up the source chunk
-  const SourceChunkSchema = z.object({
-    id: z.string(),
-    document_id: z.string(),
-    content: z.string(),
-    chunk_index: z.number(),
-  });
   const sourceChunkRow = validateRow(
     SourceChunkSchema.optional(),
     db
@@ -855,7 +869,6 @@ export function getRelatedChunks(
   const excludeDocumentId = options.excludeDocumentId ?? sourceChunkRow.document_id;
 
   // Fetch the embedding for the source chunk
-  const EmbeddingRowSchema = z.object({ embedding: z.instanceof(Buffer) });
   const embeddingRow = validateRow(
     EmbeddingRowSchema.optional(),
     db.prepare(`SELECT embedding FROM chunk_embeddings WHERE chunk_id = ?`).get(chunkId),
@@ -876,12 +889,7 @@ export function getRelatedChunks(
       candidates.distance,
       c.document_id,
       c.content AS chunk_content,
-      d.title,
-      d.source_type,
-      d.library,
-      d.version,
-      d.topic_id,
-      d.url
+      ${DOC_RESULT_COLUMNS}
     FROM (
       SELECT chunk_id, distance
       FROM chunk_embeddings
@@ -910,47 +918,13 @@ export function getRelatedChunks(
   sql += ` ORDER BY candidates.distance LIMIT ?`;
   params.push(limit * 2); // over-fetch to allow minScore filtering
 
-  const RelatedRowSchema = z.object({
-    chunk_id: z.string(),
-    distance: z.number(),
-    document_id: z.string(),
-    chunk_content: z.string(),
-    title: z.string(),
-    source_type: z.string(),
-    library: z.string().nullable(),
-    version: z.string().nullable(),
-    topic_id: z.string().nullable(),
-    url: z.string().nullable(),
-  });
-
   const rows = validateRows(
     RelatedRowSchema,
     db.prepare(sql).all(...params),
     "getRelatedChunks.rows",
   );
 
-  let results: SearchResult[] = rows.map((row) => {
-    const similarity = 1 - row.distance;
-    return {
-      documentId: row.document_id,
-      chunkId: row.chunk_id,
-      title: row.title,
-      content: row.chunk_content,
-      sourceType: row.source_type,
-      library: row.library,
-      version: row.version,
-      topicId: row.topic_id,
-      url: row.url,
-      score: similarity,
-      avgRating: null,
-      scoreExplanation: {
-        method: "vector" as SearchMethod,
-        rawScore: row.distance,
-        boostFactors: [],
-        details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
-      },
-    };
-  });
+  let results: SearchResult[] = rows.map((row) => vectorRowToResult(row));
 
   // Apply minScore filter
   if (minScore > 0) {
@@ -969,19 +943,6 @@ export function getRelatedChunks(
       .all(sourceChunk.documentId, sourceChunk.documentId, sourceChunk.documentId) as {
       linked_doc_id: string;
     }[];
-
-    const LinkedChunkSchema = z.object({
-      id: z.string(),
-      document_id: z.string(),
-      content: z.string(),
-      chunk_index: z.number(),
-      title: z.string(),
-      source_type: z.string(),
-      library: z.string().nullable(),
-      version: z.string().nullable(),
-      topic_id: z.string().nullable(),
-      url: z.string().nullable(),
-    });
 
     const presentDocIds = new Set(results.map((r) => r.documentId));
     for (const { linked_doc_id } of linkedDocs) {
@@ -1002,25 +963,18 @@ export function getRelatedChunks(
           "getRelatedChunks.linkedChunk",
         );
         if (linkedChunk) {
-          results.push({
-            documentId: linkedChunk.document_id,
-            chunkId: linkedChunk.id,
-            title: linkedChunk.title,
-            content: linkedChunk.content,
-            sourceType: linkedChunk.source_type,
-            library: linkedChunk.library,
-            version: linkedChunk.version,
-            topicId: linkedChunk.topic_id,
-            url: linkedChunk.url,
-            score: 0.6,
-            avgRating: null,
-            scoreExplanation: {
-              method: "vector" as SearchMethod,
-              rawScore: 0.6,
-              boostFactors: ["linked_document"],
-              details: "Explicitly linked document",
-            },
-          });
+          results.push(
+            toResult(
+              { ...linkedChunk, chunk_id: linkedChunk.id, chunk_content: linkedChunk.content },
+              0.6,
+              {
+                method: "vector" as SearchMethod,
+                rawScore: 0.6,
+                boostFactors: ["linked_document"],
+                details: "Explicitly linked document",
+              },
+            ),
+          );
         }
       }
     }
@@ -1031,6 +985,50 @@ export function getRelatedChunks(
   results = results.slice(0, limit);
 
   return { chunks: results, sourceChunk };
+}
+
+/** Quote a sanitized word as an FTS5 string literal. */
+function quoteFtsWord(word: string): string {
+  return `"${word.replaceAll('"', '""')}"`;
+}
+
+/**
+ * Run a single FTS5 MATCH query with the standard filters and pagination.
+ * Returns the validated rows plus the unpaginated SQL/params for lazy counting.
+ */
+function runFtsQuery(
+  db: Database.Database,
+  options: SearchOptions,
+  matchExpr: string,
+  limit: number,
+  offset: number,
+  label: string,
+): { rows: Array<z.infer<typeof Fts5RowSchema>>; baseSql: string; baseParams: unknown[] } {
+  const needsRatingJoin = options.minRating !== undefined;
+  const params: unknown[] = [matchExpr];
+
+  let sql = `
+    SELECT
+      f.chunk_id,
+      f.document_id,
+      f.content AS chunk_content,
+      ${DOC_RESULT_COLUMNS},
+      rank AS fts_rank${ratingColumn(needsRatingJoin)}
+    FROM chunks_fts f
+    JOIN documents d ON d.id = f.document_id${ratingJoin(needsRatingJoin)}
+    WHERE chunks_fts MATCH ?
+  `;
+
+  sql = appendFilters(sql, params, options, "d");
+
+  const baseSql = sql;
+  const baseParams = [...params];
+
+  sql += " ORDER BY rank LIMIT ? OFFSET ?";
+  params.push(limit, offset);
+
+  const rows = validateRows(Fts5RowSchema, db.prepare(sql).all(...params), label);
+  return { rows, baseSql, baseParams };
 }
 
 /** FTS5-based full-text search with BM25 ranking. Uses AND logic by default. */
@@ -1048,135 +1046,34 @@ function fts5Search(
     .filter((w) => w.length > 0);
   if (words.length === 0) return { results: [], totalCount: 0 };
 
-  const needsRatingJoin = options.minRating !== undefined;
+  const quoted = words.map((w) => quoteFtsWord(w));
+  let fts = runFtsQuery(db, options, quoted.join(" AND "), limit, offset, "fts5Search.rows");
 
-  const ftsQuery = words.map((w) => `"${w.replaceAll('"', '""')}"`).join(" AND ");
-  const params: unknown[] = [ftsQuery];
-
-  let sql = `
-    SELECT
-      f.chunk_id,
-      f.document_id,
-      f.content AS chunk_content,
-      d.title,
-      d.source_type,
-      d.library,
-      d.version,
-      d.topic_id,
-      d.url,
-      rank AS fts_rank${needsRatingJoin ? ",\n      avg_r.avg_rating" : ""}
-    FROM chunks_fts f
-    JOIN documents d ON d.id = f.document_id${
-      needsRatingJoin
-        ? `
-    LEFT JOIN (
-      SELECT document_id, AVG(rating) AS avg_rating
-      FROM ratings
-      GROUP BY document_id
-    ) avg_r ON avg_r.document_id = d.id`
-        : ""
-    }
-    WHERE chunks_fts MATCH ?
-  `;
-
-  sql = appendFilters(sql, params, options, "d");
-
-  // Lazy count – may be updated if OR fallback is used
-  let baseSql = sql;
-  let baseParams = [...params];
-
-  sql += " ORDER BY rank LIMIT ? OFFSET ?";
-  params.push(limit, offset);
-
-  const Fts5RowSchema = z.object({
-    chunk_id: z.string(),
-    document_id: z.string(),
-    chunk_content: z.string(),
-    title: z.string(),
-    source_type: z.string(),
-    library: z.string().nullable(),
-    version: z.string().nullable(),
-    topic_id: z.string().nullable(),
-    url: z.string().nullable(),
-    fts_rank: z.number(),
-    avg_rating: z.number().nullable().optional(),
-  });
-  let rows = validateRows(Fts5RowSchema, db.prepare(sql).all(...params), "fts5Search.rows");
-
-  // If AND returned nothing, retry with OR for recall
-  if (rows.length === 0 && words.length > 1) {
-    const orQuery = words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" OR ");
-    const orParams: unknown[] = [orQuery];
-    let orSql = `
-      SELECT
-        f.chunk_id,
-        f.document_id,
-        f.content AS chunk_content,
-        d.title,
-        d.source_type,
-        d.library,
-        d.version,
-        d.topic_id,
-        d.url,
-        rank AS fts_rank${needsRatingJoin ? ",\n        avg_r.avg_rating" : ""}
-      FROM chunks_fts f
-      JOIN documents d ON d.id = f.document_id${
-        needsRatingJoin
-          ? `
-      LEFT JOIN (
-        SELECT document_id, AVG(rating) AS avg_rating
-        FROM ratings
-        GROUP BY document_id
-      ) avg_r ON avg_r.document_id = d.id`
-          : ""
-      }
-      WHERE chunks_fts MATCH ?
-    `;
-    orSql = appendFilters(orSql, orParams, options, "d");
-
-    // Update count base to use OR query
-    baseSql = orSql;
-    baseParams = [...orParams];
-
-    orSql += " ORDER BY rank LIMIT ? OFFSET ?";
-    orParams.push(limit, offset);
-
-    rows = validateRows(Fts5RowSchema, db.prepare(orSql).all(...orParams), "fts5Search.orRows");
+  // If AND returned nothing, retry with OR for recall (the lazy count then uses the OR query)
+  if (fts.rows.length === 0 && words.length > 1) {
+    fts = runFtsQuery(db, options, quoted.join(" OR "), limit, offset, "fts5Search.orRows");
   }
 
   const totalCount = lazyCount(
     db,
-    baseSql,
-    baseParams,
+    fts.baseSql,
+    fts.baseParams,
     offset,
-    rows.length,
+    fts.rows.length,
     limit,
     "FTS5 search count",
   );
 
   return {
     totalCount,
-    results: rows.map((row) => {
+    results: fts.rows.map((row) => {
       const bm25Score = -row.fts_rank;
-      return {
-        documentId: row.document_id,
-        chunkId: row.chunk_id,
-        title: row.title,
-        content: row.chunk_content,
-        sourceType: row.source_type,
-        library: row.library,
-        version: row.version,
-        topicId: row.topic_id,
-        url: row.url,
-        score: bm25Score,
-        avgRating: row.avg_rating ?? null,
-        scoreExplanation: {
-          method: "fts5" as SearchMethod,
-          rawScore: row.fts_rank,
-          boostFactors: [],
-          details: `FTS5 BM25 ranking: raw_rank=${row.fts_rank.toFixed(4)}, score=${bm25Score.toFixed(4)}`,
-        },
-      };
+      return toResult(row, bm25Score, {
+        method: "fts5" as SearchMethod,
+        rawScore: row.fts_rank,
+        boostFactors: [],
+        details: `FTS5 BM25 ranking: raw_rank=${row.fts_rank.toFixed(4)}, score=${bm25Score.toFixed(4)}`,
+      });
     }),
   };
 }

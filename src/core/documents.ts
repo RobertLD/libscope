@@ -21,36 +21,28 @@ export interface Document {
   updatedAt: string;
 }
 
-/** Get a document by ID. */
-export function getDocument(db: Database.Database, documentId: string): Document {
-  const row = db
-    .prepare(
-      `
-    SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
-    FROM documents WHERE id = ?
-  `,
-    )
-    .get(documentId) as
-    | {
-        id: string;
-        source_type: string;
-        library: string | null;
-        version: string | null;
-        topic_id: string | null;
-        title: string;
-        content: string;
-        url: string | null;
-        content_hash: string | null;
-        submitted_by: string;
-        created_at: string;
-        updated_at: string;
-      }
-    | undefined;
+/** Column list matching {@link DocumentRow}, for `SELECT ... FROM documents`. */
+export const DOC_COLUMNS =
+  "id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at";
 
-  if (!row) {
-    throw new DocumentNotFoundError(documentId);
-  }
+/** Raw `documents` row as returned by a `SELECT ${DOC_COLUMNS}` query. */
+export interface DocumentRow {
+  id: string;
+  source_type: string;
+  library: string | null;
+  version: string | null;
+  topic_id: string | null;
+  title: string;
+  content: string;
+  url: string | null;
+  content_hash: string | null;
+  submitted_by: string;
+  created_at: string;
+  updated_at: string;
+}
 
+/** Map a raw `documents` row to a {@link Document}. */
+export function rowToDocument(row: DocumentRow): Document {
   return {
     id: row.id,
     sourceType: row.source_type,
@@ -67,17 +59,37 @@ export function getDocument(db: Database.Database, documentId: string): Document
   };
 }
 
+/**
+ * Delete vector embeddings for every chunk of the given documents.
+ * Throws on any SQLite error (including a missing `chunk_embeddings` table);
+ * callers decide how to handle it.
+ */
+export function deleteChunkEmbeddings(db: Database.Database, docIds: string[]): void {
+  if (docIds.length === 0) return;
+  const placeholders = docIds.map(() => "?").join(", ");
+  db.prepare(
+    `DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id IN (${placeholders}))`,
+  ).run(...docIds);
+}
+
+/** Get a document by ID. */
+export function getDocument(db: Database.Database, documentId: string): Document {
+  const row = db.prepare(`SELECT ${DOC_COLUMNS} FROM documents WHERE id = ?`).get(documentId) as
+    | DocumentRow
+    | undefined;
+
+  if (!row) {
+    throw new DocumentNotFoundError(documentId);
+  }
+
+  return rowToDocument(row);
+}
+
 /** Delete a document and all its chunks/ratings (cascade). */
 export function deleteDocument(db: Database.Database, documentId: string): void {
   // Clean up chunk_embeddings (no foreign key cascade for virtual tables)
   try {
-    db.prepare(
-      `
-      DELETE FROM chunk_embeddings WHERE chunk_id IN (
-        SELECT id FROM chunks WHERE document_id = ?
-      )
-    `,
-    ).run(documentId);
+    deleteChunkEmbeddings(db, [documentId]);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("no such table")) {
@@ -108,10 +120,7 @@ export function listDocuments(
     limit?: number | undefined;
   },
 ): Document[] {
-  let sql = `
-    SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
-    FROM documents WHERE 1=1
-  `;
+  let sql = `SELECT ${DOC_COLUMNS} FROM documents WHERE 1=1`;
   const params: unknown[] = [];
 
   if (options?.library) {
@@ -138,35 +147,9 @@ export function listDocuments(
   sql += " ORDER BY updated_at DESC LIMIT ?";
   params.push(options?.limit ?? 50);
 
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    title: string;
-    content: string;
-    url: string | null;
-    content_hash: string | null;
-    submitted_by: string;
-    created_at: string;
-    updated_at: string;
-  }>;
+  const rows = db.prepare(sql).all(...params) as DocumentRow[];
 
-  return rows.map((row) => ({
-    id: row.id,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    title: row.title,
-    content: row.content,
-    url: row.url,
-    contentHash: row.content_hash,
-    submittedBy: row.submitted_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return rows.map((row) => rowToDocument(row));
 }
 
 export interface UpdateDocumentInput {
@@ -231,9 +214,7 @@ export async function updateDocument(
       saveVersion(db, documentId);
 
       try {
-        db.prepare(
-          "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-        ).run(documentId);
+        deleteChunkEmbeddings(db, [documentId]);
       } catch (err: unknown) {
         // chunk_embeddings table may not exist
         log.debug({ err, documentId }, "Skipped chunk_embeddings cleanup during update");
