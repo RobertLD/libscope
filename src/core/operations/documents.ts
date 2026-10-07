@@ -143,6 +143,7 @@ export const addOperation = defineOperation({
           allowSelfSignedCerts: ctx.config.indexing.allowSelfSignedCerts,
         },
         submittedBy: ctx.surface === "mcp" ? "model" : "manual",
+        chunker: ctx.chunker,
         signal: ctx.signal,
         onProgress: ctx.onProgress,
       },

@@ -15,6 +15,7 @@ import {
   indexDocument,
   indexFile,
   resolveSourceType,
+  type Chunker,
   type IndexDocumentInput,
   type IndexedDocument,
   type SourceType,
@@ -79,6 +80,8 @@ export interface IngestContext {
   /** URL fetch settings (from config.indexing). */
   fetchOptions?: Pick<FetchOptions, "allowPrivateUrls" | "allowSelfSignedCerts"> | undefined;
   submittedBy?: IndexDocumentInput["submittedBy"];
+  /** Custom chunker for inline content and local files. */
+  chunker?: Chunker | undefined;
   signal?: AbortSignal | undefined;
   onProgress?:
     | ((p: { done: number; total?: number | undefined; message?: string | undefined }) => void)
@@ -206,11 +209,13 @@ async function ingestContent(ctx: IngestContext, input: IngestInput): Promise<In
     throw new ValidationError("A title is required when adding content directly");
   }
   if (input.dryRun) return { ...result, planned: [input.title] };
+  const content = input.content ?? "";
   const doc = await indexDocument(ctx.db, ctx.provider, {
     ...documentDefaults(input, ctx),
     title: input.title,
-    content: input.content ?? "",
+    content,
     url: input.url,
+    preChunked: await ctx.chunker?.({ content, title: input.title, source: input.url ?? "" }),
   });
   record(ctx, input, result, doc, input.title, input.url ?? "");
   return result;
@@ -233,6 +238,7 @@ async function ingestFile(ctx: IngestContext, input: IngestInput): Promise<Inges
     dedup: input.dedup,
     sourceType: input.sourceType,
     expiresAt: input.expiresAt,
+    chunker: ctx.chunker,
   });
   record(ctx, input, result, doc, input.title ?? fileTitle(path), path);
   return result;
@@ -259,6 +265,7 @@ async function ingestDirectory(ctx: IngestContext, input: IngestInput): Promise<
         dedup: input.dedup,
         sourceType: input.sourceType,
         expiresAt: input.expiresAt,
+        chunker: ctx.chunker,
       });
       record(ctx, input, result, doc, fileTitle(file), file);
     } catch (err) {
