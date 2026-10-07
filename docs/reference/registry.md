@@ -339,7 +339,7 @@ Each registry is cloned to `~/.libscope/registries/<name>/`. Searching, listing 
 Every pack version includes a `checksum.sha256` file containing the SHA-256 hex hash of the pack file.
 
 - **On publish**: libscope generates the checksum automatically and writes it alongside the pack file.
-- **On install**: libscope verifies the checksum before extracting. A mismatch fails with: "Checksum verification failed — the pack file may have been tampered with or corrupted."
+- **On install**: libscope verifies the checksum before extracting. A mismatch fails with a `ValidationError`: "Checksum verification failed for ...: expected ..., got .... The pack file may have been tampered with or corrupted."
 
 ---
 

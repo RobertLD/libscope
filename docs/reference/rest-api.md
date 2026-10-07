@@ -37,128 +37,132 @@ Every route under `/api/v1` runs one LibScope operation: the same operation, wit
 
 ## Endpoints
 
-The parameters of each route are in the OpenAPI document (`GET /openapi.json`).
+This list is generated from the routes (`npm run docs:gen`). The parameters of each route are in the OpenAPI document (`GET /openapi.json`). Routes with status `202` start a [background task](#conventions).
+
+<!-- generated:start rest:routes -->
 
 ### Meta
 
-| Method | Path             | Operation | Description                                                            |
-| ------ | ---------------- | --------- | ---------------------------------------------------------------------- |
-| `GET`  | `/openapi.json`  | —         | This OpenAPI document.                                                 |
-| `GET`  | `/api/v1/health` | —         | Liveness check (use GET /api/v1/overview for counts and index health). |
+| Method | Path             | Operation | Status | Description                                                           |
+| ------ | ---------------- | --------- | ------ | --------------------------------------------------------------------- |
+| `GET`  | `/openapi.json`  | —         | `200`  | This OpenAPI document                                                 |
+| `GET`  | `/api/v1/health` | —         | `200`  | Liveness check (use GET /api/v1/overview for counts and index health) |
 
 ### Documents
 
-| Method   | Path                                     | Operation           | Description                                                                                                                                                                   |
-| -------- | ---------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/v1/documents`                      | `add`               | Add content to the knowledge base: inline content, a URL (optionally crawled), a GitHub/GitLab repository, or (CLI/SDK only) a local file or directory. Runs as a task (202). |
-| `GET`    | `/api/v1/documents/:documentId`          | `get-document`      | Get a document with its tags, links and rating summary; long content can be paged.                                                                                            |
-| `GET`    | `/api/v1/documents`                      | `list-documents`    | List documents (newest first) with optional filters.                                                                                                                          |
-| `PATCH`  | `/api/v1/documents/:documentId`          | `update-document`   | Update a document's title, content, metadata or tags (content changes are re-indexed).                                                                                        |
-| `DELETE` | `/api/v1/documents/:documentId`          | `delete-document`   | Delete a document with its chunks, vectors, tags, links and ratings.                                                                                                          |
-| `POST`   | `/api/v1/documents/:documentId/ratings`  | `rate-document`     | Rate a document (1-5), optionally with feedback or a suggested correction.                                                                                                    |
-| `GET`    | `/api/v1/documents/:documentId/versions` | `document-history`  | List saved versions of a document, newest first.                                                                                                                              |
-| `POST`   | `/api/v1/documents/:documentId/rollback` | `rollback-document` | Restore a document to a saved version (the current state is saved first).                                                                                                     |
+| Method   | Path                                     | Operation           | Status       | Description                                                                                                                                            |
+| -------- | ---------------------------------------- | ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST`   | `/api/v1/documents`                      | `add`               | `202` (task) | Add content to the knowledge base: inline content, a URL (optionally crawled), a GitHub/GitLab repository, or (CLI/SDK only) a local file or directory |
+| `GET`    | `/api/v1/documents/:documentId`          | `get-document`      | `200`        | Get a document with its tags, links and rating summary; long content can be paged                                                                      |
+| `GET`    | `/api/v1/documents`                      | `list-documents`    | `200`        | List documents (newest first) with optional filters                                                                                                    |
+| `PATCH`  | `/api/v1/documents/:documentId`          | `update-document`   | `200`        | Update a document's title, content, metadata or tags (content changes are re-indexed)                                                                  |
+| `DELETE` | `/api/v1/documents/:documentId`          | `delete-document`   | `200`        | Delete a document with its chunks, vectors, tags, links and ratings                                                                                    |
+| `POST`   | `/api/v1/documents/:documentId/ratings`  | `rate-document`     | `200`        | Rate a document (1-5), optionally with feedback or a suggested correction                                                                              |
+| `GET`    | `/api/v1/documents/:documentId/versions` | `document-history`  | `200`        | List saved versions of a document, newest first                                                                                                        |
+| `POST`   | `/api/v1/documents/:documentId/rollback` | `rollback-document` | `200`        | Restore a document to a saved version (the current state is saved first)                                                                               |
 
 ### Search and Q&A
 
-| Method | Path             | Operation | Description                                                                                                |
-| ------ | ---------------- | --------- | ---------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/api/v1/search` | `search`  | Search the knowledge base by meaning and keywords, or find content related to a document or chunk.         |
-| `POST` | `/api/v1/ask`    | `ask`     | Answer a question from the knowledge base with an LLM, or (passthrough) return the context to answer from. |
+| Method | Path             | Operation | Status | Description                                                                                               |
+| ------ | ---------------- | --------- | ------ | --------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/search` | `search`  | `200`  | Search the knowledge base by meaning and keywords, or find content related to a document or chunk         |
+| `POST` | `/api/v1/ask`    | `ask`     | `200`  | Answer a question from the knowledge base with an LLM, or (passthrough) return the context to answer from |
 
 ### Links and graph
 
-| Method   | Path                                          | Operation          | Description                                                                                |
-| -------- | --------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
-| `POST`   | `/api/v1/documents/:documentId/links`         | `link-documents`   | Create a typed link from one document to another.                                          |
-| `DELETE` | `/api/v1/links/:linkId`                       | `unlink-documents` | Delete a link between documents.                                                           |
-| `GET`    | `/api/v1/links`                               | `list-links`       | List links of one document (outgoing and incoming) or all links.                           |
-| `GET`    | `/api/v1/documents/:documentId/prerequisites` | `prerequisites`    | List the documents to read before this one (following prerequisite links).                 |
-| `GET`    | `/api/v1/graph`                               | `graph`            | Knowledge graph: documents, topics and tags as nodes; links, tags and similarity as edges. |
+| Method   | Path                                          | Operation          | Status | Description                                                                               |
+| -------- | --------------------------------------------- | ------------------ | ------ | ----------------------------------------------------------------------------------------- |
+| `POST`   | `/api/v1/documents/:documentId/links`         | `link-documents`   | `200`  | Create a typed link from one document to another                                          |
+| `DELETE` | `/api/v1/links/:linkId`                       | `unlink-documents` | `200`  | Delete a link between documents                                                           |
+| `GET`    | `/api/v1/links`                               | `list-links`       | `200`  | List links of one document (outgoing and incoming) or all links                           |
+| `GET`    | `/api/v1/documents/:documentId/prerequisites` | `prerequisites`    | `200`  | List the documents to read before this one (following prerequisite links)                 |
+| `GET`    | `/api/v1/graph`                               | `graph`            | `200`  | Knowledge graph: documents, topics and tags as nodes; links, tags and similarity as edges |
 
 ### Tags
 
-| Method   | Path                                           | Operation      | Description                                          |
-| -------- | ---------------------------------------------- | -------------- | ---------------------------------------------------- |
-| `POST`   | `/api/v1/documents/:documentId/tags`           | `add-tags`     | Add tags to a document (tags are created as needed). |
-| `DELETE` | `/api/v1/documents/:documentId/tags`           | `remove-tags`  | Remove tags from a document.                         |
-| `GET`    | `/api/v1/tags`                                 | `list-tags`    | List all tags with their document counts.            |
-| `GET`    | `/api/v1/documents/:documentId/suggested-tags` | `suggest-tags` | Suggest tags for a document from its content.        |
+| Method   | Path                                           | Operation      | Status | Description                                         |
+| -------- | ---------------------------------------------- | -------------- | ------ | --------------------------------------------------- |
+| `POST`   | `/api/v1/documents/:documentId/tags`           | `add-tags`     | `200`  | Add tags to a document (tags are created as needed) |
+| `DELETE` | `/api/v1/documents/:documentId/tags`           | `remove-tags`  | `200`  | Remove tags from a document                         |
+| `GET`    | `/api/v1/tags`                                 | `list-tags`    | `200`  | List all tags with their document counts            |
+| `GET`    | `/api/v1/documents/:documentId/suggested-tags` | `suggest-tags` | `200`  | Suggest tags for a document from its content        |
 
 ### Topics
 
-| Method   | Path                    | Operation      | Description                                    |
-| -------- | ----------------------- | -------------- | ---------------------------------------------- |
-| `GET`    | `/api/v1/topics`        | `list-topics`  | List topics with their document counts.        |
-| `POST`   | `/api/v1/topics`        | `create-topic` | Create a topic.                                |
-| `DELETE` | `/api/v1/topics/:topic` | `delete-topic` | Delete a topic, optionally with its documents. |
+| Method   | Path                    | Operation      | Status | Description                                   |
+| -------- | ----------------------- | -------------- | ------ | --------------------------------------------- |
+| `GET`    | `/api/v1/topics`        | `list-topics`  | `200`  | List topics with their document counts        |
+| `POST`   | `/api/v1/topics`        | `create-topic` | `200`  | Create a topic                                |
+| `DELETE` | `/api/v1/topics/:topic` | `delete-topic` | `200`  | Delete a topic, optionally with its documents |
 
 ### Saved searches
 
-| Method   | Path                           | Operation             | Description                                       |
-| -------- | ------------------------------ | --------------------- | ------------------------------------------------- |
-| `POST`   | `/api/v1/searches`             | `save-search`         | Save a search query and its filters under a name. |
-| `GET`    | `/api/v1/searches`             | `list-saved-searches` | List saved searches.                              |
-| `POST`   | `/api/v1/searches/:search/run` | `run-saved-search`    | Run a saved search.                               |
-| `DELETE` | `/api/v1/searches/:search`     | `delete-saved-search` | Delete a saved search.                            |
+| Method   | Path                           | Operation             | Status | Description                                      |
+| -------- | ------------------------------ | --------------------- | ------ | ------------------------------------------------ |
+| `POST`   | `/api/v1/searches`             | `save-search`         | `200`  | Save a search query and its filters under a name |
+| `GET`    | `/api/v1/searches`             | `list-saved-searches` | `200`  | List saved searches                              |
+| `POST`   | `/api/v1/searches/:search/run` | `run-saved-search`    | `200`  | Run a saved search                               |
+| `DELETE` | `/api/v1/searches/:search`     | `delete-saved-search` | `200`  | Delete a saved search                            |
 
-### Packs
+### Packs and registries
 
-| Method   | Path                        | Operation           | Description                                                                                                         |
-| -------- | --------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `POST`   | `/api/v1/packs`             | `install-pack`      | Install a knowledge pack from a registry (`pack`: name or name@version; optional `registry`). Runs as a task (202). |
-| `DELETE` | `/api/v1/packs/:pack`       | `remove-pack`       | Remove an installed pack and its documents.                                                                         |
-| `GET`    | `/api/v1/packs`             | `list-packs`        | List installed packs, or with `available=true` the packs in the configured registries (optional `registry`).        |
-| `GET`    | `/api/v1/registries`        | `list-registries`   | List the configured pack registries.                                                                                |
-| `GET`    | `/api/v1/registries/search` | `search-registries` | Search the packs in the configured registries (`query`, optional `registry`).                                       |
-
-Registries are read from the local copies under `~/.libscope/registries/`. Adding, removing, syncing and publishing to registries is done with the CLI or the SDK.
+| Method   | Path                        | Operation           | Status       | Description                                                                         |
+| -------- | --------------------------- | ------------------- | ------------ | ----------------------------------------------------------------------------------- |
+| `POST`   | `/api/v1/packs`             | `install-pack`      | `202` (task) | Install a knowledge pack from a registry (name or name@version) or a local file     |
+| `DELETE` | `/api/v1/packs/:pack`       | `remove-pack`       | `200`        | Remove an installed pack and its documents                                          |
+| `GET`    | `/api/v1/packs`             | `list-packs`        | `200`        | List installed packs, or the packs available in the configured registries           |
+| `GET`    | `/api/v1/registries`        | `list-registries`   | `200`        | List the configured pack registries                                                 |
+| `GET`    | `/api/v1/registries/search` | `search-registries` | `200`        | Search the packs in the configured registries by name, description, tags and author |
 
 ### Connectors
 
-| Method   | Path                        | Operation          | Description                                                                                |
-| -------- | --------------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
-| `GET`    | `/api/v1/connections`       | `list-connections` | List saved connector connections with their schedule and last sync.                        |
-| `POST`   | `/api/v1/sync`              | `sync`             | Sync one saved connection, or all of them, using the saved settings. Runs as a task (202). |
-| `DELETE` | `/api/v1/connections/:name` | `disconnect`       | Remove a connection's documents and its saved settings (including credentials).            |
+| Method   | Path                        | Operation          | Status       | Description                                                                    |
+| -------- | --------------------------- | ------------------ | ------------ | ------------------------------------------------------------------------------ |
+| `GET`    | `/api/v1/connections`       | `list-connections` | `200`        | List saved connector connections with their schedule and last sync             |
+| `POST`   | `/api/v1/sync`              | `sync`             | `202` (task) | Sync one saved connection, or all of them, using the saved settings            |
+| `DELETE` | `/api/v1/connections/:name` | `disconnect`       | `200`        | Remove a connection's documents and its saved settings (including credentials) |
 
 ### Admin and bulk
 
-| Method | Path                          | Operation       | Description                                                                                                |
-| ------ | ----------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/api/v1/overview`            | `overview`      | Knowledge base overview: counts, topics, installed packs, embedding model of the index, and health.        |
-| `POST` | `/api/v1/admin/reindex`       | `reindex`       | Re-embed chunks with the configured embedding model (rebuild after changing models). Runs as a task (202). |
-| `GET`  | `/api/v1/admin/duplicates`    | `dedupe`        | Find groups of duplicate or near-duplicate documents. Runs as a task (202).                                |
-| `POST` | `/api/v1/admin/prune-expired` | `prune-expired` | Delete documents whose expiry time (expiresAt) has passed.                                                 |
-| `POST` | `/api/v1/bulk/delete`         | `bulk-delete`   | Delete every document matching the filters (at most 1000 per call).                                        |
-| `POST` | `/api/v1/bulk/retag`          | `bulk-retag`    | Add and/or remove tags on every document matching the filters.                                             |
-| `POST` | `/api/v1/bulk/move`           | `bulk-move`     | Move every document matching the filters to another topic.                                                 |
+| Method | Path                          | Operation       | Status       | Description                                                                                        |
+| ------ | ----------------------------- | --------------- | ------------ | -------------------------------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/overview`            | `overview`      | `200`        | Knowledge base overview: counts, topics, installed packs, embedding model of the index, and health |
+| `POST` | `/api/v1/admin/reindex`       | `reindex`       | `202` (task) | Re-embed chunks with the configured embedding model (rebuild after changing models)                |
+| `GET`  | `/api/v1/admin/duplicates`    | `dedupe`        | `202` (task) | Find groups of duplicate or near-duplicate documents                                               |
+| `POST` | `/api/v1/admin/prune-expired` | `prune-expired` | `200`        | Delete documents whose expiry time (expiresAt) has passed                                          |
+| `POST` | `/api/v1/bulk/delete`         | `bulk-delete`   | `200`        | Delete every document matching the filters (at most 1000 per call)                                 |
+| `POST` | `/api/v1/bulk/retag`          | `bulk-retag`    | `200`        | Add and/or remove tags on every document matching the filters                                      |
+| `POST` | `/api/v1/bulk/move`           | `bulk-move`     | `200`        | Move every document matching the filters to another topic                                          |
 
 ### Analytics
 
-| Method | Path                            | Operation          | Description                                                     |
-| ------ | ------------------------------- | ------------------ | --------------------------------------------------------------- |
-| `GET`  | `/api/v1/analytics/popular`     | `popular`          | Documents returned most often in search results.                |
-| `GET`  | `/api/v1/analytics/stale`       | `stale`            | Documents that no search returned in the given number of days.  |
-| `GET`  | `/api/v1/analytics/top-queries` | `top-queries`      | Most frequent search queries.                                   |
-| `GET`  | `/api/v1/analytics/searches`    | `search-analytics` | Search volume, top and zero-result queries, and knowledge gaps. |
+| Method | Path                            | Operation          | Status | Description                                                    |
+| ------ | ------------------------------- | ------------------ | ------ | -------------------------------------------------------------- |
+| `GET`  | `/api/v1/analytics/popular`     | `popular`          | `200`  | Documents returned most often in search results                |
+| `GET`  | `/api/v1/analytics/stale`       | `stale`            | `200`  | Documents that no search returned in the given number of days  |
+| `GET`  | `/api/v1/analytics/top-queries` | `top-queries`      | `200`  | Most frequent search queries                                   |
+| `GET`  | `/api/v1/analytics/searches`    | `search-analytics` | `200`  | Search volume, top and zero-result queries, and knowledge gaps |
 
 ### Webhooks
 
-| Method   | Path                               | Operation        | Description                                                             |
-| -------- | ---------------------------------- | ---------------- | ----------------------------------------------------------------------- |
-| `POST`   | `/api/v1/webhooks`                 | `create-webhook` | Register a URL to receive a signed POST for document and search events. |
-| `GET`    | `/api/v1/webhooks`                 | `list-webhooks`  | List registered webhooks (secrets are never shown).                     |
-| `DELETE` | `/api/v1/webhooks/:webhookId`      | `delete-webhook` | Delete a webhook.                                                       |
-| `POST`   | `/api/v1/webhooks/:webhookId/test` | `test-webhook`   | Send a test event to a webhook and report the HTTP status.              |
+| Method   | Path                               | Operation        | Status | Description                                                            |
+| -------- | ---------------------------------- | ---------------- | ------ | ---------------------------------------------------------------------- |
+| `POST`   | `/api/v1/webhooks`                 | `create-webhook` | `200`  | Register a URL to receive a signed POST for document and search events |
+| `GET`    | `/api/v1/webhooks`                 | `list-webhooks`  | `200`  | List registered webhooks (secrets are never shown)                     |
+| `DELETE` | `/api/v1/webhooks/:webhookId`      | `delete-webhook` | `200`  | Delete a webhook                                                       |
+| `POST`   | `/api/v1/webhooks/:webhookId/test` | `test-webhook`   | `200`  | Send a test event to a webhook and report the HTTP status              |
 
 ### Tasks
 
-| Method | Path                           | Operation     | Description                                                   |
-| ------ | ------------------------------ | ------------- | ------------------------------------------------------------- |
-| `GET`  | `/api/v1/tasks/:taskId`        | `get-task`    | Status, progress and result of a background task.             |
-| `POST` | `/api/v1/tasks/:taskId/cancel` | `cancel-task` | Request cancellation of a pending or running background task. |
-| `GET`  | `/api/v1/tasks`                | `list-tasks`  | List background tasks from the last hour, newest first.       |
+| Method | Path                           | Operation     | Status | Description                                                  |
+| ------ | ------------------------------ | ------------- | ------ | ------------------------------------------------------------ |
+| `GET`  | `/api/v1/tasks/:taskId`        | `get-task`    | `200`  | Status, progress and result of a background task             |
+| `POST` | `/api/v1/tasks/:taskId/cancel` | `cancel-task` | `200`  | Request cancellation of a pending or running background task |
+| `GET`  | `/api/v1/tasks`                | `list-tasks`  | `200`  | List background tasks from the last hour, newest first       |
+
+<!-- generated:end rest:routes -->
+
+Registries are read from the local copies under `~/.libscope/registries/`. Adding, removing, syncing and publishing to registries is done with the CLI or the SDK.
 
 ## Examples
 

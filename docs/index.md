@@ -16,13 +16,13 @@ hero:
 features:
   - icon: 🔍
     title: Semantic Search
-    details: Vector similarity search powered by sqlite-vec, with FTS5 full-text fallback. Find what you need, even when you don't know the exact words.
+    details: Hybrid search that combines vector similarity (sqlite-vec) with FTS5 full-text search. Find what you need, even when you don't know the exact words.
   - icon: 🤖
     title: MCP Integration
-    details: 31 tools for AI assistants out of the box. Works with Claude, Cursor, VS Code, and any MCP-compatible client.
+    details: 11 core tools for AI assistants (search, ask, read, add, rate, link), plus an optional admin toolset. Works with Claude, Cursor, VS Code, and any MCP-compatible client.
   - icon: 🔗
     title: Connectors
-    details: Pull in docs from Obsidian, Notion, Confluence, Slack, OneNote, and GitHub/GitLab. Keep everything in one place.
+    details: Pull in docs from Obsidian, Notion, Confluence, Slack, OneNote, documentation sites, and GitHub/GitLab repositories. Keep everything in one place.
   - icon: 📦
     title: Knowledge Packs
     details: Install pre-built documentation bundles or create your own. Share curated collections with your team.

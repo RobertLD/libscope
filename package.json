@@ -34,6 +34,8 @@
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
     "serve": "node dist/mcp/main.js",
+    "docs:gen": "node scripts/gen-docs.mjs",
+    "docs:check": "node scripts/gen-docs.mjs --check",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"

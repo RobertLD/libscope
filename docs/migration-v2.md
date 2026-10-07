@@ -2,6 +2,18 @@
 
 LibScope 2.0 removes old names without aliases. This page lists every removed or renamed name and what to use instead. Your indexed data is not changed by the upgrade.
 
+- [Configuration](#configuration): config keys, environment variables, API keys
+- [Library API](#library-api): package root exports, the `LibScope` class, `libscope/lite`
+- [MCP](#mcp): server startup, renamed, merged and removed tools
+- [REST API](#rest-api): routes, request fields, responses, CORS
+- [CLI](#cli): commands, options, behavior
+- [Packs and registries](#packs-and-registries): the URL registry is removed
+- [Client SDKs](#client-sdks): Python and Go clients
+- [Saved searches](#saved-searches): filter field names
+- [Docker image](#docker-image): command, port, data volume
+
+The references list the 2.0 names: [CLI](reference/cli.md), [MCP tools](reference/mcp-tools.md), [REST API](reference/rest-api.md) and [configuration](reference/configuration.md).
+
 ## Configuration
 
 ### Config keys
@@ -41,13 +53,12 @@ These variables do not change: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_LLM_PROV
 
 ### Library (SDK) code
 
-| Old (1.x)                                                   | New (2.0)                                                                                        |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `LibScopeConfig.embedding.openaiApiKey`, `llm.openaiApiKey` | `LibScopeConfig.openai.apiKey`                                                                   |
-| `LibScopeConfig.llm.anthropicApiKey`                        | `LibScopeConfig.anthropic.apiKey`                                                                |
-| `embedding.ollamaUrl`, `ollamaModel`, `openaiModel`         | `embedding.url`, `embedding.model`                                                               |
-| `llm.ollamaUrl`                                             | `llm.url`                                                                                        |
-| `createLlmProvider(config)` read `ANTHROPIC_API_KEY` itself | `createLlmProvider(config, { surface })` reads only `config`; `loadConfig()` reads the env vars. |
+| Old (1.x)                                                   | New (2.0)                          |
+| ----------------------------------------------------------- | ---------------------------------- |
+| `LibScopeConfig.embedding.openaiApiKey`, `llm.openaiApiKey` | `LibScopeConfig.openai.apiKey`     |
+| `LibScopeConfig.llm.anthropicApiKey`                        | `LibScopeConfig.anthropic.apiKey`  |
+| `embedding.ollamaUrl`, `ollamaModel`, `openaiModel`         | `embedding.url`, `embedding.model` |
+| `llm.ollamaUrl`                                             | `llm.url`                          |
 
 ## Library API
 
@@ -111,7 +122,7 @@ Each method below is on a `LibScope` instance (`const scope = LibScope.create()`
 | `ConnectorScheduler`, `loadScheduleEntries`                                                                                                                                                                                                                                 | CLI `libscope connect <type> --schedule <cron>`                                                                                                |
 | `createWorkspace`, `deleteWorkspace`, `listWorkspaces`, `getWorkspacePath`, `getWorkspacesDir`, `getActiveWorkspace`, `setActiveWorkspace`, `DEFAULT_WORKSPACE`                                                                                                             | `workspace` option of `LibScope.create()`; CLI `libscope workspace`                                                                            |
 | `FileWatcher`, `DEFAULT_WATCH_EXTENSIONS`                                                                                                                                                                                                                                   | CLI `libscope add <dir> --watch`                                                                                                               |
-| `buildKnowledgeGraph`, `detectClusters`                                                                                                                                                                                                                                     | — (the web dashboard shows the graph)                                                                                                          |
+| `buildKnowledgeGraph`, `detectClusters`                                                                                                                                                                                                                                     | `scope.links.graph()` (`detectClusters` —)                                                                                                     |
 | `startApiServer`                                                                                                                                                                                                                                                            | CLI `libscope serve api`                                                                                                                       |
 
 The removed type exports follow their functions. Use `LibScopeInput<"group", "method">` and `LibScopeOutput<"group", "method">` for the input and result of any namespace method.
@@ -179,9 +190,9 @@ The MCP server now has 11 core tools and an optional admin toolset. Old tool nam
 
 | 1.x tool                                                                              | 2.0 tool                                            | Parameter changes                                                                                                                                                                                          |
 | ------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `search-docs`                                                                         | `search`                                            | `source` -> `sourceType` (enum). Added `tags`, `relatedTo`. `limit` max 100. `maxChunksPerDocument` minimum is 1.                                                                                          |
+| `search-docs`                                                                         | `search`                                            | `source` -> `sourceType` (enum). Added `tags`, `relatedTo`, `diversity`. `limit` max 100. `maxChunksPerDocument` minimum is 1.                                                                             |
 | `get-related`                                                                         | `search` with `relatedTo`                           | `chunkId` -> `relatedTo` (a chunk ID or a document ID). `minScore` and `includeLinkedDocuments` are removed. Use `version`, `sourceType`, `minRating` as filters.                                          |
-| `ask-question`                                                                        | `ask`                                               | Added `version`, `sourceType`, `tags`, `minRating`.                                                                                                                                                        |
+| `ask-question`                                                                        | `ask`                                               | Added `version`, `sourceType`, `tags`, `minRating`, `systemPrompt`.                                                                                                                                        |
 | `health-check`, `list-topics`                                                         | `overview`                                          | `list-topics` `parentId` is removed; `overview` lists every topic with its document count.                                                                                                                 |
 | `list-packs`                                                                          | `overview` (installed packs), or admin `list-packs` | Admin `list-packs` keeps `available`; `registryUrl` is replaced by `registry` (a git registry name).                                                                                                       |
 | `get-document`                                                                        | `get-document`                                      | Added `offset` and `maxLength` for paging. The output includes tags, links (with `linkId`) and ratings.                                                                                                    |
@@ -194,7 +205,7 @@ The MCP server now has 11 core tools and an optional admin toolset. Old tool nam
 | `get-task`                                                                            | `task` with `action: "status"`                      | `taskId` unchanged. An unknown task is an error.                                                                                                                                                           |
 | `cancel-task`                                                                         | `task` with `action: "cancel"`                      | `taskId` unchanged. An unknown task is an error.                                                                                                                                                           |
 | —                                                                                     | `task` with `action: "list"`                        | New.                                                                                                                                                                                                       |
-| `install-pack` (always on)                                                            | `install-pack` (admin toolset)                      | `nameOrPath` -> `pack`. Added `batchSize`, `concurrency`.                                                                                                                                                  |
+| `install-pack` (always on)                                                            | `install-pack` (admin toolset)                      | `nameOrPath` -> `pack`. Added `batchSize`, `concurrency`, `resumeFrom`.                                                                                                                                    |
 | `reindex-documents` (always on)                                                       | `reindex-documents` (admin toolset)                 | Added `rebuild`.                                                                                                                                                                                           |
 | `sync-slack`, `sync-notion`, `sync-confluence`, `sync-onenote`, `sync-obsidian-vault` | `sync` (admin toolset)                              | `{ "name": "<saved connection>" }` or `{ "all": true }`. Credentials and connector settings are no longer tool parameters: save them with `libscope connect <type>`.                                       |
 
@@ -234,7 +245,7 @@ Every `/api/v1` route now runs one operation and is generated from it. The [REST
 
 These routes did not change their path: `GET /openapi.json`, `GET /api/v1/health`, `GET` and `POST /api/v1/documents`, `GET`, `PATCH` and `DELETE /api/v1/documents/:id`, `POST /api/v1/documents/:id/tags`, `POST /api/v1/documents/:id/links`, `DELETE /api/v1/links/:id`, `POST /api/v1/ask`, `GET` and `POST /api/v1/topics`, `GET /api/v1/tags`, `GET /api/v1/analytics/searches`, the saved-search routes, `POST /api/v1/bulk/{delete,retag,move}` and the webhook routes.
 
-New routes: `DELETE /api/v1/documents/:id/tags`, `POST /api/v1/documents/:id/ratings`, `GET /api/v1/documents/:id/versions`, `POST /api/v1/documents/:id/rollback`, `GET /api/v1/documents/:id/prerequisites`, `GET /api/v1/links`, `GET /api/v1/graph`, `DELETE /api/v1/topics/:topic`, `GET`, `POST` and `DELETE /api/v1/packs`, `GET /api/v1/connections`, `DELETE /api/v1/connections/:name`, `POST /api/v1/sync`, `GET /api/v1/overview`, `POST /api/v1/admin/reindex`, `GET /api/v1/admin/duplicates`, `POST /api/v1/admin/prune-expired`, `GET /api/v1/analytics/{popular,stale,top-queries}`, `GET /api/v1/tasks`, `GET /api/v1/tasks/:taskId` and `POST /api/v1/tasks/:taskId/cancel`.
+New routes: `DELETE /api/v1/documents/:id/tags`, `POST /api/v1/documents/:id/ratings`, `GET /api/v1/documents/:id/versions`, `POST /api/v1/documents/:id/rollback`, `GET /api/v1/documents/:id/prerequisites`, `GET /api/v1/links`, `GET /api/v1/graph`, `DELETE /api/v1/topics/:topic`, `GET` and `POST /api/v1/packs`, `DELETE /api/v1/packs/:pack`, `GET /api/v1/registries`, `GET /api/v1/registries/search`, `GET /api/v1/connections`, `DELETE /api/v1/connections/:name`, `POST /api/v1/sync`, `GET /api/v1/overview`, `POST /api/v1/admin/reindex`, `GET /api/v1/admin/duplicates`, `POST /api/v1/admin/prune-expired`, `GET /api/v1/analytics/{popular,stale,top-queries}`, `GET /api/v1/tasks`, `GET /api/v1/tasks/:taskId` and `POST /api/v1/tasks/:taskId/cancel`.
 
 ### Request fields
 

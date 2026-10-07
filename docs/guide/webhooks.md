@@ -26,6 +26,8 @@ curl -X POST http://localhost:3378/api/v1/webhooks \
   }'
 ```
 
+In the SDK, use `scope.webhooks.create({ url, events, secret })`. Webhooks are not available as MCP tools.
+
 Storing a secret requires the `LIBSCOPE_SECRET_KEY` environment variable. LibScope encrypts the secret at rest with AES-256-GCM. Webhook URLs must use http or https and must not resolve to a private or internal IP address.
 
 ## Supported Events
@@ -57,12 +59,12 @@ Every webhook delivery sends a `POST` request with `Content-Type: application/js
 
 The `data` object depends on the event:
 
-| Event                                   | `data` fields                                      |
-| --------------------------------------- | -------------------------------------------------- |
-| `document.created`, `document.updated`  | `documentId`, `title`, `library`?, `version`?      |
-| `document.deleted`                      | `documentId`                                       |
-| `document.rated`                        | `documentId`, `rating`, `feedback`?                |
-| `search.executed`                       | `query`, `resultCount`, `topicId`?                 |
+| Event                                  | `data` fields                                 |
+| -------------------------------------- | --------------------------------------------- |
+| `document.created`, `document.updated` | `documentId`, `title`, `library`?, `version`? |
+| `document.deleted`                     | `documentId`                                  |
+| `document.rated`                       | `documentId`, `rating`, `feedback`?           |
+| `search.executed`                      | `query`, `resultCount`, `topicId`?            |
 
 Fields marked `?` are omitted when they have no value.
 

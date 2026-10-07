@@ -128,7 +128,7 @@ Your AI assistant calls these tools when it needs information from your docs. Th
 
 ## Logs
 
-The MCP server writes JSON-RPC messages to stdout and its logs to stderr. Set the log level with `logging.level` in the config file or `LIBSCOPE_LOGGING_LEVEL`.
+The MCP server writes JSON-RPC messages to stdout and its logs to stderr. Set the log level with `logging.level` in the config file, `LIBSCOPE_LOGGING_LEVEL`, or `libscope serve --log-level debug` (`--verbose` also sets `debug`).
 
 ## Embedding the Server
 

@@ -38,7 +38,7 @@ libscope add https://github.com/org/repo --path docs
 
 Each added document is printed with its ID. Add `--dry-run` to see what would be added.
 
-LibScope supports **Markdown** (`.md`, `.mdx`) and **plain text** natively. Additional formats — **PDF** (`.pdf`), **Word** (`.docx`), **EPUB** (`.epub`), and **PowerPoint** (`.pptx`) — are available via optional dependencies that install automatically. See the [README](/) for the full format table.
+LibScope reads **Markdown** (`.md`, `.markdown`, `.mdx`), **plain text** (`.txt`), **HTML** (`.html`, `.htm`), **EPUB** (`.epub`), **PowerPoint** (`.pptx`), **CSV**, **JSON** and **YAML**. **PDF** (`.pdf`) and **Word** (`.docx`) need the optional dependencies `pdf-parse` and `mammoth`, which npm installs by default.
 
 Each document gets chunked by heading, embedded into vectors, and stored in the database.
 
@@ -58,7 +58,7 @@ libscope search
 libscope search "API rate limiting" --json
 ```
 
-Results are ranked by vector similarity, with optional FTS5 boosting for keyword matches. Each result shows its document ID and chunk ID; `libscope docs show <documentId>` prints the whole document.
+Results combine vector similarity and keyword (FTS5) matches; see [How Search Works](/guide/how-search-works). Each result shows its document ID and chunk ID; `libscope docs show <documentId>` prints the whole document.
 
 ## Ask Questions
 
@@ -122,7 +122,7 @@ For programmatic access, start the REST API instead of the MCP server:
 libscope serve api --port 3378
 ```
 
-The OpenAPI 3.0 spec is served at `GET /openapi.json`. See [REST API Reference](/reference/rest-api) for full documentation.
+The OpenAPI 3.1 document is served at `GET /openapi.json`. See [REST API Reference](/reference/rest-api) for full documentation.
 
 ## What's Next
 

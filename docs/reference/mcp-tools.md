@@ -56,43 +56,49 @@ The `mcp.toolsets` config key enables optional toolsets (`libscope config set mc
 
 ## Core tools
 
+The tool descriptions and parameter tables below are generated from the server code (`npm run docs:gen`).
+
+<!-- generated:start mcp:core -->
+
 ### search
 
 Search the knowledge base by meaning and keywords (query), or find content similar to a document or chunk (relatedTo). Results carry documentId and chunkId.
 
 Annotations: read-only.
 
-| Parameter              | Type                                                  | Required | Description                                                               |
-| ---------------------- | ----------------------------------------------------- | -------- | ------------------------------------------------------------------------- |
-| `query`                | string                                                |          | What to search for                                                        |
-| `relatedTo`            | string                                                |          | Document or chunk ID: return similar content instead of running a query   |
-| `topic`                | string                                                |          | Topic ID or name                                                          |
-| `library`              | string                                                |          | Library name                                                              |
-| `version`              | string                                                |          | Library version                                                           |
-| `sourceType`           | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                                                      |
-| `tags`                 | string[]                                              |          | Only documents carrying all of these tags                                 |
-| `minRating`            | number                                                |          | Minimum average rating                                                    |
-| `limit`                | integer                                               |          | Maximum results (default 10, max 100)                                     |
-| `offset`               | integer                                               |          | Results to skip (paging) Default: `0`.                                    |
-| `maxChunksPerDocument` | integer                                               |          | At most this many chunks per document (default: no limit)                 |
-| `contextChunks`        | integer                                               |          | Neighbouring chunks to include before and after each result Default: `0`. |
+| Parameter              | Type                                                  | Required | Description                                                                 |
+| ---------------------- | ----------------------------------------------------- | -------- | --------------------------------------------------------------------------- |
+| `query`                | string                                                |          | What to search for                                                          |
+| `relatedTo`            | string                                                |          | Document or chunk ID: return similar content instead of running a query     |
+| `topic`                | string                                                |          | Topic ID or name                                                            |
+| `library`              | string                                                |          | Library name                                                                |
+| `version`              | string                                                |          | Library version                                                             |
+| `sourceType`           | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                                                        |
+| `tags`                 | string[]                                              |          | Only documents carrying all of these tags                                   |
+| `minRating`            | number                                                |          | Minimum average rating                                                      |
+| `limit`                | integer                                               |          | Maximum results (default 10, max 100)                                       |
+| `offset`               | integer                                               |          | Results to skip (paging). Default: `0`.                                     |
+| `maxChunksPerDocument` | integer                                               |          | At most this many chunks per document (default: no limit)                   |
+| `contextChunks`        | integer                                               |          | Neighbouring chunks to include before and after each result. Default: `0`.  |
+| `diversity`            | number                                                |          | Query search: MMR reranking, 0 = relevance only (default), 1 = most diverse |
 
 ### ask
 
-Retrieve the knowledge-base context for a question (passthrough: no LLM is called; answer from the returned context yourself)
+Answer a question from the knowledge base with an LLM, or (passthrough) return the context to answer from
 
 Annotations: read-only.
 
-| Parameter    | Type                                                  | Required | Description                                 |
-| ------------ | ----------------------------------------------------- | -------- | ------------------------------------------- |
-| `question`   | string                                                | yes      | The question                                |
-| `topic`      | string                                                |          | Topic ID or name                            |
-| `library`    | string                                                |          | Library name                                |
-| `version`    | string                                                |          | Library version                             |
-| `sourceType` | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                        |
-| `tags`       | string[]                                              |          | Only documents carrying all of these tags   |
-| `minRating`  | number                                                |          | Minimum average rating                      |
-| `topK`       | integer                                               |          | Chunks to retrieve as context Default: `5`. |
+| Parameter      | Type                                                  | Required | Description                                                                  |
+| -------------- | ----------------------------------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `question`     | string                                                | yes      | The question                                                                 |
+| `topic`        | string                                                |          | Topic ID or name                                                             |
+| `library`      | string                                                |          | Library name                                                                 |
+| `version`      | string                                                |          | Library version                                                              |
+| `sourceType`   | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                                                         |
+| `tags`         | string[]                                              |          | Only documents carrying all of these tags                                    |
+| `minRating`    | number                                                |          | Minimum average rating                                                       |
+| `topK`         | integer                                               |          | Chunks to retrieve as context. Default: `5`.                                 |
+| `systemPrompt` | string                                                |          | System prompt for the LLM (default: answer from the context and cite titles) |
 
 ### get-document
 
@@ -103,7 +109,7 @@ Annotations: read-only.
 | Parameter    | Type    | Required | Description                                            |
 | ------------ | ------- | -------- | ------------------------------------------------------ |
 | `documentId` | string  | yes      | Document ID                                            |
-| `offset`     | integer |          | Character offset into the content Default: `0`.        |
+| `offset`     | integer |          | Character offset into the content. Default: `0`.       |
 | `maxLength`  | integer |          | Maximum characters of content to return (default: all) |
 
 ### list-documents
@@ -120,7 +126,7 @@ Annotations: read-only.
 | `sourceType` | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                      |
 | `tags`       | string[]                                              |          | Only documents carrying all of these tags |
 | `limit`      | integer                                               |          | Maximum results (default 50, max 1000)    |
-| `offset`     | integer                                               |          | Results to skip (paging) Default: `0`.    |
+| `offset`     | integer                                               |          | Results to skip (paging). Default: `0`.   |
 
 ### overview
 
@@ -136,29 +142,29 @@ Add to the knowledge base: inline content (with title), a web page (url), a site
 
 Annotations: not destructive.
 
-| Parameter         | Type                                                  | Required | Description                                                                                              |
-| ----------------- | ----------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `content`         | string                                                |          | Inline document content (markdown)                                                                       |
-| `title`           | string                                                |          | Title (required with content; detected for files and URLs)                                               |
-| `url`             | string                                                |          | Source URL. Without content, the URL is fetched; with content, it is stored                              |
-| `topic`           | string                                                |          | Topic ID or name                                                                                         |
-| `library`         | string                                                |          | Library name                                                                                             |
-| `version`         | string                                                |          | Library version                                                                                          |
-| `sourceType`      | `library` \| `topic` \| `manual` \| `model-generated` |          | Source type (default: library if library is set, topic if topic is set, else manual)                     |
-| `tags`            | string[]                                              |          | Tags to add to every new document                                                                        |
-| `expiresAt`       | string                                                |          | ISO 8601 time after which the document is pruned                                                         |
-| `dedup`           | `skip` \| `warn` \| `force`                           |          | Duplicate handling: skip returns the existing document, warn indexes anyway, force skips the check       |
-| `spider`          | boolean                                               |          | URL: also crawl linked pages Default: `false`.                                                           |
-| `maxPages`        | integer                                               |          | Crawl: page limit (default 25, max 200)                                                                  |
-| `maxDepth`        | integer                                               |          | Crawl: link depth (default 2, max 5)                                                                     |
-| `sameDomain`      | boolean                                               |          | Crawl: stay on the seed domain (default true)                                                            |
-| `pathPrefix`      | string                                                |          | Crawl: only follow links under this path                                                                 |
-| `excludePatterns` | string[]                                              |          | Crawl: globs of URLs to skip                                                                             |
-| `branch`          | string                                                |          | Repository: branch (default: from URL, else main)                                                        |
-| `paths`           | string[]                                              |          | Repository: only these subdirectories                                                                    |
-| `extensions`      | string[]                                              |          | Repository: file extensions (default .md, .mdx, .txt, .rst)                                              |
-| `dryRun`          | boolean                                               |          | List what would be added without adding it Default: `false`.                                             |
-| `async`           | boolean                                               |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
+| Parameter         | Type                                                  | Required | Description                                                                                               |
+| ----------------- | ----------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `content`         | string                                                |          | Inline document content (markdown)                                                                        |
+| `title`           | string                                                |          | Title (required with content; detected for files and URLs)                                                |
+| `url`             | string (uri)                                          |          | Source URL. Without content, the URL is fetched; with content, it is stored                               |
+| `topic`           | string                                                |          | Topic ID or name                                                                                          |
+| `library`         | string                                                |          | Library name                                                                                              |
+| `version`         | string                                                |          | Library version                                                                                           |
+| `sourceType`      | `library` \| `topic` \| `manual` \| `model-generated` |          | Source type (default: library if library is set, topic if topic is set, else manual)                      |
+| `tags`            | string[]                                              |          | Tags to add to every new document                                                                         |
+| `expiresAt`       | string (date-time)                                    |          | ISO 8601 time after which the document is pruned                                                          |
+| `dedup`           | `skip` \| `warn` \| `force`                           |          | Duplicate handling: skip returns the existing document, warn indexes anyway, force skips the check        |
+| `spider`          | boolean                                               |          | URL: also crawl linked pages. Default: `false`.                                                           |
+| `maxPages`        | integer                                               |          | Crawl: page limit (default 25, max 200)                                                                   |
+| `maxDepth`        | integer                                               |          | Crawl: link depth (default 2, max 5)                                                                      |
+| `sameDomain`      | boolean                                               |          | Crawl: stay on the seed domain (default true)                                                             |
+| `pathPrefix`      | string                                                |          | Crawl: only follow links under this path                                                                  |
+| `excludePatterns` | string[]                                              |          | Crawl: globs of URLs to skip                                                                              |
+| `branch`          | string                                                |          | Repository: branch (default: from URL, else main)                                                         |
+| `paths`           | string[]                                              |          | Repository: only these subdirectories                                                                     |
+| `extensions`      | string[]                                              |          | Repository: file extensions (default .md, .mdx, .txt, .rst)                                               |
+| `dryRun`          | boolean                                               |          | List what would be added without adding it. Default: `false`.                                             |
+| `async`           | boolean                                               |          | Run in the background and return a taskId at once; poll with task {"action": "status"}. Default: `false`. |
 
 ### update-document
 
@@ -166,16 +172,16 @@ Update a document's title, content, metadata or tags (content changes are re-ind
 
 Annotations: not destructive, idempotent.
 
-| Parameter    | Type           | Required | Description                              |
-| ------------ | -------------- | -------- | ---------------------------------------- |
-| `documentId` | string         | yes      | Document ID                              |
-| `title`      | string         |          | New title                                |
-| `content`    | string         |          | New content (re-chunked and re-embedded) |
-| `library`    | string \| null |          | New library (null clears it)             |
-| `version`    | string \| null |          | New version (null clears it)             |
-| `url`        | string \| null |          | New URL (null clears it)                 |
-| `topic`      | string \| null |          | New topic ID or name (null clears it)    |
-| `tags`       | string[]       |          | Replace the document's tags with these   |
+| Parameter    | Type                 | Required | Description                              |
+| ------------ | -------------------- | -------- | ---------------------------------------- |
+| `documentId` | string               | yes      | Document ID                              |
+| `title`      | string               |          | New title                                |
+| `content`    | string               |          | New content (re-chunked and re-embedded) |
+| `library`    | string \| null       |          | New library (null clears it)             |
+| `version`    | string \| null       |          | New version (null clears it)             |
+| `url`        | string (uri) \| null |          | New URL (null clears it)                 |
+| `topic`      | string \| null       |          | New topic ID or name (null clears it)    |
+| `tags`       | string[]             |          | Replace the document's tags with these   |
 
 ### delete-document
 
@@ -227,9 +233,13 @@ Annotations: not destructive, idempotent.
 | `action`  | `status` \| `cancel` \| `list` | yes      | What to do: status, cancel, list                                         |
 | `taskId`  | string                         |          | Task ID returned when a background task started (action: status, cancel) |
 
+<!-- generated:end mcp:core -->
+
 ## Admin tools
 
 These tools are registered only when `mcp.toolsets` contains `admin` or `all`.
+
+<!-- generated:start mcp:admin -->
 
 ### sync
 
@@ -237,27 +247,26 @@ Sync one saved connector connection (name) or all of them (all: true) with the s
 
 Annotations: not destructive.
 
-| Parameter | Type    | Required | Description                                                                                              |
-| --------- | ------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `name`    | string  |          | Saved connection name (see `libscope connections`)                                                       |
-| `all`     | boolean |          | Sync every saved connection Default: `false`.                                                            |
-| `async`   | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
+| Parameter | Type    | Required | Description                                                                                               |
+| --------- | ------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `name`    | string  |          | Name of a saved connection                                                                                |
+| `all`     | boolean |          | Sync every saved connection. Default: `false`.                                                            |
+| `async`   | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"}. Default: `false`. |
 
 ### install-pack
 
 Install a knowledge pack from a registry (name or name@version) or a local file
 
-Packs are looked up in the local copies of the configured registries (run sync-registries to update them). Local .json/.json.gz files are accepted from the CLI and the Node.js API only.
-
 Annotations: not destructive, idempotent.
 
-| Parameter     | Type    | Required | Description                                                                                              |
-| ------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `pack`        | string  | yes      | Pack name or name@version from a registry, or a local .json/.json.gz file                                |
-| `registry`    | string  |          | Look only in this registry (needed when several registries have the pack)                                |
-| `batchSize`   | integer |          | Documents per batch (default 10)                                                                         |
-| `concurrency` | integer |          | Batches embedded in parallel (default 4)                                                                 |
-| `async`       | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
+| Parameter     | Type    | Required | Description                                                                                               |
+| ------------- | ------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `pack`        | string  | yes      | Pack name or name@version from a registry, or a local .json/.json.gz file                                 |
+| `registry`    | string  |          | Look only in this registry (needed when several registries have the pack)                                 |
+| `batchSize`   | integer |          | Documents per batch (default 10)                                                                          |
+| `concurrency` | integer |          | Batches embedded in parallel (default 4)                                                                  |
+| `resumeFrom`  | integer |          | Skip the first N documents (resume a partial install)                                                     |
+| `async`       | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"}. Default: `false`. |
 
 ### list-packs
 
@@ -265,10 +274,10 @@ List installed packs, or the packs available in the configured registries
 
 Annotations: read-only.
 
-| Parameter   | Type    | Required | Description                                                                             |
-| ----------- | ------- | -------- | --------------------------------------------------------------------------------------- |
-| `available` | boolean |          | List the packs in the configured registries instead of installed ones Default: `false`. |
-| `registry`  | string  |          | With available: only this registry                                                      |
+| Parameter   | Type    | Required | Description                                                                              |
+| ----------- | ------- | -------- | ---------------------------------------------------------------------------------------- |
+| `available` | boolean |          | List the packs in the configured registries instead of installed ones. Default: `false`. |
+| `registry`  | string  |          | With available: only this registry                                                       |
 
 ### reindex-documents
 
@@ -276,11 +285,13 @@ Re-embed chunks with the configured embedding model (rebuild after changing mode
 
 Annotations: not destructive, idempotent.
 
-| Parameter     | Type                                | Required | Description                                                                                              |
-| ------------- | ----------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `documentIds` | string[]                            |          | Only these documents                                                                                     |
-| `since`       | string (ISO 8601 date or date-time) |          | Only documents created on or after                                                                       |
-| `before`      | string (ISO 8601 date or date-time) |          | Only documents created on or before                                                                      |
-| `batchSize`   | integer                             |          | Chunks per embedding call (default 50)                                                                   |
-| `rebuild`     | boolean                             |          | Drop and recreate the vector table for the configured model, then re-embed everything Default: `false`.  |
-| `async`       | boolean                             |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
+| Parameter     | Type                                | Required | Description                                                                                               |
+| ------------- | ----------------------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `documentIds` | string[]                            |          | Only these documents                                                                                      |
+| `since`       | string (date) \| string (date-time) |          | Only documents created on or after                                                                        |
+| `before`      | string (date) \| string (date-time) |          | Only documents created on or before                                                                       |
+| `batchSize`   | integer                             |          | Chunks per embedding call (default 50)                                                                    |
+| `rebuild`     | boolean                             |          | Drop and recreate the vector table for the configured model, then re-embed everything. Default: `false`.  |
+| `async`       | boolean                             |          | Run in the background and return a taskId at once; poll with task {"action": "status"}. Default: `false`. |
+
+<!-- generated:end mcp:admin -->

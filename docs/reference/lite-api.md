@@ -60,7 +60,7 @@ Returns `LibScope.create({ ...options, useConfigFile: false })`: config files, `
 
 `SearchResult` has `documentId`, `chunkId`, `title`, `content`, `score`, `sourceType`, `library`, `version`, `topicId`, `url`, `avgRating` and `scoreExplanation`.
 
-`docs`, `topics`, `tags`, `links`, `searches`, `packs`, `connectors`, `tasks`, `admin`, `analytics` and `webhooks` have the same methods as on `LibScope.create()`.
+`docs`, `topics`, `tags`, `links`, `searches`, `packs`, `registries`, `connectors`, `tasks`, `admin`, `analytics` and `webhooks` have the same methods as on `LibScope.create()`.
 
 ---
 

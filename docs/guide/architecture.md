@@ -1,367 +1,375 @@
 # Architecture
 
-This guide explains how LibScope is structured internally. It is intended for contributors and developers who want to understand or extend the codebase.
+This guide explains how LibScope is structured internally. It is for contributors and developers who want to understand or extend the code.
 
 ## System Layers
 
-LibScope is organized into four distinct layers:
-
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Entry Points                          │
-│  CLI (Commander.js)  MCP Server  REST API  LibScopeLite  │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────┐
-│                 Core Business Logic                      │
-│     indexing · search · rag · documents · parsers · …   │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────┐
-│                    Infrastructure                        │
-│      db/ (SQLite + sqlite-vec)    providers/ (embeddings)│
-└─────────────────────────────────────────────────────────┘
-```
-
-**Entry points** (`src/cli/`, `src/mcp/`, `src/api/`, `src/lite/`) are thin adapters. They parse input, call core functions, and format output. They contain no business logic.
-
-**Core** (`src/core/`) contains all business logic. Core modules are plain TypeScript functions — they don't know whether they were called from the CLI, an MCP tool, the REST API, or `LibScopeLite`.
-
-**Infrastructure** (`src/db/`, `src/providers/`) handles persistence and external services. The database layer uses better-sqlite3 (synchronous). The provider layer abstracts embedding models behind a common interface.
-
-### LibScope Lite Layer
-
-`src/lite/` is a separate entry point that exposes a minimal embeddable API built on top of the same core and infrastructure modules:
-
-```
-libscope/lite  →  src/lite/index.ts  →  LibScopeLite class
-                                         ├── core/indexing.ts
-                                         ├── core/search.ts
-                                         ├── core/rag.ts
-                                         ├── core/ratings.ts
-                                         ├── db/connection.ts
-                                         └── providers/
+┌──────────────────────────────────────────────────────────────────┐
+│                       Surfaces (adapters)                        │
+│  CLI   MCP server   REST API   Web dashboard   SDK (LibScope)    │
+└────────────────────────────────┬─────────────────────────────────┘
+                                 │ runOperation / startOperationTask
+┌────────────────────────────────▼─────────────────────────────────┐
+│              Operation layer (src/core/operations)               │
+│   name + zod input schema + handler, one file per group          │
+└────────────────────────────────┬─────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼─────────────────────────────────┐
+│                         Core logic (src/core)                    │
+│  ingest · indexing · search · rag · documents · tasks · parsers  │
+└────────────────────────────────┬─────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼─────────────────────────────────┐
+│                         Infrastructure                           │
+│  db/ (SQLite + sqlite-vec)   providers/ (embeddings)   connectors│
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-`LibScopeLite` deliberately omits connectors, topics, packs, webhooks, and registry — keeping the API surface small and the import footprint minimal for embedding in external applications.
+**Operations** (`src/core/operations/`) are the single entry into the core. An operation has a kebab-case `name`, a `group`, a one-line `summary`, a zod `input` schema (every field has a description and its default), optional `annotations` (`readOnly`, `destructive`, `idempotent`, `longRunning`), an optional `http` mapping (method and path), and a `handler(ctx, input)`. The handler receives an `OperationContext` with the database, the embedding provider, the config, the calling surface, an optional `AbortSignal` and progress callback, and the LLM.
+
+**Surfaces** are thin adapters. They parse their input, call `runOperation(op, ctx, input)` (or `startOperationTask` for a background task), and format the result. They contain no business logic. Because every surface uses the same schema, parameter names, defaults, validation and results are the same in the CLI, the MCP server, the REST API and the SDK.
+
+**Core** (`src/core/`) contains the business logic as plain functions over a database and a provider.
+
+**Infrastructure** (`src/db/`, `src/providers/`, `src/connectors/`, `src/registry/`) handles storage, embedding models, third-party services and git pack registries.
+
+### The operation layer
+
+| File                                    | Content                                                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `types.ts`                              | `defineOperation`, `runOperation`, `startOperationTask`, `parseOperationInput`, `createOperationContext`, `OperationContext`, `ListResult` |
+| `schemas.ts`                            | Shared input fields (`documentId`, `topic`, `sourceType`, `tags`, `limit`, `offset`, ...) so every operation uses the same names           |
+| `index.ts`                              | `OPERATIONS` (every operation, in display order) and `getOperation(name)`                                                                  |
+| `documents.ts`, `search.ts`, `links.ts` | One file per group: documents, search and ask, links                                                                                       |
+| `graph.ts`, `tags.ts`, `topics.ts`      | Knowledge graph, tags, topics                                                                                                              |
+| `searches.ts`, `packs.ts`               | Saved searches, knowledge packs                                                                                                            |
+| `registries.ts`, `connectors.ts`        | Git pack registries, saved connector connections                                                                                           |
+| `admin.ts`, `analytics.ts`              | Overview, reindex, dedupe, backup/restore, prune, bulk changes; search analytics                                                           |
+| `webhooks.ts`, `tasks.ts`               | Webhooks, background tasks                                                                                                                 |
+
+`runOperation` validates the input (a zod error becomes a `ValidationError` that names the operation and the field), runs the operation's `validate` hook, and calls the handler. `startOperationTask` does the same validation at once, then runs the handler as a background task in the shared task registry (`src/core/tasks.ts`) and returns the task.
+
+### Surfaces
+
+| Surface         | Files                                                           | How it uses the operations                                                                                                                                                                                                                                                                                                       |
+| --------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI             | `src/cli/index.ts`, `src/cli/commands/*.ts`                     | Each command file exports `register(program)`. A command maps its arguments and flags to the operation input and calls `run(op, input, format)` from `src/cli/run.ts`, which prints JSON with `--json` or the human format. `src/cli/errors.ts` is the one error handler. `program` is exported for tests and docs.              |
+| MCP server      | `src/mcp/server.ts`, `src/mcp/main.ts`, `src/mcp/format.ts`     | `createMcpServer()` registers each tool from an operation: the input schema, the description (the summary) and the annotations come from the operation. It registers the 11 core tools, and the admin toolset when `mcp.toolsets` enables it. `main.ts` runs it on stdio. Importing `server.ts` starts nothing.                  |
+| REST API        | `src/api/routes.ts`, `src/api/adapter.ts`, `src/api/openapi.ts` | `API_ROUTES` has one route per operation that declares `http`, plus `/openapi.json` and `/api/v1/health`. A `longRunning` operation answers `202` with a task ID. `buildOpenApiSpec(API_ROUTES)` generates the OpenAPI 3.1 document from the input schemas.                                                                      |
+| Web dashboard   | `src/web/server.ts`, `src/web/dashboard.ts`                     | The dashboard's JSON routes run operations and reshape the results for the dashboard page.                                                                                                                                                                                                                                       |
+| SDK             | `src/LibScope.ts`, `src/core/index.ts`                          | `LibScope` has top-level methods (`add`, `search`, `ask`, `askStream`, `overview`) and namespaces (`docs`, `topics`, `tags`, `links`, `searches`, `packs`, `registries`, `connectors`, `tasks`, `admin`, `analytics`, `webhooks`). The `NAMESPACES` table binds each method to an operation, and the types come from its schema. |
+| `libscope/lite` | `src/lite/`                                                     | `createLite()` is a preset of `LibScope` that does not read config files. It also exports a tree-sitter code chunker and `normalizeRawInput()`. It does not import the CLI, the MCP server or the connectors.                                                                                                                    |
+
+### Startup
+
+Every surface starts with `bootstrap()` (`src/core/bootstrap.ts`): load the config, resolve the database path (explicit path, `database.path`, or the workspace database), open and migrate the database, create the embedding provider, and create or check the vector table. `createOperationContext()` then builds the context for the surface.
+
+### Shared core pieces
+
+| File                         | Purpose                                                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `src/core/ingest.ts`         | One `add` path for inline content, files, directories, URLs (optionally crawled) and repositories         |
+| `src/core/tasks.ts`          | Background task registry with `AbortSignal` and progress; tasks are kept in memory for one hour           |
+| `src/core/overview.ts`       | Counts, topics, installed packs, index identity and health (`overview` operation, `admin stats`)          |
+| `src/core/document-view.ts`  | A document with its tags, links and ratings, with content paging (`get-document`)                         |
+| `src/core/rag.ts`            | `answer()`: LLM answer or passthrough context; LLM providers                                              |
+| `src/connectors/registry.ts` | One table of connector types: config shape, secret fields, sync and disconnect; schedules for `serve api` |
+| `src/config-schema.ts`       | The zod config schema: every key, its default, its env vars, and the generated config reference           |
 
 ## Module Map
 
 ```
 src/
 ├── cli/
-│   ├── index.ts              # main CLI entry (#!/usr/bin/env node)
-│   └── commands/             # each file exports registerCommands(program)
+│   ├── index.ts              # program, global options, error handler; register() per command file
+│   ├── commands/             # add, search (+ ask), docs, topics (+ tags), searches, bulk, connectors,
+│   │                         # pack, registry, serve, config, workspace, webhooks, admin, doctor
+│   ├── run.ts                # run an operation and print JSON or the human format
+│   ├── context.ts            # the command's OperationContext (opened on first use)
+│   ├── options.ts            # shared flags (document filters) and parsing helpers
+│   ├── errors.ts             # "✗ message" + next-step hint; stack only with --verbose
+│   ├── reporter.ts           # progress line on stderr
+│   ├── repl.ts               # interactive search (search with no query)
+│   └── confirm.ts            # confirmation prompts (-y skips them)
 ├── mcp/
-│   ├── server.ts             # MCP entry point — registers all tools
-│   ├── tools/                # each file exports registerTools(server, db, provider)
-│   └── errors.ts             # withErrorHandling() wrapper for MCP tool handlers
+│   ├── server.ts             # createMcpServer(), runStdioServer(); tools generated from operations
+│   ├── main.ts               # executable: MCP server on stdio
+│   ├── format.ts             # compact text output of each tool
+│   └── errors.ts             # withErrorHandling(): errors become isError results
 ├── api/
-│   ├── server.ts             # Express app factory
-│   ├── routes/               # route handlers
-│   └── openapi.ts            # OpenAPI 3.0 spec
+│   ├── server.ts             # startApiServer(): node:http server, rate limit, auth, schedules
+│   ├── routes.ts             # API_ROUTES generated from the operations; handleRequest()
+│   ├── adapter.ts            # request -> operation input; operation result/error -> HTTP response
+│   ├── openapi.ts            # buildOpenApiSpec(): OpenAPI 3.1 from the routes
+│   └── middleware.ts         # CORS, API key, rate limit, security headers, JSON responses
 ├── web/
-│   ├── server.ts             # HTTP server (port 3377)
-│   ├── dashboard.ts          # self-contained dashboard HTML
-│   └── graph-api.ts          # knowledge graph data API
+│   ├── server.ts             # dashboard server (port 3377) and its JSON routes
+│   └── dashboard.ts          # dashboard page and scripts
 ├── core/
-│   ├── indexing.ts           # document chunking and embedding
+│   ├── operations/           # the operation layer (see above)
+│   ├── bootstrap.ts          # one startup sequence for every surface
+│   ├── ingest.ts             # add content, files, directories, URLs, repositories
+│   ├── indexing.ts           # chunking and embedding
 │   ├── search.ts             # hybrid vector + FTS5 search
-│   ├── rag.ts                # LLM-based question answering
+│   ├── rag.ts                # ask: LLM answer or passthrough context
 │   ├── documents.ts          # document CRUD
+│   ├── document-view.ts      # document with tags, links, ratings; content paging
+│   ├── overview.ts           # counts, topics, packs, index, health
+│   ├── tasks.ts              # background task registry
 │   ├── versioning.ts         # document version history
 │   ├── topics.ts             # topic hierarchy
-│   ├── tags.ts               # tag management and auto-suggest
-│   ├── links.ts              # cross-document references
-│   ├── ratings.ts            # document/chunk ratings
+│   ├── tags.ts               # tags and tag suggestions
+│   ├── links.ts              # typed links between documents
+│   ├── ratings.ts            # document and chunk ratings
 │   ├── dedup.ts              # duplicate detection
-│   ├── bulk.ts               # bulk operations
+│   ├── bulk.ts               # bulk delete, retag, move
 │   ├── analytics.ts          # search analytics, knowledge gaps
-│   ├── graph.ts              # knowledge graph with cluster detection
-│   ├── packs.ts              # knowledge pack create/install
-│   ├── batch.ts              # parallel batch import
-│   ├── batch-search.ts       # concurrent multi-query search
-│   ├── url-fetcher.ts        # HTTP fetch with retry, proxy, cert handling
-│   ├── spider.ts             # recursive web crawler
-│   ├── link-extractor.ts     # extract links from HTML/Markdown/Wikilinks
-│   ├── repo.ts               # GitHub/GitLab repo cloning and indexing
-│   ├── watcher.ts            # file system watching for auto-reindex
-│   ├── reindex.ts            # re-embedding after provider switch
-│   ├── scheduler.ts          # background task scheduling
-│   ├── webhooks.ts           # event webhooks with HMAC signing
-│   ├── saved-searches.ts     # named query persistence
-│   ├── workspace.ts          # workspace isolation
-│   ├── export.ts             # full knowledge base backup/restore
-│   ├── ttl.ts                # document expiry management
-│   └── parsers/              # file format parsers
-│       ├── markdown.ts       # Markdown + MDX
-│       ├── text.ts           # plain text
-│       ├── pdf.ts            # PDF (optional: pdf-parse)
-│       ├── word.ts           # DOCX (optional: mammoth)
-│       ├── epub.ts           # EPUB (optional: epub2)
-│       ├── pptx.ts           # PowerPoint (optional: pizzip)
-│       ├── html.ts           # HTML
-│       ├── csv.ts            # CSV
-│       ├── json-parser.ts    # JSON
-│       └── yaml.ts           # YAML
+│   ├── graph.ts              # knowledge graph with clusters
+│   ├── packs.ts              # knowledge pack create/install/remove
+│   ├── url-fetcher.ts        # HTTP fetch with retry, proxy and certificate handling
+│   ├── spider.ts             # web crawler
+│   ├── link-extractor.ts     # links from HTML, Markdown and wikilinks
+│   ├── repo.ts               # GitHub/GitLab repository indexing
+│   ├── watcher.ts            # file watching for `add --watch`
+│   ├── reindex.ts            # re-embed chunks, rebuild the vector index
+│   ├── scheduler.ts          # cron schedules of saved connections
+│   ├── webhooks.ts           # webhooks with HMAC signing
+│   ├── events.ts             # document and search events (webhooks subscribe to them)
+│   ├── saved-searches.ts     # saved searches
+│   ├── workspace.ts          # workspaces
+│   ├── export.ts             # backup and restore
+│   ├── ttl.ts                # expiry of documents (prune-expired)
+│   ├── index.ts              # package root exports
+│   └── parsers/              # markdown, text, pdf, word, epub, pptx, html, csv, json, yaml
 ├── db/
-│   ├── connection.ts         # SQLite connection factory (WAL mode, sqlite-vec)
-│   └── schema.ts             # SCHEMA_VERSION, MIGRATIONS, createSchema()
+│   ├── connection.ts         # database path resolution, SQLite connection (WAL, sqlite-vec)
+│   ├── schema.ts             # SCHEMA_VERSION, MIGRATIONS, runMigrations(), createVectorTable()
+│   ├── index-meta.ts         # embedding model and vector size recorded for the vector index
+│   └── validate.ts           # row validation helpers
 ├── providers/
-│   ├── index.ts              # EmbeddingProvider interface + factory
+│   ├── embedding.ts          # EmbeddingProvider interface
+│   ├── index.ts              # createEmbeddingProvider() from config
+│   ├── dimensions.ts         # vector sizes of known models
 │   ├── local.ts              # @xenova/transformers (all-MiniLM-L6-v2)
 │   ├── ollama.ts             # Ollama HTTP API
 │   └── openai.ts             # OpenAI embeddings API
-├── registry/
-│   ├── types.ts              # RegistryEntry, PackSummary, PackManifest
-│   ├── config.ts             # registry list in ~/.libscope/config.json
-│   ├── git.ts                # git clone/pull/commit/push
-│   ├── sync.ts               # registry syncing (on request only)
-│   ├── search.ts             # pack search across registries
-│   ├── resolve.ts            # pack resolution (version conflicts)
-│   ├── publish.ts            # publishing packs to registries
-│   └── checksum.ts           # SHA-256 verification
+├── registry/                 # git pack registries: config, git, sync, search, resolve, publish, checksum
 ├── connectors/
-│   ├── obsidian.ts           # Obsidian vault sync
-│   ├── notion.ts             # Notion API sync
-│   ├── confluence.ts         # Confluence API sync
-│   ├── slack.ts              # Slack API sync
-│   ├── onenote.ts            # Microsoft Graph API sync
-│   ├── http-utils.ts         # shared retry logic with exponential backoff
-│   └── sync-tracker.ts       # sync history and status in database
+│   ├── registry.ts           # connector registry (types, secrets, sync, disconnect, schedules)
+│   ├── saved-config.ts       # saved connections in ~/.libscope/connectors/<name>.json
+│   ├── notion.ts, slack.ts, confluence.ts, obsidian.ts, onenote.ts, docs.ts
+│   ├── http-utils.ts         # retry with exponential backoff
+│   └── sync-tracker.ts       # sync history and status in the database
 ├── lite/
-│   ├── index.ts              # public entrypoint — exports LibScopeLite + types
-│   ├── core.ts               # LibScopeLite class implementation
-│   ├── types.ts              # LiteOptions, LiteDoc, LiteSearchResult, etc.
-│   ├── normalize.ts          # raw input → markdown (dispatches to core/parsers/)
-│   └── chunker-treesitter.ts # optional tree-sitter code chunker (TS/JS/Python)
-├── config.ts                 # loadConfig() — merges env, project, user, defaults
+│   ├── index.ts              # libscope/lite: package root + createLite, chunker, normalizeRawInput
+│   ├── core.ts               # createLite(), createCodeChunker()
+│   ├── normalize.ts          # raw input -> { title, content } (uses core/parsers)
+│   └── chunker-treesitter.ts # optional tree-sitter code chunker
+├── utils/                    # glob, retry, row validation
+├── config-schema.ts          # zod config schema (keys, defaults, env vars, docs table)
+├── config.ts                 # loadConfig(), config files, secrets.json, config get/set
 ├── errors.ts                 # LibScopeError hierarchy
-├── logger.ts                 # pino logger with child logger support
-└── LibScope.ts               # main public API class
+├── logger.ts                 # pino logger
+└── LibScope.ts               # the SDK class
 ```
 
 ## Key Design Patterns
 
 ### Error Hierarchy
 
-All errors extend `LibScopeError`, which carries a `code` string and an optional `cause`:
+All errors extend `LibScopeError`, which has a `code` string and an optional `cause`:
 
-```typescript
-// src/errors.ts
-class LibScopeError extends Error {
-  constructor(message: string, public readonly code: string, options?: ErrorOptions)
-}
-
-// Subclasses:
-DatabaseError        // SQLite failures
-EmbeddingError       // provider failures
-ValidationError      // bad input
-FetchError           // HTTP fetch failures
-ConfigError          // misconfiguration
-DocumentNotFoundError
-ChunkNotFoundError
-TopicNotFoundError
+```
+LibScopeError
+  ├── DatabaseError
+  ├── EmbeddingError
+  ├── ValidationError        # bad input; REST 400
+  ├── FetchError             # a fetched URL failed; REST 502
+  ├── ConfigError            # misconfiguration, with the setting to change
+  └── NotFoundError          # REST 404; code names the resource (LINK_NOT_FOUND, ...)
+        ├── DocumentNotFoundError
+        ├── ChunkNotFoundError
+        └── TopicNotFoundError
 ```
 
-Always throw the most specific subclass. MCP tool handlers must be wrapped with `withErrorHandling()` from `src/mcp/errors.ts` — this converts `LibScopeError` to well-structured MCP error responses.
+Throw the most specific class. The surfaces map errors in one place each: `src/cli/errors.ts`, `withErrorHandling()` in `src/mcp/errors.ts`, and `describeError()` in `src/api/adapter.ts`.
 
 ### Embedding Provider Interface
 
-All embedding providers implement the same interface:
-
 ```typescript
+// src/providers/embedding.ts
 interface EmbeddingProvider {
-  readonly dimensions: number;
-  embed(texts: string[]): Promise<number[][]>;
+  readonly name: string;
+  readonly model?: string | undefined;
+  readonly dimensions: number; // 0 until the first embedding when unknown
+  embed(text: string): Promise<number[]>;
+  embedBatch(texts: string[]): Promise<number[][]>;
 }
 ```
 
-The factory function in `src/providers/index.ts` returns the correct implementation based on config. Core modules accept an `EmbeddingProvider` and never import a specific provider directly — this makes them testable with the `MockEmbeddingProvider` fixture.
+`createEmbeddingProvider(config)` in `src/providers/index.ts` returns the configured provider. Core modules receive a provider and never import a specific one, so tests use the `MockEmbeddingProvider` fixture. The vector index records the provider, model and vector size (`src/db/index-meta.ts`); a mismatch is a `ConfigError` that suggests `libscope admin reindex --rebuild`.
 
 ### Database Migrations
 
-Schema migrations in `src/db/schema.ts` follow this pattern:
+Migrations are in `src/db/schema.ts`. The current schema version is 19.
 
 ```typescript
-export const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 19;
 
-export const MIGRATIONS: Record<number, string> = {
-  1: "CREATE TABLE ...",
+const MIGRATIONS: Record<number, string> = {
   // ...
-  17: "ALTER TABLE chunks ADD COLUMN ...",
+  19: "...",
 };
 ```
 
-To add a migration: increment `SCHEMA_VERSION` and add a new entry in `MIGRATIONS` with the new version number as the key. `createSchema()` runs all missing migrations on startup.
+To add a migration, increment `SCHEMA_VERSION` and add an entry to `MIGRATIONS` with the new version number as its key. `runMigrations()` applies the missing migrations at startup.
 
-### Configuration Merging
+### Configuration
 
-`loadConfig()` in `src/config.ts` merges four tiers, highest priority first:
+`src/config-schema.ts` defines every config key once (type, default, environment variables, secret or not, description). `loadConfig()` in `src/config.ts` merges, highest priority first:
 
-1. Environment variables (`LIBSCOPE_*`)
-2. Project `.libscope.json` (current working directory)
+1. Environment variables (`LIBSCOPE_<SECTION>_<FIELD>`)
+2. Project `.libscope.json`
 3. User `~/.libscope/config.json`
-4. Defaults
+4. Schema defaults
 
-The result is cached for 30 seconds to avoid repeated file reads. Configuration is passed down to core modules — they never read environment variables directly.
+API keys come only from environment variables and `~/.libscope/secrets.json`. The result is cached for 30 seconds. The same schema drives `libscope config get/set/unset` and the [configuration reference](/reference/configuration).
 
-### Connectors Pattern
+### Connectors
 
-Each connector in `src/connectors/` follows the same structure:
+Each connector type is one entry in `src/connectors/registry.ts`. `libscope connect <type>` saves a connection in `~/.libscope/connectors/<name>.json` (mode `0600`) and syncs it. The `sync` and `disconnect` operations, the MCP admin `sync` tool, the REST routes and the scheduler all read the saved connection, so credentials are never operation parameters. Sync state is tracked by `sync-tracker.ts`, and HTTP calls retry with `http-utils.ts`.
 
-1. **Auth config** stored in `~/.libscope/connectors/<name>.json` (permissions 0o600)
-2. **Incremental sync** tracked via `sync-tracker.ts` (last sync timestamp in DB)
-3. **Retry logic** from `http-utils.ts` (exponential backoff, configurable retries)
-4. **Disconnect** removes all documents with matching `sourceType` + source identifier
+## Data Flow: Adding content
 
-## Data Flow: Indexing
-
-When you index a document (`libscope add` or `submit-document` MCP tool):
+When you run `libscope add`, the MCP tool `submit-document`, `POST /api/v1/documents` or `scope.add()`, the same `add` operation runs:
 
 ```
-Input (file/URL/text)
+Input (inline content / file / directory / URL / repository URL)
+  → ingest.ts: detect the kind, fetch or read, crawl (spider) or list files
   → Parser (markdown.ts / html.ts / pdf.ts / ...)
-  → Raw text
-  → Chunker (indexing.ts) — paragraph-aware, heading breadcrumbs, overlap
-  → Chunks[]
-  → EmbeddingProvider.embed(chunks)
-  → Vectors[]
-  → DB: documents table + chunks table + chunk_embeddings (vector) + chunks_fts (FTS5)
+  → Chunker (indexing.ts, or a custom Chunker): heading-aware chunks with breadcrumbs
+  → EmbeddingProvider.embedBatch(chunks)
+  → DB: documents + chunks + chunk_embeddings (vector) + chunks_fts (FTS5)
 ```
-
-The chunker in `src/core/indexing.ts` splits on paragraph boundaries while respecting heading structure. Each chunk carries a breadcrumb of its parent headings so context is preserved across chunk boundaries.
 
 ## Data Flow: Search
 
 ```
 Query string
-  → EmbeddingProvider.embed([query]) → query vector
+  → EmbeddingProvider.embed(query) → query vector
   ↓
-  ┌── Vector search (sqlite-vec ANN cosine similarity) → ranked chunks
-  │
+  ┌── Vector search (sqlite-vec, cosine distance) → ranked chunks
   └── FTS5 search (BM25, AND then OR fallback) → ranked chunks
   ↓
 Reciprocal Rank Fusion (RRF, k=60) → merged ranked list
   ↓
-Title boost (1.5× if title contains query words)
+Title boost
   ↓
-MMR diversity reranking (optional, diversity param 0–1)
+MMR diversity reranking (optional, diversity 0–1)
   ↓
-Filter by: library, topic, tags, minRating, maxChunksPerDocument
+Filters: topic, library, version, sourceType, tags, minRating, maxChunksPerDocument
   ↓
-Paginate (limit, offset)
-  ↓
-Results with scoreExplanation
+Paging (limit, offset) → { items, total, limit, offset }
 ```
 
 See [How Search Works](/guide/how-search-works) for more detail.
 
-## Data Flow: RAG (Ask)
+## Data Flow: Ask
 
 ```
 Question
-  → search() — retrieve top-K relevant chunks
-  → Build context string from chunks
-  → LLM prompt: "Answer based only on this context: ..."
-  → LLM response (streaming or buffered)
-  → Return { text, sources: cited chunks }
+  → search() — top-K chunks
+  → context prompt from the chunks
+  → LLM (OpenAI, Anthropic or Ollama) → { mode: "answer", answer, sources, model }
+    or passthrough (no LLM call)      → { mode: "context", contextPrompt, sources }
 ```
 
-The LLM integration in `src/core/rag.ts` supports OpenAI, Ollama, Anthropic, and a `passthrough` mode where the application handles the LLM call externally.
+`answer()` in `src/core/rag.ts` handles both modes. With `llm.provider` `auto` (the default), the MCP server uses passthrough: the calling assistant writes the answer.
 
 ## Database Schema
 
 Key tables (schema version 19):
 
-| Table               | Purpose                                            |
-| ------------------- | -------------------------------------------------- |
-| `documents`         | Document metadata: title, content, library, topic  |
-| `chunks`            | Document chunks: content, chunk_index, document_id |
-| `chunk_embeddings`  | Vector table (sqlite-vec): embedding per chunk     |
-| `chunks_fts`        | FTS5 virtual table: full-text search index         |
-| `topics`            | Topic hierarchy (id, name, parent_id)              |
-| `tags`              | Tag definitions                                    |
-| `document_tags`     | Many-to-many document ↔ tag                        |
-| `ratings`           | Document and chunk ratings (1–5)                   |
-| `document_versions` | Version history for rollback                       |
-| `document_links`    | Typed cross-references between documents           |
-| `search_log`        | Query analytics                                    |
-| `document_hits`     | Per-document result hit analytics                  |
-| `saved_searches`    | Named query persistence                            |
-| `connector_configs` | Connector state (tokens, last sync)                |
-| `webhooks`          | Event webhook configuration                        |
-| `schema_version`    | Current migration version                          |
+| Table               | Purpose                                             |
+| ------------------- | --------------------------------------------------- |
+| `documents`         | Document metadata and content                       |
+| `chunks`            | Document chunks                                     |
+| `chunk_embeddings`  | Vector table (sqlite-vec): one embedding per chunk  |
+| `chunks_fts`        | FTS5 full-text index                                |
+| `index_meta`        | Provider, model and vector size of the vector index |
+| `topics`            | Topic hierarchy                                     |
+| `tags`              | Tags                                                |
+| `document_tags`     | Document ↔ tag                                      |
+| `ratings`           | Document and chunk ratings (1–5)                    |
+| `document_versions` | Version history for rollback                        |
+| `document_links`    | Typed links between documents                       |
+| `packs`             | Installed knowledge packs                           |
+| `search_log`        | One row per search (method, result count, latency)  |
+| `search_queries`    | Query log with result count and top score           |
+| `document_hits`     | How often each document is returned                 |
+| `saved_searches`    | Saved searches                                      |
+| `connector_syncs`   | Connector sync history                              |
+| `connector_configs` | Not used (connections are saved as files)           |
+| `webhooks`          | Webhooks                                            |
+| `schema_version`    | Applied migrations                                  |
 
-## How to Add a New CLI Command
+## How to Add an Operation
 
-1. Add a new file in `src/cli/commands/` (or add to an existing file)
-2. Export a `registerCommands(program: Command): void` function
-3. Import and call it in `src/cli/index.ts`
-4. Call the appropriate `src/core/` functions — don't implement logic in the CLI layer
+New functionality starts as an operation. The surfaces then expose it with little or no code.
 
-Example skeleton:
+1. Write the logic in `src/core/` as a function over the database and provider.
+2. Define the operation in the file of its group in `src/core/operations/` with `defineOperation({ name, group, summary, input, annotations, http, handler })`. Use the shared fields from `schemas.ts`, give every field a `.describe()`, and put defaults in the schema. Mark it `longRunning` if it can take long (surfaces then offer a background task).
+3. Add it to the group's exported list (for example `topicOperations`), so it is in `OPERATIONS`.
+4. Expose it:
+   - **REST**: automatic when the operation has `http`. The OpenAPI document follows.
+   - **SDK**: add it to `NAMESPACES` in `src/LibScope.ts` (a test checks that the SDK reaches every operation).
+   - **CLI**: add a command in the right `src/cli/commands/*.ts` file that calls `run(op, input, format)`. A test checks that every command calls an operation.
+   - **MCP**: only for tools that an assistant needs. Add it to `registerCoreTools` or `registerAdminTools` in `src/mcp/server.ts` with a formatter in `src/mcp/format.ts`.
+5. Run `npm run build && npm run docs:gen` to update the generated references, and commit them.
 
-```typescript
-// src/cli/commands/my-feature.ts
-import { Command } from "commander";
-import { myFeatureCore } from "../../core/my-feature.js";
-import { getDb } from "../../db/connection.js";
-
-export function registerCommands(program: Command): void {
-  program
-    .command("my-feature <arg>")
-    .description("Does something useful")
-    .option("--flag <value>", "An option")
-    .action(async (arg, opts) => {
-      const db = getDb();
-      const result = await myFeatureCore(db, arg, opts);
-      console.log(result);
-    });
-}
-```
-
-## How to Add a New MCP Tool
-
-1. Add the tool in an existing file under `src/mcp/tools/` (or create a new file)
-2. Register the tool via `server.tool(name, description, schema, handler)`
-3. Wrap the handler with `withErrorHandling()` from `src/mcp/errors.ts`
-4. Export a `registerTools(server, db, provider)` function and call it in `src/mcp/server.ts`
-
-Example skeleton:
+Example (a hypothetical `rename-topic` operation; `renameTopic` is not in the code):
 
 ```typescript
-import { withErrorHandling } from "../errors.js";
-import { z } from "zod";
-
-export function registerTools(server, db, provider) {
-  server.tool(
-    "my-tool",
-    "Does something useful",
-    { param: z.string().describe("A parameter") },
-    withErrorHandling(async ({ param }) => {
-      const result = await myCore(db, param);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    }),
-  );
-}
+// src/core/operations/topics.ts
+export const renameTopicOperation = defineOperation({
+  name: "rename-topic",
+  group: "topics",
+  summary: "Rename a topic",
+  input: z.object({ topic: s.topic, name: z.string().min(1).describe("New name") }),
+  annotations: { idempotent: true },
+  http: { method: "PATCH", path: "/topics/:topic" },
+  handler: (ctx, input) => renameTopic(ctx.db, resolveTopicId(ctx.db, input.topic), input.name),
+});
 ```
 
-## How to Add a New Connector
+```typescript
+// src/cli/commands/topics.ts, inside register(program)
+topics
+  .command("rename <topic> <name>")
+  .description("Rename a topic")
+  .action(async (topic: string, name: string) => {
+    await run(renameTopicOperation, { topic, name }, (t) => console.log(`✓ Renamed to ${t.name}`));
+  });
+```
 
-1. Create `src/connectors/my-connector.ts`
-2. Use `http-utils.ts` for HTTP calls with retry
-3. Track sync state with `sync-tracker.ts`
-4. Store auth config in `~/.libscope/connectors/my-connector.json` (chmod 0o600)
-5. Add a CLI command in `src/cli/commands/` under the `connect` subcommand
-6. Add an MCP tool in `src/mcp/tools/`
+## How to Add a Connector
 
-## How to Add a New Embedding Provider
+1. Write the connector in `src/connectors/my-connector.ts`: its config type, a sync function and a disconnect function. Use `http-utils.ts` for HTTP calls with retry.
+2. Add an entry to `CONNECTORS` in `src/connectors/registry.ts` with the config schema and the secret fields.
+3. Add its flags to `libscope connect` in `src/cli/commands/connectors.ts`.
 
-1. Create `src/providers/my-provider.ts` implementing `EmbeddingProvider`
-2. Export a class with `dimensions: number` and `embed(texts: string[]): Promise<number[][]>`
-3. Add it to the provider factory in `src/providers/index.ts`
-4. Add the provider name to the config type in `src/config.ts`
+`sync`, `disconnect`, `connections`, the MCP admin `sync` tool, the REST routes and the scheduler then work for it without more code.
+
+## How to Add an Embedding Provider
+
+1. Create `src/providers/my-provider.ts` that implements `EmbeddingProvider`.
+2. Add it to `createEmbeddingProvider()` in `src/providers/index.ts`.
+3. Add the provider name to `EMBEDDING_PROVIDERS` in `src/config-schema.ts`.
+
+## Generated Documentation
+
+The CLI, MCP tool, configuration and REST references contain blocks between `<!-- generated:start NAME -->` and `<!-- generated:end NAME -->` markers. `scripts/gen-docs.mjs` fills them from the built code: the commander `program`, the tools of `createMcpServer()`, `getConfigKeyTable()` and `API_ROUTES`. Run `npm run build && npm run docs:gen` after changing a command, a tool, a config key or a route. CI runs `npm run docs:check`, which fails when a block is out of date.
 
 ## Testing Approach
 
@@ -370,15 +378,15 @@ import { createTestDb } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { insertDoc, insertChunk, seedTestDocument } from "../fixtures/helpers.js";
 
-// Fresh in-memory DB with all migrations applied
+// Fresh in-memory database with all migrations applied
 const db = createTestDb();
 
-// Deterministic 4-dimensional vectors — no real embedding model required
+// Deterministic 4-dimensional vectors: no embedding model needed
 const provider = new MockEmbeddingProvider();
 ```
 
-- **Unit tests** (`tests/unit/`) — mock all dependencies, test one module at a time, run fast
-- **Integration tests** (`tests/integration/`) — real SQLite DB, full indexing → search → rate workflow
-- Use `createTestDbWithVec()` when you need the vector table (requires sqlite-vec)
+- **Unit tests** (`tests/unit/`): mocked dependencies, one module at a time. Operations are tested in `tests/unit/operations/`.
+- **Integration tests** (`tests/integration/`): a real SQLite database and full workflows.
+- Use `createTestDbWithVec()` when you need the vector table.
 
-Coverage thresholds enforced in CI: 75% statements, 74% branches, 75% functions, 75% lines.
+Coverage thresholds in CI: 75% statements, 74% branches, 75% functions, 75% lines.
