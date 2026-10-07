@@ -33,7 +33,7 @@ import {
   getKnowledgeGaps,
 } from "../core/analytics.js";
 import { startRepl } from "./repl.js";
-import { confirmAction } from "./confirm.js";
+import { confirmOrCancel } from "./confirm.js";
 import { createReporter, isVerbose } from "./reporter.js";
 import {
   addTagsToDocument,
@@ -43,7 +43,7 @@ import {
   suggestTags,
 } from "../core/tags.js";
 import { bulkDelete, bulkRetag, bulkMove } from "../core/bulk.js";
-import type { BulkSelector } from "../core/bulk.js";
+import type { BulkResult, BulkSelector } from "../core/bulk.js";
 import {
   createWorkspace,
   deleteWorkspace,
@@ -878,7 +878,7 @@ program
       try {
         const limit = parseIntOption(opts.limit, "--limit");
         const minScore = opts.minScore !== undefined ? Number.parseFloat(opts.minScore) : undefined;
-        const tags = opts.tags ? opts.tags.split(",").map((t) => t.trim()) : undefined;
+        const tags = opts.tags ? splitCsv(opts.tags) : undefined;
 
         let result;
         try {
@@ -1275,12 +1275,11 @@ docsCmd
     try {
       const doc = getDocument(db, documentId);
       if (
-        !(await confirmAction(
+        !(await confirmOrCancel(
           `Delete document "${doc.title}" (${documentId})? This cannot be undone.`,
-          !!opts.yes,
+          opts.yes,
         ))
       ) {
-        console.log("Cancelled.");
         return;
       }
       deleteDocument(db, documentId);
@@ -1602,6 +1601,11 @@ function initializeAppWithEmbedding(): {
   const provider = createEmbeddingProvider(config);
   createVectorTable(db, provider.dimensions);
   return { config, db, provider };
+}
+
+/** Split a comma-separated option value and trim each entry. */
+function splitCsv(value: string): string[] {
+  return value.split(",").map((t) => t.trim());
 }
 
 /** Recursively find files matching given extensions. */
@@ -2075,8 +2079,7 @@ workspaceCmd
   .description("Delete a workspace")
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (name: string, opts: { yes?: boolean }) => {
-    if (!(await confirmAction(`Delete workspace "${name}"? This cannot be undone.`, !!opts.yes))) {
-      console.log("Cancelled.");
+    if (!(await confirmOrCancel(`Delete workspace "${name}"? This cannot be undone.`, opts.yes))) {
       return;
     }
     deleteWorkspace(name);
@@ -2122,12 +2125,11 @@ packCmd
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (name: string, opts: { yes?: boolean }) => {
     if (
-      !(await confirmAction(
+      !(await confirmOrCancel(
         `Remove pack "${name}" and its documents? This cannot be undone.`,
-        !!opts.yes,
+        opts.yes,
       ))
     ) {
-      console.log("Cancelled.");
       return;
     }
     const { db } = initializeApp();
@@ -2206,9 +2208,7 @@ packCmd
         // Source mode: build pack directly from files/URLs (no database needed)
         // Default to .json.gz for source packs (they can be large)
         const outputPath = opts.output ?? `${opts.name}.json.gz`;
-        const extensionList = opts.extensions
-          ? opts.extensions.split(",").map((e) => e.trim())
-          : undefined;
+        const extensionList = opts.extensions ? splitCsv(opts.extensions) : undefined;
 
         const pack = await createPackFromSource({
           name: opts.name,
@@ -2385,12 +2385,11 @@ disconnectCmd
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (opts: { yes?: boolean }) => {
     if (
-      !(await confirmAction(
+      !(await confirmOrCancel(
         "Disconnect OneNote and remove all its data? This cannot be undone.",
-        !!opts.yes,
+        opts.yes,
       ))
     ) {
-      console.log("Cancelled.");
       return;
     }
     const config = loadConfig();
@@ -2429,9 +2428,7 @@ connectCmd
       vaultPath: string,
       cmdOpts: { sync?: boolean; topicMapping?: string; exclude?: string[] },
     ) => {
-      const { config, db } = initializeApp();
-      const provider = createEmbeddingProvider(config);
-      createVectorTable(db, provider.dimensions);
+      const { db, provider } = initializeAppWithEmbedding();
 
       try {
         const { syncObsidianVault } = await import("../connectors/obsidian.js");
@@ -2507,13 +2504,13 @@ connectCmd
           }
           slackConfig = {
             token: opts.token,
-            channels: opts.channels.split(",").map((c) => c.trim()),
+            channels: splitCsv(opts.channels),
             threadMode: opts.threadMode === "separate" ? "separate" : "aggregate",
           };
           if (opts.exclude) {
             slackConfig = {
               ...slackConfig,
-              excludeChannels: opts.exclude.split(",").map((c) => c.trim()),
+              excludeChannels: splitCsv(opts.exclude),
             };
           }
         }
@@ -2571,10 +2568,8 @@ connectCmd
         const email = opts.email ?? process.env["CONFLUENCE_EMAIL"] ?? undefined;
         const token = opts.token ?? process.env["CONFLUENCE_TOKEN"] ?? "";
 
-        const spaces = (opts.spaces ?? "all").split(",").map((s) => s.trim());
-        const excludeSpaces = opts.excludeSpaces
-          ? opts.excludeSpaces.split(",").map((s) => s.trim())
-          : undefined;
+        const spaces = splitCsv(opts.spaces ?? "all");
+        const excludeSpaces = opts.excludeSpaces ? splitCsv(opts.excludeSpaces) : undefined;
 
         const result = await syncConfluence(db, provider, {
           baseUrl: url,
@@ -2607,12 +2602,11 @@ disconnectCmd
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (vaultPath: string, opts: { yes?: boolean }) => {
     if (
-      !(await confirmAction(
+      !(await confirmOrCancel(
         `Disconnect Obsidian vault "${vaultPath}" and remove its documents? This cannot be undone.`,
-        !!opts.yes,
+        opts.yes,
       ))
     ) {
-      console.log("Cancelled.");
       return;
     }
     const { db } = initializeApp();
@@ -2678,12 +2672,11 @@ disconnectCmd
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (opts: { yes?: boolean }) => {
     if (
-      !(await confirmAction(
+      !(await confirmOrCancel(
         "Disconnect Notion and remove all its documents? This cannot be undone.",
-        !!opts.yes,
+        opts.yes,
       ))
     ) {
-      console.log("Cancelled.");
       return;
     }
     const { db } = initializeApp();
@@ -2701,12 +2694,11 @@ disconnectCmd
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (opts: { yes?: boolean }) => {
     if (
-      !(await confirmAction(
+      !(await confirmOrCancel(
         "Disconnect Slack and remove all its data? This cannot be undone.",
-        !!opts.yes,
+        opts.yes,
       ))
     ) {
-      console.log("Cancelled.");
       return;
     }
     const { db } = initializeApp();
@@ -2724,12 +2716,11 @@ disconnectCmd
   .option("-y, --yes", "Skip confirmation prompt")
   .action(async (opts: { yes?: boolean }) => {
     if (
-      !(await confirmAction(
+      !(await confirmOrCancel(
         "Disconnect Confluence and remove all synced content? This cannot be undone.",
-        !!opts.yes,
+        opts.yes,
       ))
     ) {
-      console.log("Cancelled.");
       return;
     }
     const { disconnectConfluence } = await import("../connectors/confluence.js");
@@ -2781,182 +2772,121 @@ program
 // bulk
 const bulkCmd = program.command("bulk").description("Bulk operations on documents");
 
-bulkCmd
-  .command("delete")
-  .description("Delete multiple documents matching filters")
-  .option("--topic <topicId>", "Filter by topic ID")
-  .option("--library <name>", "Filter by library name")
-  .option("--source-type <type>", "Filter by source type")
-  .option("--tags <tags>", "Filter by tags (comma-separated)")
-  .option("--dry-run", "Show what would be affected without making changes")
-  .option("-y, --yes", "Skip confirmation prompt")
-  .action(
-    async (opts: {
-      topic?: string;
-      library?: string;
-      sourceType?: string;
-      tags?: string;
-      dryRun?: boolean;
-      yes?: boolean;
-    }) => {
-      const { db } = initializeApp();
-      try {
-        const selector: BulkSelector = {};
-        if (opts.topic) selector.topicId = opts.topic;
-        if (opts.library) selector.library = opts.library;
-        if (opts.sourceType) selector.sourceType = opts.sourceType;
-        if (opts.tags) selector.tags = opts.tags.split(",").map((t) => t.trim());
+interface BulkFilterOpts {
+  topic?: string;
+  library?: string;
+  sourceType?: string;
+  tags?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+}
 
-        const result = bulkDelete(db, selector, true);
-        console.log(`Found ${result.affected} document(s) matching filters.`);
+/** Add the document filter options shared by all bulk commands. */
+function addBulkFilterOptions(cmd: Command): Command {
+  return cmd
+    .option("--topic <topicId>", "Filter by topic ID")
+    .option("--library <name>", "Filter by library name")
+    .option("--source-type <type>", "Filter by source type")
+    .option("--tags <tags>", "Filter by tags (comma-separated)");
+}
 
-        if (result.affected === 0) return;
+/** Add the --dry-run and --yes options shared by all bulk commands. */
+function addBulkRunOptions(cmd: Command): Command {
+  return cmd
+    .option("--dry-run", "Show what would be affected without making changes")
+    .option("-y, --yes", "Skip confirmation prompt");
+}
 
-        if (opts.dryRun) {
-          for (const id of result.documentIds) {
-            console.log(`  - ${id}`);
-          }
-          console.log("(dry run — no changes made)");
-          return;
-        }
+function selectorFromOpts(opts: BulkFilterOpts): BulkSelector {
+  const selector: BulkSelector = {};
+  if (opts.topic) selector.topicId = opts.topic;
+  if (opts.library) selector.library = opts.library;
+  if (opts.sourceType) selector.sourceType = opts.sourceType;
+  if (opts.tags) selector.tags = splitCsv(opts.tags);
+  return selector;
+}
 
-        if (
-          !(await confirmAction(
-            `Delete ${result.affected} document(s)? This cannot be undone.`,
-            !!opts.yes,
-          ))
-        ) {
-          console.log("Cancelled.");
-          return;
-        }
+/**
+ * Shared bulk flow: preview matches, list them on --dry-run, confirm, then apply.
+ * `run(db, dryRun)` performs the bulk operation (as a preview when dryRun is true).
+ */
+async function runBulk(
+  opts: BulkFilterOpts,
+  run: (db: ReturnType<typeof getDatabase>, dryRun?: boolean) => BulkResult,
+  confirmMessage: (affected: number) => string,
+  doneMessage: (affected: number) => string,
+): Promise<void> {
+  const { db } = initializeApp();
+  try {
+    const result = run(db, true);
+    console.log(`Found ${result.affected} document(s) matching filters.`);
 
-        const actual = bulkDelete(db, selector);
-        console.log(`✓ Deleted ${actual.affected} document(s).`);
-      } finally {
-        closeDatabase();
+    if (result.affected === 0) return;
+
+    if (opts.dryRun) {
+      for (const id of result.documentIds) {
+        console.log(`  - ${id}`);
       }
-    },
+      console.log("(dry run — no changes made)");
+      return;
+    }
+
+    if (!(await confirmOrCancel(confirmMessage(result.affected), opts.yes))) {
+      return;
+    }
+
+    const actual = run(db);
+    console.log(doneMessage(actual.affected));
+  } finally {
+    closeDatabase();
+  }
+}
+
+addBulkRunOptions(
+  addBulkFilterOptions(
+    bulkCmd.command("delete").description("Delete multiple documents matching filters"),
+  ),
+).action(async (opts: BulkFilterOpts) => {
+  const selector = selectorFromOpts(opts);
+  await runBulk(
+    opts,
+    (db, dryRun) => bulkDelete(db, selector, dryRun),
+    (n) => `Delete ${n} document(s)? This cannot be undone.`,
+    (n) => `✓ Deleted ${n} document(s).`,
   );
+});
 
-bulkCmd
-  .command("retag")
-  .description("Add or remove tags from multiple documents")
-  .option("--topic <topicId>", "Filter by topic ID")
-  .option("--library <name>", "Filter by library name")
-  .option("--source-type <type>", "Filter by source type")
-  .option("--tags <tags>", "Filter by tags (comma-separated)")
-  .option("--add-tags <tags>", "Tags to add (comma-separated)")
-  .option("--remove-tags <tags>", "Tags to remove (comma-separated)")
-  .option("--dry-run", "Show what would be affected without making changes")
-  .option("-y, --yes", "Skip confirmation prompt")
-  .action(
-    async (opts: {
-      topic?: string;
-      library?: string;
-      sourceType?: string;
-      tags?: string;
-      addTags?: string;
-      removeTags?: string;
-      dryRun?: boolean;
-      yes?: boolean;
-    }) => {
-      const { db } = initializeApp();
-      try {
-        const selector: BulkSelector = {};
-        if (opts.topic) selector.topicId = opts.topic;
-        if (opts.library) selector.library = opts.library;
-        if (opts.sourceType) selector.sourceType = opts.sourceType;
-        if (opts.tags) selector.tags = opts.tags.split(",").map((t) => t.trim());
-
-        const addTags = opts.addTags ? opts.addTags.split(",").map((t) => t.trim()) : undefined;
-        const removeTags = opts.removeTags
-          ? opts.removeTags.split(",").map((t) => t.trim())
-          : undefined;
-
-        const result = bulkRetag(db, selector, addTags, removeTags, true);
-        console.log(`Found ${result.affected} document(s) matching filters.`);
-
-        if (result.affected === 0) return;
-
-        if (opts.dryRun) {
-          for (const id of result.documentIds) {
-            console.log(`  - ${id}`);
-          }
-          console.log("(dry run — no changes made)");
-          return;
-        }
-
-        if (!(await confirmAction(`Retag ${result.affected} document(s)?`, !!opts.yes))) {
-          console.log("Cancelled.");
-          return;
-        }
-
-        const actual = bulkRetag(db, selector, addTags, removeTags);
-        console.log(`✓ Retagged ${actual.affected} document(s).`);
-      } finally {
-        closeDatabase();
-      }
-    },
+addBulkRunOptions(
+  addBulkFilterOptions(
+    bulkCmd.command("retag").description("Add or remove tags from multiple documents"),
+  )
+    .option("--add-tags <tags>", "Tags to add (comma-separated)")
+    .option("--remove-tags <tags>", "Tags to remove (comma-separated)"),
+).action(async (opts: BulkFilterOpts & { addTags?: string; removeTags?: string }) => {
+  const selector = selectorFromOpts(opts);
+  const addTags = opts.addTags ? splitCsv(opts.addTags) : undefined;
+  const removeTags = opts.removeTags ? splitCsv(opts.removeTags) : undefined;
+  await runBulk(
+    opts,
+    (db, dryRun) => bulkRetag(db, selector, addTags, removeTags, dryRun),
+    (n) => `Retag ${n} document(s)?`,
+    (n) => `✓ Retagged ${n} document(s).`,
   );
+});
 
-bulkCmd
-  .command("move")
-  .description("Move multiple documents to a different topic")
-  .option("--topic <topicId>", "Filter by topic ID")
-  .option("--library <name>", "Filter by library name")
-  .option("--source-type <type>", "Filter by source type")
-  .option("--tags <tags>", "Filter by tags (comma-separated)")
-  .requiredOption("--to <targetTopicId>", "Target topic ID to move documents to")
-  .option("--dry-run", "Show what would be affected without making changes")
-  .option("-y, --yes", "Skip confirmation prompt")
-  .action(
-    async (opts: {
-      topic?: string;
-      library?: string;
-      sourceType?: string;
-      tags?: string;
-      to: string;
-      dryRun?: boolean;
-      yes?: boolean;
-    }) => {
-      const { db } = initializeApp();
-      try {
-        const selector: BulkSelector = {};
-        if (opts.topic) selector.topicId = opts.topic;
-        if (opts.library) selector.library = opts.library;
-        if (opts.sourceType) selector.sourceType = opts.sourceType;
-        if (opts.tags) selector.tags = opts.tags.split(",").map((t) => t.trim());
-
-        const result = bulkMove(db, selector, opts.to, true);
-        console.log(`Found ${result.affected} document(s) matching filters.`);
-
-        if (result.affected === 0) return;
-
-        if (opts.dryRun) {
-          for (const id of result.documentIds) {
-            console.log(`  - ${id}`);
-          }
-          console.log("(dry run — no changes made)");
-          return;
-        }
-
-        if (
-          !(await confirmAction(
-            `Move ${result.affected} document(s) to topic "${opts.to}"?`,
-            !!opts.yes,
-          ))
-        ) {
-          console.log("Cancelled.");
-          return;
-        }
-
-        const actual = bulkMove(db, selector, opts.to);
-        console.log(`✓ Moved ${actual.affected} document(s) to topic "${opts.to}".`);
-      } finally {
-        closeDatabase();
-      }
-    },
+addBulkRunOptions(
+  addBulkFilterOptions(
+    bulkCmd.command("move").description("Move multiple documents to a different topic"),
+  ).requiredOption("--to <targetTopicId>", "Target topic ID to move documents to"),
+).action(async (opts: BulkFilterOpts & { to: string }) => {
+  const selector = selectorFromOpts(opts);
+  await runBulk(
+    opts,
+    (db, dryRun) => bulkMove(db, selector, opts.to, dryRun),
+    (n) => `Move ${n} document(s) to topic "${opts.to}"?`,
+    (n) => `✓ Moved ${n} document(s) to topic "${opts.to}".`,
   );
+});
 
 // Webhooks
 const webhookCmd = program.command("webhooks").description("Manage webhooks");
@@ -3081,22 +3011,16 @@ scheduleCmd
       process.exit(1);
     }
 
-    const {
-      loadNamedConnectorConfig: loadCfg,
-      saveNamedConnectorConfig: saveCfg,
-      hasNamedConnectorConfig: hasCfg,
-    } = await import("../connectors/index.js");
-
-    if (!hasCfg(connector)) {
+    if (!hasNamedConnectorConfig(connector)) {
       console.error(
         `No connector config found for "${connector}". Run 'libscope connect ${connector}' first.`,
       );
       process.exit(1);
     }
 
-    const config = loadCfg<Record<string, unknown>>(connector);
+    const config = loadNamedConnectorConfig<Record<string, unknown>>(connector);
     config.schedule = { cronExpression: cronExpr };
-    saveCfg(connector, config);
+    saveNamedConnectorConfig(connector, config);
     console.log(`✓ Schedule set for ${connector}: ${cronExpr}`);
     console.log(
       "The schedule will be active when the API server is running (libscope serve --api)",
@@ -3106,25 +3030,19 @@ scheduleCmd
 scheduleCmd
   .command("remove <connector>")
   .description("Remove the sync schedule for a connector")
-  .action(async (connector: string) => {
-    const {
-      loadNamedConnectorConfig: loadCfg,
-      saveNamedConnectorConfig: saveCfg,
-      hasNamedConnectorConfig: hasCfg,
-    } = await import("../connectors/index.js");
-
-    if (!hasCfg(connector)) {
+  .action((connector: string) => {
+    if (!hasNamedConnectorConfig(connector)) {
       console.error(`No connector config found for "${connector}".`);
       process.exit(1);
     }
 
-    const config = loadCfg<Record<string, unknown>>(connector);
+    const config = loadNamedConnectorConfig<Record<string, unknown>>(connector);
     if (!config.schedule) {
       console.error(`No schedule configured for "${connector}". Nothing to remove.`);
       process.exit(1);
     }
     delete config.schedule;
-    saveCfg(connector, config);
+    saveNamedConnectorConfig(connector, config);
     console.log(`✓ Schedule removed for ${connector}`);
   });
 
