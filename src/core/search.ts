@@ -4,7 +4,7 @@ import { z } from "zod";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 import { validateCountRow } from "../utils/db-validation.js";
 import { validateRow, validateRows } from "../db/validate.js";
-import { REBUILD_VECTOR_INDEX_HINT } from "../db/index-meta.js";
+import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-meta.js";
 import { logSearch, recordSearchQuery } from "./analytics.js";
 import { performance } from "node:perf_hooks";
 
@@ -36,15 +36,6 @@ const VECTOR_TABLE_MISSING_PATTERNS = [
 function isVectorTableError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return VECTOR_TABLE_MISSING_PATTERNS.some((p) => msg.includes(p));
-}
-
-/**
- * sqlite-vec error raised when the query vector size differs from the vector table's
- * (the embedding model changed after the index was built). Both spellings occur in sqlite-vec.
- */
-function isVectorDimensionError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return msg.includes("dimension mismatch") || msg.includes("dimension mistmatch");
 }
 
 /** Escape LIKE special characters so user input is treated literally. */

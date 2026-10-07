@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { Readable } from "node:stream";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ValidationError } from "../errors.js";
+import { EmbeddingError, ValidationError } from "../errors.js";
+import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-meta.js";
 import { getLogger } from "../logger.js";
 import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
@@ -429,7 +430,7 @@ function isNoSuchTableError(err: unknown): boolean {
 export interface ChunkWriter {
   /** Insert chunk rows for a document with their embeddings (matched by array index). */
   insertChunks(documentId: string, chunks: string[], embeddings: ReadonlyArray<number[]>): void;
-  /** Replace the stored embedding (and embedding metadata row) of an existing chunk. */
+  /** Replace the stored embedding of an existing chunk. */
   replaceEmbedding(chunkId: string, embedding: number[]): void;
 }
 
@@ -437,15 +438,11 @@ export interface ChunkWriter {
  * Create a {@link ChunkWriter}. Writes are synchronous; callers wrap them in a transaction.
  * When the vector table does not exist (sqlite-vec not loaded), vectors are skipped.
  */
-export function createChunkWriter(
-  db: Database.Database,
-  provider: Pick<EmbeddingProvider, "name">,
-): ChunkWriter {
+export function createChunkWriter(db: Database.Database): ChunkWriter {
   const log = getLogger();
   const insertChunk = db.prepare(
     "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",
   );
-  const insertMeta = tryPrepareMetaInsert(db);
   let insertVec: Database.Statement | undefined;
   let deleteVec: Database.Statement | undefined;
 
@@ -457,8 +454,13 @@ export function createChunkWriter(
       }
       insertVec ??= db.prepare("INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)");
       insertVec.run(chunkId, Buffer.from(new Float32Array(embedding).buffer));
-      insertMeta?.run(chunkId, provider.name, "unknown");
     } catch (err) {
+      if (isVectorDimensionError(err)) {
+        throw new EmbeddingError(
+          `The embedding has ${embedding.length} dimensions, which does not match the vector index. ${REBUILD_VECTOR_INDEX_HINT}`,
+          err,
+        );
+      }
       if (!isNoSuchTableError(err)) throw err;
       log.debug({ chunkId }, "Skipped vector insertion (sqlite-vec not loaded)");
     }
@@ -476,29 +478,6 @@ export function createChunkWriter(
       writeVector(chunkId, embedding, true);
     },
   };
-}
-
-/** Try to prepare an insert statement for chunk_embedding_metadata if the table exists. */
-function tryPrepareMetaInsert(
-  db: Database.Database,
-): Database.Statement<[string, string, string]> | null {
-  const log = getLogger();
-  try {
-    const exists = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_embedding_metadata'",
-      )
-      .get();
-    if (exists) {
-      return db.prepare(`
-        INSERT OR REPLACE INTO chunk_embedding_metadata (chunk_id, embedding_provider, embedding_model)
-        VALUES (?, ?, ?)
-      `);
-    }
-  } catch (err: unknown) {
-    log.debug({ err }, "Skipped chunk_embedding_metadata check");
-  }
-  return null;
 }
 
 /** Index a document: validate, chunk, embed, and store. */
@@ -539,7 +518,7 @@ export async function indexDocument(
     INSERT INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, content_hash, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const writer = createChunkWriter(db, provider);
+  const writer = createChunkWriter(db);
 
   const transaction = db.transaction(() => {
     insertDoc.run(

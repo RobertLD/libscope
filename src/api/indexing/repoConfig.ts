@@ -41,7 +41,7 @@ export function createRepoLibScope(repoSlug: string): LibScopeLite {
   const db = createDatabase(dbPath);
   runMigrations(db);
   try {
-    createVectorTable(db, provider.dimensions);
+    createVectorTable(db, provider);
   } catch {
     /* sqlite-vec not loaded */
   }

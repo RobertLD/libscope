@@ -265,15 +265,15 @@ libscope pack install react-docs --registry official
 
 ## Pack Registries
 
-| Command                                                    | Description                            |
-| ---------------------------------------------------------- | -------------------------------------- |
-| `libscope registry add <url> [-n <alias>]`                | Register a git repo as a pack registry |
-| `libscope registry remove <name> [-y]`                     | Unregister a registry                  |
-| `libscope registry list`                                   | List configured registries             |
-| `libscope registry sync [<name>]`                          | Sync one or all registries             |
-| `libscope registry search <query> [-r <name>]`             | Search registry pack indexes           |
-| `libscope registry create <path>`                          | Initialize a new registry repo         |
-| `libscope registry publish <file> -r <name>`               | Publish a pack file to a registry      |
+| Command                                                           | Description                                             |
+| ----------------------------------------------------------------- | ------------------------------------------------------- |
+| `libscope registry add <url> [-n <alias>]`                        | Register a git repo as a pack registry                  |
+| `libscope registry remove <name> [-y]`                            | Unregister a registry                                   |
+| `libscope registry list`                                          | List configured registries                              |
+| `libscope registry sync [<name>]`                                 | Sync one or all registries                              |
+| `libscope registry search <query> [-r <name>]`                    | Search registry pack indexes                            |
+| `libscope registry create <path>`                                 | Initialize a new registry repo                          |
+| `libscope registry publish <file> -r <name>`                      | Publish a pack file to a registry                       |
 | `libscope registry unpublish <pack> -r <name> --pack-version <v>` | Remove a pack version from a registry (or `<pack>@<v>`) |
 
 ### `libscope registry add`
@@ -284,11 +284,11 @@ libscope registry add git@github.com:team/packs.git --name team --priority 5
 libscope registry add https://github.com/org/registry.git --sync-interval 86400 --no-sync
 ```
 
-| Option                       | Description                                              |
-| ---------------------------- | -------------------------------------------------------- |
-| `-n, --name <alias>`        | Short name for this registry (default: inferred from URL)|
-| `--priority <n>`            | Conflict resolution priority — lower wins (default: 10)  |
-| `--sync-interval <seconds>` | Auto-sync interval in seconds, 0 = manual (default: 0)   |
+| Option                      | Description                                               |
+| --------------------------- | --------------------------------------------------------- |
+| `-n, --name <alias>`        | Short name for this registry (default: inferred from URL) |
+| `--priority <n>`            | Conflict resolution priority — lower wins (default: 10)   |
+| `--sync-interval <seconds>` | Auto-sync interval in seconds, 0 = manual (default: 0)    |
 | `--no-sync`                 | Skip initial sync after adding                            |
 
 ### `libscope registry search`
@@ -311,12 +311,12 @@ libscope registry publish ./my-pack.json -r my-registry
 libscope registry publish ./my-pack.json -r community --submit
 ```
 
-| Option                   | Description                                              |
-| ------------------------ | -------------------------------------------------------- |
-| `-r, --registry <name>`  | Target registry (required)                              |
-| `--pack-version <semver>` | Version to publish as (default: auto-bump patch)         |
-| `-m, --message <msg>`    | Git commit message                                      |
-| `--submit`               | Push to a feature branch instead of main                 |
+| Option                    | Description                                      |
+| ------------------------- | ------------------------------------------------ |
+| `-r, --registry <name>`   | Target registry (required)                       |
+| `--pack-version <semver>` | Version to publish as (default: auto-bump patch) |
+| `-m, --message <msg>`     | Git commit message                               |
+| `--submit`                | Push to a feature branch instead of main         |
 
 ### `libscope registry unpublish`
 
@@ -324,12 +324,12 @@ libscope registry publish ./my-pack.json -r community --submit
 libscope registry unpublish my-pack -r my-registry --pack-version 1.0.0
 ```
 
-| Option                   | Description                       |
-| ------------------------ | --------------------------------- |
-| `-r, --registry <name>`  | Target registry (required)       |
+| Option                    | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `-r, --registry <name>`   | Target registry (required)                                      |
 | `--pack-version <semver>` | Version to remove (required unless given as `<pack>@<version>`) |
-| `-m, --message <msg>`    | Git commit message                |
-| `-y, --yes`              | Skip confirmation prompt          |
+| `-m, --message <msg>`     | Git commit message                                              |
+| `-y, --yes`               | Skip confirmation prompt                                        |
 
 ### `libscope registry create`
 
@@ -353,13 +353,14 @@ Creates a git repo with the canonical registry folder structure. See the [Regist
 
 ## Developer Tools
 
-| Command                               | Description                             |
-| ------------------------------------- | --------------------------------------- |
-| `libscope watch <directory>`          | Watch for file changes and auto-reindex (all supported formats, plus `.rst`) |
-| `libscope reindex`                    | Re-embed chunks with current provider   |
-| `libscope dedupe`                     | Scan for duplicate documents            |
-| `libscope export <outputPath>`        | Export knowledge base to JSON           |
-| `libscope import-backup <backupPath>` | Import from a backup file               |
+| Command                               | Description                                                                                   |
+| ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `libscope watch <directory>`          | Watch for file changes and auto-reindex (all supported formats, plus `.rst`)                  |
+| `libscope reindex`                    | Re-embed chunks with current provider                                                         |
+| `libscope reindex --rebuild`          | Recreate the vector index for a new embedding model or vector size, then re-embed every chunk |
+| `libscope dedupe`                     | Scan for duplicate documents                                                                  |
+| `libscope export <outputPath>`        | Export knowledge base to JSON                                                                 |
+| `libscope import-backup <backupPath>` | Import from a backup file                                                                     |
 
 ## Analytics
 
@@ -372,12 +373,15 @@ Creates a git repo with the canonical registry folder structure. See the [Regist
 
 ## Configuration
 
-| Command                             | Description                |
-| ----------------------------------- | -------------------------- |
-| `libscope config set <key> <value>` | Set a configuration value  |
-| `libscope config show`              | Show current configuration |
+| Command                             | Description                                   |
+| ----------------------------------- | --------------------------------------------- |
+| `libscope config set <key> <value>` | Set a configuration value                     |
+| `libscope config get <key>`         | Show one configuration value (secrets masked) |
+| `libscope config unset <key>`       | Remove a value from the user config file      |
+| `libscope config show`              | Show current configuration (secrets masked)   |
+| `libscope config path`              | Print the user config file path               |
 
-Supported config keys for `set`: `embedding.provider`, `embedding.ollamaUrl`, `embedding.ollamaModel`, `embedding.openaiModel`, `llm.provider`, `llm.model`, `database.path`, `logging.level`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`.
+Supported config keys: `embedding.provider`, `embedding.ollamaUrl`, `embedding.ollamaModel`, `embedding.openaiModel`, `embedding.dimensions`, `llm.provider`, `llm.model`, `llm.ollamaUrl`, `database.path`, `indexing.maxDocumentSize`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`, `logging.level`. API keys cannot be set with `config set`; use the `LIBSCOPE_OPENAI_API_KEY` / `OPENAI_API_KEY` and `LIBSCOPE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` environment variables.
 
 ## Global Options
 

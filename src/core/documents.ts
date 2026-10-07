@@ -217,7 +217,7 @@ export async function updateDocument(
 
     const chunks = splitIntoChunks(newContent);
     const embeddings = await embedChunks(provider, chunks, newMeta);
-    const writer = createChunkWriter(db, provider);
+    const writer = createChunkWriter(db);
 
     const transaction = db.transaction(() => {
       saveVersion(db, documentId);
@@ -291,7 +291,7 @@ async function embedExistingChunks(
     rows.map((r) => r.content),
     meta,
   );
-  const writer = createChunkWriter(db, provider);
+  const writer = createChunkWriter(db);
   return {
     write: (): void => {
       rows.forEach((row, i) => writer.replaceEmbedding(row.id, embeddings[i] ?? []));

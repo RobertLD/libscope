@@ -16,6 +16,15 @@ export const INDEX_META_DDL = `
 export const REBUILD_VECTOR_INDEX_HINT =
   "Run `libscope reindex --rebuild` to rebuild the vector index with the configured embedding model.";
 
+/**
+ * sqlite-vec error raised when a vector's size differs from the vector table's
+ * (the embedding model changed after the index was built). Both spellings occur in sqlite-vec.
+ */
+export function isVectorDimensionError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes("dimension mismatch") || msg.includes("dimension mistmatch");
+}
+
 /** The embedding provider, model and vector size that built (or will build) the vector index. */
 export interface EmbeddingIndexIdentity {
   provider?: string | undefined;

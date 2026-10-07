@@ -509,7 +509,7 @@ export async function installPack(
     INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const writer = createChunkWriter(db, provider);
+  const writer = createChunkWriter(db);
 
   type BatchData = { batchDocs: PackDocument[] };
   const batches: BatchData[] = [];

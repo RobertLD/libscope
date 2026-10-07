@@ -79,7 +79,7 @@ export class LibScope {
     runMigrations(db);
 
     const embeddingProvider = createEmbeddingProvider(config);
-    createVectorTable(db, embeddingProvider.dimensions);
+    createVectorTable(db, embeddingProvider);
 
     return new LibScope(db, embeddingProvider, config);
   }

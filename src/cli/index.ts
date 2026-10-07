@@ -480,7 +480,7 @@ program
       // Only create vector table if provider can be initialized without download
       try {
         const provider = createEmbeddingProvider(config);
-        createVectorTable(db, provider.dimensions);
+        createVectorTable(db, provider);
       } catch {
         console.log("  ℹ Vector table skipped (embedding provider not available)");
       }
@@ -1658,7 +1658,7 @@ function initializeAppWithEmbedding(): {
 } {
   const { config, db } = initializeApp();
   const provider = createEmbeddingProvider(config);
-  createVectorTable(db, provider.dimensions);
+  createVectorTable(db, provider);
   return { config, db, provider };
 }
 

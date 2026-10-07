@@ -5,6 +5,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { LocalEmbeddingProvider } from "../providers/local.js";
 import { createDatabase } from "../db/connection.js";
 import { runMigrations, createVectorTable } from "../db/schema.js";
+import { ConfigError } from "../errors.js";
 import { indexDocument } from "../core/indexing.js";
 import { searchDocuments } from "../core/search.js";
 import { bulkDelete } from "../core/bulk.js";
@@ -43,9 +44,11 @@ export class LibScopeLite {
       runMigrations(this.db);
       // Create vector table best-effort (requires sqlite-vec to be loaded).
       try {
-        createVectorTable(this.db, this.provider.dimensions);
-      } catch {
-        /* sqlite-vec not loaded — FTS5 search still works */
+        createVectorTable(this.db, this.provider);
+      } catch (err) {
+        // A model/index mismatch must surface; anything else means sqlite-vec is
+        // unavailable and FTS5 search still works.
+        if (err instanceof ConfigError) throw err;
       }
     } else {
       // Caller-provided DB: skip all setup (migrations, extension loading, vector table).

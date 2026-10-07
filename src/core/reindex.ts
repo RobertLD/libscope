@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { DatabaseError } from "../errors.js";
+import { ConfigError, DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { createVectorTable } from "../db/schema.js";
 import { buildEmbeddingText, createChunkWriter } from "./indexing.js";
@@ -70,12 +70,13 @@ export async function reindex(
   // Ensure the vector table exists with the correct dimensions for this provider.
   // Delegates to schema.createVectorTable() — single source of truth for the DDL.
   try {
-    createVectorTable(db, provider.dimensions);
-  } catch {
-    log.warn("Could not ensure vector table — continuing anyway");
+    createVectorTable(db, provider);
+  } catch (err) {
+    if (err instanceof ConfigError) throw err;
+    log.warn({ err }, "Could not ensure vector table — continuing anyway");
   }
 
-  const writer = createChunkWriter(db, provider);
+  const writer = createChunkWriter(db);
 
   let completed = 0;
   let failed = 0;

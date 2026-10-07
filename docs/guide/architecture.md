@@ -272,26 +272,26 @@ The LLM integration in `src/core/rag.ts` supports OpenAI, Ollama, Anthropic, and
 
 ## Database Schema
 
-Key tables (schema version 17):
+Key tables (schema version 18):
 
-| Table              | Purpose                                            |
-| ------------------ | -------------------------------------------------- |
-| `documents`        | Document metadata: title, content, library, topic  |
-| `chunks`           | Document chunks: content, chunk_index, document_id |
-| `chunk_embeddings` | Vector table (sqlite-vec): embedding per chunk     |
-| `chunks_fts`       | FTS5 virtual table: full-text search index         |
-| `topics`           | Topic hierarchy (id, name, parent_id)              |
-| `tags`             | Tag definitions                                    |
-| `document_tags`    | Many-to-many document ↔ tag                        |
-| `ratings`          | Document and chunk ratings (1–5)                   |
-| `document_versions`| Version history for rollback                       |
-| `document_links`   | Typed cross-references between documents           |
-| `search_log`       | Query analytics                                    |
-| `document_hits`    | Per-document result hit analytics                  |
-| `saved_searches`   | Named query persistence                            |
-| `connector_configs`| Connector state (tokens, last sync)                |
-| `webhooks`         | Event webhook configuration                        |
-| `schema_version`   | Current migration version                          |
+| Table               | Purpose                                            |
+| ------------------- | -------------------------------------------------- |
+| `documents`         | Document metadata: title, content, library, topic  |
+| `chunks`            | Document chunks: content, chunk_index, document_id |
+| `chunk_embeddings`  | Vector table (sqlite-vec): embedding per chunk     |
+| `chunks_fts`        | FTS5 virtual table: full-text search index         |
+| `topics`            | Topic hierarchy (id, name, parent_id)              |
+| `tags`              | Tag definitions                                    |
+| `document_tags`     | Many-to-many document ↔ tag                        |
+| `ratings`           | Document and chunk ratings (1–5)                   |
+| `document_versions` | Version history for rollback                       |
+| `document_links`    | Typed cross-references between documents           |
+| `search_log`        | Query analytics                                    |
+| `document_hits`     | Per-document result hit analytics                  |
+| `saved_searches`    | Named query persistence                            |
+| `connector_configs` | Connector state (tokens, last sync)                |
+| `webhooks`          | Event webhook configuration                        |
+| `schema_version`    | Current migration version                          |
 
 ## How to Add a New CLI Command
 

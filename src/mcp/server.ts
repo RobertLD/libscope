@@ -227,7 +227,7 @@ async function main(): Promise<void> {
   let llmProvider: LlmProvider | undefined;
   try {
     provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider.dimensions);
+    createVectorTable(db, provider);
   } catch (err) {
     console.error(
       "Failed to initialize embedding provider:",
