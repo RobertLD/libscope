@@ -10,7 +10,7 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: [
         "src/cli/**",
-        "src/mcp/server.ts",
+        "src/mcp/main.ts",
         "src/providers/local.ts",
         "src/providers/ollama.ts",
         "src/providers/openai.ts",

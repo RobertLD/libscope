@@ -1,1436 +1,412 @@
+/**
+ * libscope MCP server. Every tool is generated from an operation in src/core/operations:
+ * the tool's input schema is the operation's zod schema, and the handler runs the operation
+ * and formats its result as compact text.
+ *
+ * Importing this module starts nothing. `createMcpServer()` builds a server; `runStdioServer()`
+ * connects one to stdin/stdout (see main.ts for the executable entry point).
+ */
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
-import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
-import { resolveDatabasePath } from "../db/connection.js";
-import { createEmbeddingProvider } from "../providers/index.js";
-import { searchDocuments, getRelatedChunks } from "../core/search.js";
+import { bootstrap, type BootstrapOptions, type Bootstrapped } from "../core/bootstrap.js";
 import {
-  askQuestion,
-  createLlmProvider,
-  getContextForQuestion,
-  isPassthroughMode,
-  type LlmProvider,
-} from "../core/rag.js";
-import { getDocument, listDocuments, deleteDocument, updateDocument } from "../core/documents.js";
-import { rateDocument, getDocumentRatings } from "../core/ratings.js";
-import { indexDocument } from "../core/indexing.js";
-import { listTopics } from "../core/topics.js";
-import { createLink, getDocumentLinks, deleteLink, LINK_TYPES } from "../core/links.js";
-import {
-  createSavedSearch,
-  listSavedSearches,
-  runSavedSearch,
-  deleteSavedSearch,
-} from "../core/saved-searches.js";
-import { createWebhook, listWebhooks, deleteWebhook, redactWebhook } from "../core/webhooks.js";
-import type { WebhookEvent } from "../core/webhooks.js";
-import { suggestTags } from "../core/tags.js";
-import { fetchAndConvert } from "../core/url-fetcher.js";
-import { spiderUrl } from "../core/spider.js";
-import type { SpiderOptions } from "../core/spider.js";
-import { initLogger, getLogger } from "../logger.js";
-import { ConfigError, ValidationError } from "../errors.js";
-import { errorResponse, textResult, withErrorHandling, type ToolResult } from "./errors.js";
-export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
-import { formatDocumentLinks, formatLinkCreated, formatSearchResults } from "./format.js";
-import { taskRegistry } from "../core/tasks.js";
-import type { TaskType, TaskWork } from "../core/tasks.js";
-import type { NotionConfig } from "../connectors/notion.js";
-import type { SlackConfig } from "../connectors/slack.js";
-import type { ConfluenceConfig } from "../connectors/confluence.js";
-import type { ObsidianConfig } from "../connectors/obsidian.js";
-import type { OneNoteConfig } from "../connectors/onenote.js";
+  addOperation,
+  askOperation,
+  cancelTaskOperation,
+  createOperationContext,
+  deleteDocumentOperation,
+  getDocumentOperation,
+  getTaskOperation,
+  installPackOperation,
+  linkDocumentsOperation,
+  listDocumentsOperation,
+  listPacksOperation,
+  listTasksOperation,
+  overviewOperation,
+  rateDocumentOperation,
+  reindexOperation,
+  runOperation,
+  searchOperation,
+  startOperationTask,
+  syncOperation,
+  unlinkDocumentsOperation,
+  updateDocumentOperation,
+  type Operation,
+  type OperationAnnotations,
+  type OperationContext,
+} from "../core/operations/index.js";
+import { getLogger, initLogger, type LogLevel } from "../logger.js";
+import { textResult, withErrorHandling } from "./errors.js";
+import * as fmt from "./format.js";
 
-/** Build SpiderOptions from submit-document params. */
-function buildSpiderOptions(
-  params: {
-    maxPages?: number | undefined;
-    maxDepth?: number | undefined;
-    sameDomain?: boolean | undefined;
-    pathPrefix?: string | undefined;
-    excludePatterns?: string[] | undefined;
-  },
-  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
-): SpiderOptions {
-  const opts: SpiderOptions = { fetchOptions };
-  if (params.maxPages !== undefined) opts.maxPages = params.maxPages;
-  if (params.maxDepth !== undefined) opts.maxDepth = params.maxDepth;
-  if (params.sameDomain !== undefined) opts.sameDomain = params.sameDomain;
-  if (params.pathPrefix !== undefined) opts.pathPrefix = params.pathPrefix;
-  if (params.excludePatterns !== undefined) opts.excludePatterns = params.excludePatterns;
-  return opts;
+export { errorResponse, textResult, withErrorHandling, type ToolResult } from "./errors.js";
+
+/** Optional toolsets, enabled with LIBSCOPE_MCP_TOOLSETS (comma list, or "all"). */
+export const MCP_TOOLSETS = ["admin"] as const;
+export type McpToolset = (typeof MCP_TOOLSETS)[number];
+
+/** Environment variable that enables optional toolsets. */
+export const TOOLSETS_ENV = "LIBSCOPE_MCP_TOOLSETS";
+
+/** Formats an operation result as tool output text. */
+type Formatter<O> = (result: O) => string;
+
+export interface OperationToolOptions<O> {
+  /** Tool name (default: the operation name). */
+  name?: string | undefined;
+  /** Tool description (default: the operation summary). */
+  description?: string | undefined;
+  /** Operation input fields the tool does not offer. */
+  omit?: readonly string[] | undefined;
+  format: Formatter<O>;
 }
 
-/** Handle spider mode for submit-document. */
-async function handleSpiderSubmit(
-  db: import("better-sqlite3").Database,
-  provider: import("../providers/embedding.js").EmbeddingProvider,
-  params: {
-    url?: string | undefined;
-    library?: string | undefined;
-    version?: string | undefined;
-    topic?: string | undefined;
-    sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
-    maxPages?: number | undefined;
-    maxDepth?: number | undefined;
-    sameDomain?: boolean | undefined;
-    pathPrefix?: string | undefined;
-    excludePatterns?: string[] | undefined;
-  },
-  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
-  signal?: AbortSignal,
-): Promise<string> {
-  const { url, library, version, topic } = params;
-  if (!url) {
-    throw new ValidationError("Field 'url' is required when spider is true");
-  }
-
-  const spiderOptions = buildSpiderOptions(params, fetchOptions);
-  if (signal) spiderOptions.signal = signal;
-  const indexed: Array<{ id: string; title: string }> = [];
-  const errors: Array<{ url: string; error: string }> = [];
-  const sourceType = params.sourceType ?? (library ? "library" : "manual");
-
-  const gen = spiderUrl(url, spiderOptions);
-  let result = await gen.next();
-  while (!result.done) {
-    const page = result.value;
-    try {
-      const doc = await indexDocument(db, provider, {
-        title: page.title,
-        content: page.content,
-        sourceType,
-        library,
-        version,
-        topicId: topic,
-        url: page.url,
-        submittedBy: "model",
-      });
-      indexed.push({ id: doc.id, title: page.title });
-    } catch (err) {
-      errors.push({ url: page.url, error: err instanceof Error ? err.message : String(err) });
-    }
-    result = await gen.next();
-  }
-  const stats = result.value;
-
-  return [
-    `Spider complete.`,
-    `Pages indexed: ${indexed.length}`,
-    `Pages crawled: ${stats.pagesCrawled}`,
-    `Pages skipped: ${stats.pagesSkipped}`,
-    errors.length > 0 ? `Errors: ${errors.length}` : null,
-    stats.abortReason ? `Stopped early: ${stats.abortReason}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-/** Handle single-document submission for submit-document. */
-async function handleSingleDocSubmit(
-  db: import("better-sqlite3").Database,
-  provider: import("../providers/embedding.js").EmbeddingProvider,
-  params: {
-    title?: string | undefined;
-    content?: string | undefined;
-    url?: string | undefined;
-    library?: string | undefined;
-    version?: string | undefined;
-    topic?: string | undefined;
-    sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
-  },
-  fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
-  signal?: AbortSignal,
-): Promise<string> {
-  let { title, content } = params;
-  const { url, library, version, topic } = params;
-
-  if (url && !content) {
-    const fetched = await fetchAndConvert(url, fetchOptions);
-    content = fetched.content;
-    title ??= fetched.title;
-  }
-
-  if (!title) {
-    throw new ValidationError("A title is required when not providing a URL");
-  }
-  if (!content) {
-    throw new ValidationError("Either content or a URL must be provided");
-  }
-
-  const sourceType = params.sourceType ?? (library ? "library" : "manual");
-
-  signal?.throwIfAborted();
-  const result = await indexDocument(db, provider, {
-    title,
-    content,
-    sourceType,
-    library,
-    version,
-    topicId: topic,
-    url,
-    submittedBy: "model",
-  });
-
-  return (
-    `Document indexed successfully.\n` +
-    `Title: ${title}\n` +
-    `ID: ${result.id}\n` +
-    `Chunks: ${result.chunkCount}` +
-    (url ? `\nSource: ${url}` : "")
+const asyncField = z
+  .boolean()
+  .default(false)
+  .describe(
+    'Run in the background and return a taskId at once; poll with task {"action": "status"}',
   );
+
+/** MCP tool hints from operation annotations (several for a multi-action tool). */
+function toolAnnotations(list: OperationAnnotations[]): ToolAnnotations {
+  if (list.every((a) => a.readOnly === true)) return { readOnlyHint: true };
+  return {
+    readOnlyHint: false,
+    destructiveHint: list.some((a) => a.destructive === true),
+    idempotentHint: list.every((a) => a.readOnly === true || a.idempotent === true),
+  };
 }
 
-/** Fire-and-forget helper: creates a task, runs `work` in background, returns task ID response. */
-function startAsyncTask(type: TaskType, work: TaskWork): ToolResult {
-  const { task } = taskRegistry.run(type, work);
-  return textResult(`Task queued. ID: ${task.id}\nUse get-task to check status.`);
+function shapeOf(op: Operation): Record<string, z.ZodType> {
+  return op.input.shape as Record<string, z.ZodType>;
 }
-
-const noProgress = (): void => {
-  // Inline (sync) runs have no task to report progress to.
-};
 
 /**
- * Runs `work` as a background task when `isAsync` is set; otherwise runs it inline with a
- * never-aborted signal and returns its text as the tool result.
+ * Register `op` as an MCP tool. The input schema is the operation's, minus `omit`; a
+ * long-running operation also gets an `async` flag that runs it as a background task.
  */
-async function runMaybeAsync(
-  isAsync: boolean | undefined,
-  type: TaskType,
-  work: TaskWork,
-): Promise<ToolResult> {
-  if (isAsync) return startAsyncTask(type, work);
-  return textResult(await work(new AbortController().signal, noProgress));
+export function registerOperationTool<S extends z.ZodObject, O>(
+  server: McpServer,
+  op: Operation<S, O>,
+  ctx: OperationContext,
+  options: OperationToolOptions<O>,
+): string {
+  const omit = new Set(options.omit ?? []);
+  const shape = Object.fromEntries(
+    Object.entries(shapeOf(op as unknown as Operation)).filter(([key]) => !omit.has(key)),
+  );
+  const background = op.annotations?.longRunning === true;
+  if (background) shape["async"] = asyncField;
+  const name = options.name ?? op.name;
+  server.registerTool(
+    name,
+    {
+      description: options.description ?? op.summary,
+      inputSchema: z.object(shape),
+      annotations: toolAnnotations([op.annotations ?? {}]),
+    },
+    withErrorHandling(async (args: Record<string, unknown>) => {
+      const { async: runInBackground, ...input } = args;
+      if (background && runInBackground === true) {
+        return textResult(fmt.formatTaskStarted(startOperationTask(op, ctx, input)));
+      }
+      return textResult(options.format(await runOperation(op, ctx, input)));
+    }),
+  );
+  return name;
 }
 
-// Start the server
-async function main(): Promise<void> {
-  let config;
-  try {
-    config = loadConfig();
-  } catch (err) {
-    console.error("Failed to load configuration:", err instanceof Error ? err.message : err);
-    process.exit(1);
+/** One action of a multi-action tool. */
+export interface ToolAction {
+  op: Operation;
+  format: Formatter<unknown>;
+}
+
+/** Pair an operation with its formatter, for registerActionTool. */
+export function toolAction<S extends z.ZodObject, O>(
+  op: Operation<S, O>,
+  format: Formatter<O>,
+): ToolAction {
+  return { op: op as unknown as Operation, format: format as Formatter<unknown> };
+}
+
+/**
+ * Register one tool that runs one of several operations, chosen by its `action` field.
+ * Each field is optional in the tool schema and validated by the chosen operation.
+ */
+export function registerActionTool(
+  server: McpServer,
+  ctx: OperationContext,
+  tool: { name: string; description: string; actions: Record<string, ToolAction> },
+): string {
+  const names = Object.keys(tool.actions) as [string, ...string[]];
+  const fields = new Map<string, { schema: z.ZodType; actions: string[] }>();
+  for (const [action, { op }] of Object.entries(tool.actions)) {
+    for (const [key, schema] of Object.entries(shapeOf(op))) {
+      const field = fields.get(key) ?? { schema, actions: [] };
+      field.actions.push(action);
+      fields.set(key, field);
+    }
   }
-
-  // stdout carries the MCP protocol stream — logs must go to stderr.
-  initLogger(config.logging.level, { destination: "stderr" });
-
-  let db;
-  try {
-    db = getDatabase(resolveDatabasePath({ explicitPath: config.database.path }));
-    runMigrations(db);
-  } catch (err) {
-    console.error("Failed to initialize database:", err instanceof Error ? err.message : err);
-    process.exit(1);
+  const shape: Record<string, z.ZodType> = {
+    action: z.enum(names).describe(`What to do: ${names.join(", ")}`),
+  };
+  for (const [key, { schema, actions }] of fields) {
+    shape[key] = schema
+      .optional()
+      .describe(`${schema.description ?? key} (action: ${actions.join(", ")})`);
   }
+  server.registerTool(
+    tool.name,
+    {
+      description: tool.description,
+      inputSchema: z.object(shape),
+      annotations: toolAnnotations(Object.values(tool.actions).map((a) => a.op.annotations ?? {})),
+    },
+    withErrorHandling(async (args: Record<string, unknown>) => {
+      const { action, ...input } = args;
+      const chosen = tool.actions[String(action)];
+      if (!chosen) throw new Error(`Unknown action: ${String(action)}`);
+      return textResult(chosen.format(await runOperation(chosen.op, ctx, input)));
+    }),
+  );
+  return tool.name;
+}
 
-  let provider;
-  let llmProvider: LlmProvider | undefined;
-  try {
-    provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider);
-  } catch (err) {
-    console.error(
-      "Failed to initialize embedding provider:",
-      err instanceof Error ? err.message : err,
+/** Toolsets named in `value` (comma list; "all" enables every optional toolset). */
+export function parseToolsets(value: string | undefined): Set<McpToolset> {
+  const enabled = new Set<McpToolset>();
+  for (const raw of (value ?? "").split(",")) {
+    const name = raw.trim().toLowerCase();
+    if (name === "" || name === "core") continue;
+    if (name === "all") {
+      for (const t of MCP_TOOLSETS) enabled.add(t);
+    } else if ((MCP_TOOLSETS as readonly string[]).includes(name)) {
+      enabled.add(name as McpToolset);
+    } else {
+      getLogger().warn(
+        `Unknown MCP toolset "${name}" in ${TOOLSETS_ENV} (known: ${MCP_TOOLSETS.join(", ")}, all)`,
+      );
+    }
+  }
+  return enabled;
+}
+
+/** True when `ask` can run: passthrough (the calling assistant answers) or a configured LLM. */
+function askAvailable(ctx: OperationContext): boolean {
+  return ctx.isPassthrough() || ctx.getLlm() !== null;
+}
+
+/** Server `instructions`: how an assistant should use the tools. */
+export function buildInstructions(options: {
+  ask: boolean;
+  passthrough: boolean;
+  admin: boolean;
+}): string {
+  const lines = [
+    "libscope is a local knowledge base of documents (library docs, wikis, notes), split into chunks that are searched by meaning and keywords.",
+    "",
+    "Workflow:",
+    "1. search {query} finds relevant chunks. Every result has a documentId and chunkId. Narrow with topic, library, version, sourceType, tags or minRating; page with offset. search {relatedTo: documentId or chunkId} finds similar content.",
+    "2. get-document {documentId} reads a document with its tags, links and ratings. Long documents are paged: pass maxLength, then the offset shown as 'next page'.",
+    "3. rate-document {documentId, rating 1-5} after you use a document; add feedback or suggestedCorrection when it is wrong or out of date.",
+  ];
+  if (options.ask) {
+    lines.push(
+      options.passthrough
+        ? "- ask {question} returns the retrieved context without calling an LLM: write the answer yourself and cite the documentIds."
+        : "- ask {question} answers from the knowledge base with the configured LLM and lists its sources.",
     );
-    db.close();
-    process.exit(1);
   }
-
-  try {
-    llmProvider = createLlmProvider(config);
-  } catch (err) {
-    getLogger().warn({ err }, "LLM provider unavailable — ask-question tool will not work");
+  lines.push(
+    "- submit-document adds inline content (with title), a web page (url), a site crawl (url + spider: true) or a public repository URL.",
+    '- Slow work (crawls, repositories) accepts async: true and returns a taskId. Poll task {"action": "status", taskId} until the status is completed or failed; task {"action": "cancel"} stops it.',
+    "- overview shows counts, topics, installed packs and index health. list-documents pages through documents (offset, total).",
+    '- update-document (including tags), delete-document and link-documents {"action": "create" | "delete"} maintain the knowledge base. Deleting cannot be undone.',
+  );
+  if (options.admin) {
+    lines.push(
+      "- Admin tools: sync runs saved connector connections (set up with the libscope CLI), install-pack and list-packs manage knowledge packs, reindex-documents re-embeds chunks after an embedding model change.",
+    );
   }
-
-  process.on("SIGINT", () => {
-    db.close();
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    db.close();
-    process.exit(0);
-  });
-
-  const server = new McpServer({
-    name: "libscope",
-    version: "0.1.0",
-  });
-
-  // Tool: search-docs
-  server.tool(
-    "search-docs",
-    "Semantic search across all indexed documentation, library docs, and topics",
-    {
-      query: z.string().describe("The search query"),
-      topic: z.string().optional().describe("Filter by topic ID"),
-      library: z.string().optional().describe("Filter by library name"),
-      version: z.string().optional().describe("Filter by library version"),
-      source: z
-        .string()
-        .optional()
-        .describe("Filter by source type (e.g., 'library', 'topic', 'manual', 'model-generated')"),
-      minRating: z.number().min(1).max(5).optional().describe("Minimum average rating filter"),
-      offset: z.number().min(0).optional().describe("Offset for pagination (default: 0)"),
-      limit: z
-        .number()
-        .min(1)
-        .max(50)
-        .optional()
-        .describe("Maximum results to return (default: 10)"),
-      maxChunksPerDocument: z
-        .number()
-        .min(0)
-        .max(50)
-        .optional()
-        .describe(
-          "Maximum chunks per document in results (default: no limit, set to 2 for diversity)",
-        ),
-      contextChunks: z
-        .number()
-        .min(0)
-        .max(2)
-        .optional()
-        .describe(
-          "Number of neighboring chunks to include before/after each result for context (0-2, default: 0)",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { results, totalCount } = await searchDocuments(db, provider, {
-        query: params.query,
-        topic: params.topic,
-        library: params.library,
-        version: params.version,
-        source: params.source,
-        minRating: params.minRating,
-        limit: params.limit,
-        offset: params.offset,
-        maxChunksPerDocument: params.maxChunksPerDocument,
-        contextChunks: params.contextChunks,
-      });
-
-      return textResult(formatSearchResults(results, totalCount));
-    }),
-  );
-
-  // Tool: get-related
-  server.tool(
-    "get-related",
-    "Find chunks semantically similar to a given chunk (more-like-this). Returns related content seeded from an existing chunk's stored embedding without requiring a text query.",
-    {
-      chunkId: z.string().describe("ID of the source chunk to find related content for"),
-      limit: z
-        .number()
-        .min(1)
-        .max(50)
-        .optional()
-        .describe("Number of results to return (default 10)"),
-      topic: z.string().optional().describe("Filter results to a specific topic"),
-      library: z.string().optional().describe("Filter results to a specific library"),
-      tags: z.array(z.string()).optional().describe("Filter results to documents with these tags"),
-      minScore: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe("Minimum similarity score threshold (0-1)"),
-      includeLinkedDocuments: z
-        .boolean()
-        .optional()
-        .describe("Also include explicitly linked documents even if below similarity threshold"),
-    },
-    withErrorHandling(
-      ({ chunkId, limit, topic, library, tags, minScore, includeLinkedDocuments }) => {
-        const result = getRelatedChunks(db, {
-          chunkId,
-          ...(limit !== undefined && { limit }),
-          ...(topic !== undefined && { topic }),
-          ...(library !== undefined && { library }),
-          ...(tags !== undefined && { tags }),
-          ...(minScore !== undefined && { minScore }),
-          ...(includeLinkedDocuments !== undefined && { includeLinkedDocuments }),
-        });
-        return textResult(JSON.stringify(result, null, 2));
-      },
-    ),
-  );
-
-  // Tool: get-document
-  server.tool(
-    "get-document",
-    "Retrieve a specific document by its ID",
-    {
-      documentId: z.string().describe("The document ID"),
-    },
-    withErrorHandling((params) => {
-      const doc = getDocument(db, params.documentId);
-      const ratings = getDocumentRatings(db, params.documentId);
-
-      const docVersion = doc.version ? ` v${doc.version}` : "";
-      const text =
-        `# ${doc.title}\n\n` +
-        `**Type:** ${doc.sourceType}\n` +
-        (doc.library ? `**Library:** ${doc.library}${docVersion}\n` : "") +
-        (doc.url ? `**Source:** ${doc.url}\n` : "") +
-        `**Rating:** ${ratings.averageRating.toFixed(1)}/5 (${ratings.totalRatings} ratings)\n\n` +
-        doc.content;
-
-      return textResult(text);
-    }),
-  );
-
-  // Tool: delete-document
-  server.tool(
-    "delete-document",
-    "Delete a document from the knowledge base by its ID",
-    {
-      documentId: z.string().describe("The document ID to delete"),
-    },
-    withErrorHandling((params) => {
-      deleteDocument(db, params.documentId);
-
-      return textResult(`Document ${params.documentId} has been deleted successfully.`);
-    }),
-  );
-
-  // Tool: update-document
-  server.tool(
-    "update-document",
-    "Update an existing document's title, content, or metadata",
-    {
-      documentId: z.string().describe("The document ID to update"),
-      title: z.string().optional().describe("New title"),
-      content: z.string().optional().describe("New content (will re-chunk and re-index)"),
-      library: z.string().nullable().optional().describe("New library name (null to clear)"),
-      version: z.string().nullable().optional().describe("New version (null to clear)"),
-      url: z.string().nullable().optional().describe("New URL (null to clear)"),
-      topicId: z.string().nullable().optional().describe("New topic ID (null to clear)"),
-    },
-    withErrorHandling(async (params) => {
-      const metadata: Record<string, string | null | undefined> = {};
-      if (params.library !== undefined) metadata.library = params.library;
-      if (params.version !== undefined) metadata.version = params.version;
-      if (params.url !== undefined) metadata.url = params.url;
-      if (params.topicId !== undefined) metadata.topicId = params.topicId;
-
-      const doc = await updateDocument(db, provider, params.documentId, {
-        title: params.title,
-        content: params.content,
-        metadata:
-          Object.keys(metadata).length > 0
-            ? (metadata as {
-                library?: string | null;
-                version?: string | null;
-                url?: string | null;
-                topicId?: string | null;
-              })
-            : undefined,
-      });
-      return textResult(`Document updated: ${doc.title} (${doc.id})`);
-    }),
-  );
-
-  // Tool: rate-document
-  server.tool(
-    "rate-document",
-    "Rate a document or suggest corrections. Use this when documentation appears outdated, incorrect, or particularly helpful.",
-    {
-      documentId: z.string().describe("The document ID to rate"),
-      chunkId: z.string().optional().describe("Optional specific chunk ID to rate"),
-      rating: z.number().min(1).max(5).describe("Rating from 1 (poor) to 5 (excellent)"),
-      feedback: z.string().optional().describe("Text feedback about the document"),
-      suggestedCorrection: z
-        .string()
-        .optional()
-        .describe("Suggested replacement content if the doc is wrong"),
-    },
-    withErrorHandling((params) => {
-      const result = rateDocument(db, {
-        documentId: params.documentId,
-        chunkId: params.chunkId,
-        rating: params.rating,
-        feedback: params.feedback,
-        suggestedCorrection: params.suggestedCorrection,
-        ratedBy: "model",
-      });
-
-      return textResult(
-        `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
-          (result.feedback ? `\nFeedback: ${result.feedback}` : "") +
-          (result.suggestedCorrection ? `\nCorrection suggested.` : ""),
-      );
-    }),
-  );
-
-  // Tool: submit-document
-  server.tool(
-    "submit-document",
-    "Submit a new document for indexing into the knowledge base. You can provide content directly, or provide a URL to fetch and index automatically. Set spider=true to crawl linked pages from the URL.",
-    {
-      title: z
-        .string()
-        .optional()
-        .describe("Document title (auto-detected from URL if not provided)"),
-      content: z
-        .string()
-        .optional()
-        .describe("Document content in markdown (omit if providing a URL to fetch)"),
-      url: z
-        .string()
-        .optional()
-        .describe(
-          "URL to fetch and index. When provided, content is fetched automatically. Title is auto-detected if not specified.",
-        ),
-      sourceType: z
-        .enum(["library", "topic", "manual", "model-generated"])
-        .optional()
-        .describe("Type of document (default: 'manual', or 'library' if library name is given)"),
-      topic: z.string().optional().describe("Topic ID to categorize under"),
-      library: z.string().optional().describe("Library name (for library docs)"),
-      version: z.string().optional().describe("Library version"),
-      spider: z
-        .boolean()
-        .optional()
-        .describe("When true, crawl pages linked from the URL. Requires 'url'. Default: false."),
-      maxPages: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("Maximum pages to index during a spider run (default: 25, hard cap: 200)."),
-      maxDepth: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe(
-          "Maximum link-hop depth from the seed URL (default: 2, hard cap: 5). 0 = seed only.",
-        ),
-      sameDomain: z
-        .boolean()
-        .optional()
-        .describe("Only follow links on the same domain as the seed URL (default: true)."),
-      pathPrefix: z
-        .string()
-        .optional()
-        .describe("Only follow links whose path starts with this prefix (e.g. '/docs/')."),
-      excludePatterns: z
-        .array(z.string())
-        .optional()
-        .describe("Glob patterns for URLs to skip (e.g. ['*/changelog*', '*/api/v1/*'])."),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, start indexing in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const fetchOptions = {
-        allowPrivateUrls: config.indexing.allowPrivateUrls,
-        allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
-      };
-
-      return runMaybeAsync(params.async, "index_document", (signal) =>
-        params.spider
-          ? handleSpiderSubmit(db, provider, params, fetchOptions, signal)
-          : handleSingleDocSubmit(db, provider, params, fetchOptions, signal),
-      );
-    }),
-  );
-
-  // Tool: list-topics
-  server.tool(
-    "list-topics",
-    "List available documentation topics",
-    {
-      parentId: z.string().optional().describe("Filter by parent topic ID for subtopics"),
-    },
-    withErrorHandling((params) => {
-      const topics = listTopics(db, params.parentId);
-
-      if (topics.length === 0) {
-        return textResult("No topics found.");
-      }
-
-      const text = topics
-        .map((t) => {
-          const topicDesc = t.description ? `: ${t.description}` : "";
-          return `- **${t.name}** (\`${t.id}\`)${topicDesc}`;
-        })
-        .join("\n");
-
-      return textResult(`## Topics\n\n${text}`);
-    }),
-  );
-
-  // Tool: health-check
-  server.tool(
-    "health-check",
-    "Check the health of the LibScope server, including database connectivity, document and chunk counts, and FTS5 index status",
-    {},
-    () => {
-      try {
-        const health: Record<string, unknown> = {};
-
-        // Check database connectivity
-        try {
-          db.prepare("SELECT 1").get();
-          health.database = "ok";
-        } catch (err: unknown) {
-          health.database = "error";
-          getLogger().warn({ err }, "Health check: database connectivity failed");
-        }
-
-        // Document count
-        try {
-          const row = db.prepare("SELECT COUNT(*) as count FROM documents").get() as {
-            count: number;
-          };
-          health.documents = row.count;
-        } catch (err: unknown) {
-          health.documents = "error";
-          getLogger().warn({ err }, "Health check: document count query failed");
-        }
-
-        // Chunk count
-        try {
-          const row = db.prepare("SELECT COUNT(*) as count FROM chunks").get() as {
-            count: number;
-          };
-          health.chunks = row.count;
-        } catch (err: unknown) {
-          health.chunks = "error";
-          getLogger().warn({ err }, "Health check: chunk count query failed");
-        }
-
-        // FTS5 index status
-        try {
-          db.prepare("SELECT COUNT(*) FROM chunks_fts").get();
-          health.fts5 = "ok";
-        } catch (err: unknown) {
-          health.fts5 = "error";
-          getLogger().warn({ err }, "Health check: FTS5 index query failed");
-        }
-
-        return textResult(JSON.stringify(health, null, 2));
-      } catch (err) {
-        return errorResponse(err);
-      }
-    },
-  );
-
-  // Tool: list-documents
-  server.tool(
-    "list-documents",
-    "List all indexed documents with optional filters",
-    {
-      library: z.string().optional().describe("Filter by library name"),
-      topic: z.string().optional().describe("Filter by topic ID"),
-      sourceType: z
-        .enum(["library", "topic", "manual", "model-generated"])
-        .optional()
-        .describe("Filter by source type"),
-      limit: z.number().min(1).max(100).optional().describe("Maximum results (default: 50)"),
-    },
-    withErrorHandling((params) => {
-      const docs = listDocuments(db, {
-        library: params.library,
-        topicId: params.topic,
-        sourceType: params.sourceType,
-        limit: params.limit,
-      });
-
-      if (docs.length === 0) {
-        return textResult("No documents found.");
-      }
-
-      const text = docs
-        .map((d) => {
-          const docLibVersion = d.version ? ` v${d.version}` : "";
-          return (
-            `- **${d.title}** (\`${d.id}\`)` +
-            (d.library ? ` — ${d.library}${docLibVersion}` : "") +
-            (d.url ? ` — [source](${d.url})` : "") +
-            ` (${d.sourceType})`
-          );
-        })
-        .join("\n");
-
-      return textResult(`## Documents (${docs.length})\n\n${text}`);
-    }),
-  );
-
-  // Tool: ask-question (RAG)
-  server.tool(
-    "ask-question",
-    "Ask a question and get an LLM-synthesized answer based on indexed documentation (RAG)",
-    {
-      question: z.string().describe("The question to answer"),
-      topK: z
-        .number()
-        .min(1)
-        .max(20)
-        .optional()
-        .describe("Number of chunks to retrieve for context (default: 5)"),
-      topic: z.string().optional().describe("Filter by topic ID"),
-      library: z.string().optional().describe("Filter by library name"),
-    },
-    withErrorHandling(async (params) => {
-      if (isPassthroughMode(config)) {
-        const { contextPrompt, sources } = await getContextForQuestion(db, provider, {
-          question: params.question,
-          topK: params.topK,
-          topic: params.topic,
-          library: params.library,
-        });
-
-        const sourcesText =
-          sources.length > 0
-            ? "\n\n**Sources:**\n" +
-              sources
-                .map((s) => `- ${s.title} (score: ${s.score.toFixed(2)}) [${s.documentId}]`)
-                .join("\n")
-            : "";
-
-        return textResult(contextPrompt + sourcesText);
-      }
-
-      if (!llmProvider) {
-        throw new ConfigError(
-          "No LLM provider configured. Set llm.provider to 'openai', 'ollama', or 'passthrough' in your config.",
-        );
-      }
-
-      const result = await askQuestion(db, provider, llmProvider, {
-        question: params.question,
-        topK: params.topK,
-        topic: params.topic,
-        library: params.library,
-      });
-
-      const sourcesText =
-        result.sources.length > 0
-          ? "\n\n**Sources:**\n" +
-            result.sources
-              .map((s) => `- ${s.title} (score: ${s.score.toFixed(2)}) [${s.documentId}]`)
-              .join("\n")
-          : "";
-
-      const metaText =
-        result.tokensUsed != null
-          ? `\n\n_Model: ${result.model} | Tokens: ${result.tokensUsed}_`
-          : "";
-
-      return textResult(result.answer + sourcesText + metaText);
-    }),
-  );
-
-  // Tool: reindex-documents
-  server.tool(
-    "reindex-documents",
-    "Re-embed all document chunks with the current embedding model. Use after switching embedding providers to update vectors without re-fetching content.",
-    {
-      documentIds: z
-        .array(z.string())
-        .optional()
-        .describe("Only reindex chunks belonging to these document IDs"),
-      since: z
-        .string()
-        .optional()
-        .describe("Only reindex documents created on or after this ISO-8601 date"),
-      before: z
-        .string()
-        .optional()
-        .describe("Only reindex documents created on or before this ISO-8601 date"),
-      batchSize: z
-        .number()
-        .min(1)
-        .max(500)
-        .optional()
-        .describe("Chunks per embedding batch (default: 50)"),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run reindexing in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { reindex } = await import("../core/reindex.js");
-
-      return runMaybeAsync(params.async, "reindex_documents", async (signal, onProgress) => {
-        const result = await reindex(db, provider, {
-          documentIds: params.documentIds,
-          since: params.since,
-          before: params.before,
-          batchSize: params.batchSize,
-          signal,
-          onProgress: (p) => onProgress(p.completed, p.total),
-        });
-        return (
-          `Reindex complete.\n` +
-          `Total chunks: ${result.total}\n` +
-          `Updated: ${result.completed}\n` +
-          `Failed: ${result.failed}` +
-          (result.failedChunkIds.length > 0
-            ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
-            : "")
-        );
-      });
-    }),
-  );
-
-  // Tool: sync-slack
-  server.tool(
-    "sync-slack",
-    "Sync Slack channel messages and threads into the knowledge base",
-    {
-      token: z
-        .string()
-        .optional()
-        .describe(
-          "Slack bot token (xoxb-...) or user token (xoxp-...). Optional when a saved Slack connector exists.",
-        ),
-      channels: z
-        .array(z.string())
-        .optional()
-        .describe("Channel names or IDs to sync, or ['all'] (default: saved config, else ['all'])"),
-      excludeChannels: z
-        .array(z.string())
-        .optional()
-        .describe("Channel names to exclude from sync"),
-      threadMode: z
-        .enum(["aggregate", "separate"])
-        .optional()
-        .describe(
-          "Thread handling: aggregate (default) combines thread into one doc, separate creates one doc per reply",
-        ),
-      name: z
-        .string()
-        .optional()
-        .describe(
-          'Saved connector config name (default: "slack"). Values saved by the CLI connect command fill in any parameter you omit.',
-        ),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { syncSlack: doSyncSlack } = await import("../connectors/slack.js");
-      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
-
-      const name = params.name ?? "slack";
-      const { config: slackConfig } = resolveSyncConfig<SlackConfig>(
-        "slack",
-        name,
-        {
-          token: params.token,
-          channels: params.channels,
-          excludeChannels: params.excludeChannels,
-          threadMode: params.threadMode,
-        },
-        { defaults: { channels: ["all"], threadMode: "aggregate" }, required: ["token"] },
-      );
-
-      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
-        const result = await doSyncSlack(db, provider, slackConfig, { syncName: name, signal });
-        const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
-        const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
-        return (
-          `Slack sync complete.\n` +
-          `Channels: ${result.channels}\n` +
-          `Messages indexed: ${result.messagesIndexed}\n` +
-          `Threads indexed: ${result.threadsIndexed}` +
-          slackErrors
-        );
-      });
-    }),
-  );
-
-  // Tool: install-pack
-  server.tool(
-    "install-pack",
-    "Install a knowledge pack from the registry or a local file path",
-    {
-      nameOrPath: z.string().describe("Pack name (from registry) or local .json file path"),
-      registryUrl: z.string().optional().describe("Custom registry URL"),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run installation in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { installPack } = await import("../core/packs.js");
-
-      return runMaybeAsync(params.async, "install_pack", async (signal, onProgress) => {
-        const result = await installPack(db, provider, params.nameOrPath, {
-          registryUrl: params.registryUrl,
-          signal,
-          onProgress: (current, total) => onProgress(current, total),
-        });
-        return result.alreadyInstalled
-          ? `Pack "${result.packName}" is already installed.`
-          : `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`;
-      });
-    }),
-  );
-
-  // Tool: list-packs
-  server.tool(
-    "list-packs",
-    "List installed knowledge packs or available packs from the registry",
-    {
-      available: z
-        .boolean()
-        .optional()
-        .describe("If true, list available packs from registry instead of installed packs"),
-      registryUrl: z.string().optional().describe("Custom registry URL"),
-    },
-    withErrorHandling(async (params) => {
-      if (params.available) {
-        const { listAvailablePacks } = await import("../core/packs.js");
-        const packs = await listAvailablePacks(params.registryUrl);
-        if (packs.length === 0) {
-          return textResult("No packs available in the registry.");
-        }
-        const text = packs
-          .map((p) => `- **${p.name}** v${p.version} — ${p.description} (${p.docCount} docs)`)
-          .join("\n");
-        return textResult(`## Available Packs\n\n${text}`);
-      }
-
-      const { listInstalledPacks } = await import("../core/packs.js");
-      const packs = listInstalledPacks(db);
-      if (packs.length === 0) {
-        return textResult("No packs installed.");
-      }
-      const text = packs
-        .map(
-          (p) =>
-            `- **${p.name}** v${p.version} — ${p.description ?? ""} (${p.docCount} docs, installed ${p.installedAt})`,
-        )
-        .join("\n");
-      return textResult(`## Installed Packs\n\n${text}`);
-    }),
-  );
-
-  // Tool: sync-onenote
-  server.tool(
-    "sync-onenote",
-    "Sync OneNote notebooks via Microsoft Graph API",
-    {
-      accessToken: z
-        .string()
-        .optional()
-        .describe(
-          "Microsoft Graph API access token. Optional when a saved OneNote connector exists (its refresh token is used).",
-        ),
-      notebookName: z.string().optional().describe("Specific notebook name to sync (default: all)"),
-      name: z
-        .string()
-        .optional()
-        .describe(
-          'Saved connector config name (default: "onenote"). Values saved by the CLI connect command fill in any parameter you omit.',
-        ),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { syncOneNote } = await import("../connectors/onenote.js");
-      const { resolveSyncConfig, saveRefreshedOneNoteTokens } =
-        await import("../connectors/saved-config.js");
-
-      const name = params.name ?? "onenote";
-      const { config: oneNoteConfig, saved } = resolveSyncConfig<OneNoteConfig>(
-        "onenote",
-        name,
-        {
-          accessToken: params.accessToken,
-          notebooks: params.notebookName ? [params.notebookName] : undefined,
-        },
-        { defaults: { clientId: "", tenantId: "common", notebooks: ["all"], excludeSections: [] } },
-      );
-      if (params.accessToken) {
-        // Use the caller's token as given; never replace it with a refreshed one.
-        oneNoteConfig.refreshToken = undefined;
-        oneNoteConfig.tokenExpiry = undefined;
-      }
-      if (!oneNoteConfig.accessToken && !oneNoteConfig.refreshToken) {
-        throw new ValidationError(
-          `Missing accessToken for onenote sync. Pass it as a parameter, or save a connector named "${name}" with 'libscope connect onenote'.`,
-        );
-      }
-
-      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
-        const result = await syncOneNote(db, provider, oneNoteConfig, { syncName: name, signal });
-        saveRefreshedOneNoteTokens(name, saved, oneNoteConfig);
-        const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-        const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
-        return (
-          `OneNote sync complete.\n` +
-          `Notebooks: ${result.notebooks}\n` +
-          `Sections: ${result.sections}\n` +
-          `Pages added: ${result.pagesAdded}\n` +
-          `Pages updated: ${result.pagesUpdated}\n` +
-          `Pages deleted: ${result.pagesDeleted}` +
-          oneNoteErrors
-        );
-      });
-    }),
-  );
-
-  // Tool: sync-notion
-  server.tool(
-    "sync-notion",
-    "Sync pages and databases from a connected Notion workspace into the knowledge base",
-    {
-      token: z
-        .string()
-        .optional()
-        .describe(
-          "Notion integration token (secret_... or ntn_...). Optional when a saved Notion connector exists.",
-        ),
-      lastSync: z
-        .string()
-        .optional()
-        .describe("ISO-8601 timestamp — only sync pages edited after this time"),
-      excludePages: z
-        .array(z.string())
-        .optional()
-        .describe("List of Notion page/database IDs to exclude from sync"),
-      name: z
-        .string()
-        .optional()
-        .describe(
-          'Saved connector config name (default: "notion"). Values saved by the CLI connect command fill in any parameter you omit.',
-        ),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { syncNotion } = await import("../connectors/notion.js");
-      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
-
-      const name = params.name ?? "notion";
-      const { config: notionConfig } = resolveSyncConfig<NotionConfig>(
-        "notion",
-        name,
-        { token: params.token, lastSync: params.lastSync, excludePages: params.excludePages },
-        { required: ["token"] },
-      );
-
-      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
-        const result = await syncNotion(db, provider, notionConfig, { syncName: name, signal });
-        const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-        const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
-        return (
-          `Notion sync complete.\n` +
-          `Pages indexed: ${result.pagesIndexed}\n` +
-          `Databases indexed: ${result.databasesIndexed}` +
-          notionErrors
-        );
-      });
-    }),
-  );
-
-  // Tool: sync-obsidian-vault
-  server.tool(
-    "sync-obsidian-vault",
-    "Sync an Obsidian vault into the knowledge base. Parses wikilinks, frontmatter, embeds, and tags with incremental sync support.",
-    {
-      vaultPath: z
-        .string()
-        .optional()
-        .describe(
-          "Absolute path to the Obsidian vault directory. Optional when a saved Obsidian connector exists.",
-        ),
-      name: z
-        .string()
-        .optional()
-        .describe(
-          'Saved connector config name (default: "obsidian"). Values saved by the CLI connect command fill in any parameter you omit.',
-        ),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { syncObsidianVault } = await import("../connectors/obsidian.js");
-      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
-
-      const name = params.name ?? "obsidian";
-      const { config: obsidianConfig } = resolveSyncConfig<ObsidianConfig>(
-        "obsidian",
-        name,
-        { vaultPath: params.vaultPath },
-        { defaults: { topicMapping: "folder", excludePatterns: [] }, required: ["vaultPath"] },
-      );
-
-      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
-        const result = await syncObsidianVault(db, provider, obsidianConfig, {
-          syncName: name,
-          signal,
-        });
-        const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
-        const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
-        return (
-          `Obsidian vault sync complete.\n` +
-          `Added: ${result.added}\n` +
-          `Updated: ${result.updated}\n` +
-          `Deleted: ${result.deleted}` +
-          obsidianErrors
-        );
-      });
-    }),
-  );
-
-  // Tool: sync-confluence
-  server.tool(
-    "sync-confluence",
-    "Sync Confluence spaces and pages into the knowledge base",
-    {
-      baseUrl: z
-        .string()
-        .optional()
-        .describe(
-          "Confluence base URL (e.g. https://acme.atlassian.net). Optional when a saved Confluence connector exists.",
-        ),
-      email: z.string().optional().describe("Confluence user email (Cloud). Optional when saved."),
-      token: z.string().optional().describe("API token or PAT. Optional when saved."),
-      spaces: z
-        .array(z.string())
-        .optional()
-        .describe("Space keys to sync, or ['all'] (default: saved config, else ['all'])"),
-      excludeSpaces: z.array(z.string()).optional().describe("Space keys to exclude"),
-      name: z
-        .string()
-        .optional()
-        .describe(
-          'Saved connector config name (default: "confluence"). Values saved by the CLI connect command fill in any parameter you omit.',
-        ),
-      async: z
-        .boolean()
-        .optional()
-        .describe(
-          "When true, run the sync in the background and return a task ID immediately. Use get-task to poll for completion.",
-        ),
-    },
-    withErrorHandling(async (params) => {
-      const { syncConfluence } = await import("../connectors/confluence.js");
-      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
-
-      const name = params.name ?? "confluence";
-      const { config: confluenceConfig } = resolveSyncConfig<ConfluenceConfig>(
-        "confluence",
-        name,
-        {
-          baseUrl: params.baseUrl,
-          email: params.email,
-          token: params.token,
-          spaces: params.spaces,
-          excludeSpaces: params.excludeSpaces,
-        },
-        { defaults: { spaces: ["all"] }, required: ["baseUrl", "token"] },
-      );
-
-      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
-        const result = await syncConfluence(db, provider, confluenceConfig, {
-          syncName: name,
-          signal,
-        });
-        const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
-        const confluenceErrors =
-          result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
-        return (
-          `Confluence sync complete.\n` +
-          `Spaces: ${result.spaces}\n` +
-          `Pages indexed: ${result.pagesIndexed}\n` +
-          `Pages updated: ${result.pagesUpdated}` +
-          confluenceErrors
-        );
-      });
-    }),
-  );
-
-  // Tool: search-analytics
-  server.tool(
-    "search-analytics",
-    "View search analytics dashboard and knowledge gap detection",
-    {
-      days: z.number().optional().describe("Look-back period in days (default: 30)"),
-    },
-    withErrorHandling(async (params) => {
-      const { getSearchAnalytics, getKnowledgeGaps } = await import("../core/analytics.js");
-      const days = params.days ?? 30;
-      const analytics = getSearchAnalytics(db, days);
-      const gaps = getKnowledgeGaps(db, days);
-
-      const lines: string[] = [
-        `Search Analytics (last ${days} days)`,
-        `Total searches: ${analytics.totalSearches}`,
-        `Avg result count: ${analytics.avgResultCount}`,
-        "",
-        "Top queries:",
-        ...analytics.topQueries.map((q) => `  ${q.count}x  ${q.query}`),
-        "",
-        "Zero-result queries:",
-        ...analytics.zeroResultQueries.map((q) => `  ${q.count}x  ${q.query}`),
-        "",
-        "Knowledge gaps:",
-        ...gaps.map((g) => `  ${g.count}x  ${g.query} (last: ${g.lastSearched})`),
-      ];
-      return textResult(lines.join("\n"));
-    }),
-  );
-
-  // Tool: link-documents
-  server.tool(
-    "link-documents",
-    `Create a relationship between two documents (${LINK_TYPES.join(", ")})`,
-    {
-      sourceId: z.string().describe("The source document ID"),
-      targetId: z.string().describe("The target document ID"),
-      linkType: z.enum(LINK_TYPES).describe("Type of relationship"),
-      label: z.string().optional().describe("Optional human-readable description of the link"),
-    },
-    withErrorHandling((params) => {
-      const link = createLink(db, params.sourceId, params.targetId, params.linkType, params.label);
-      return textResult(formatLinkCreated(link));
-    }),
-  );
-
-  // Tool: get-document-links
-  server.tool(
-    "get-document-links",
-    "Get all cross-reference links for a document (both outgoing and incoming)",
-    {
-      documentId: z.string().describe("The document ID"),
-    },
-    withErrorHandling((params) => {
-      return textResult(formatDocumentLinks(getDocumentLinks(db, params.documentId)));
-    }),
-  );
-
-  // Tool: delete-link
-  server.tool(
-    "delete-link",
-    "Remove a cross-reference link between documents",
-    {
-      linkId: z.string().describe("The link ID to delete"),
-    },
-    withErrorHandling((params) => {
-      deleteLink(db, params.linkId);
-      return textResult(`✓ Link ${params.linkId} deleted.`);
-    }),
-  );
-
-  // Tool: save-search
-  server.tool(
-    "save-search",
-    "Save a search query with optional filters for later re-use",
-    {
-      name: z.string().describe("A unique name for this saved search"),
-      query: z.string().describe("The search query"),
-      topic: z.string().optional().describe("Filter by topic ID"),
-      library: z.string().optional().describe("Filter by library name"),
-      version: z.string().optional().describe("Filter by library version"),
-      source: z.string().optional().describe("Filter by source type"),
-      minRating: z.number().min(1).max(5).optional().describe("Minimum average rating filter"),
-      limit: z.number().min(1).max(50).optional().describe("Maximum results to return"),
-      tags: z.array(z.string()).optional().describe("Filter by tags"),
-    },
-    withErrorHandling((params) => {
-      const { name, query, ...rest } = params;
-      const filters: Record<string, unknown> = {};
-      if (rest.topic !== undefined) filters.topic = rest.topic;
-      if (rest.library !== undefined) filters.library = rest.library;
-      if (rest.version !== undefined) filters.version = rest.version;
-      if (rest.source !== undefined) filters.source = rest.source;
-      if (rest.minRating !== undefined) filters.minRating = rest.minRating;
-      if (rest.limit !== undefined) filters.limit = rest.limit;
-      if (rest.tags !== undefined) filters.tags = rest.tags;
-      const saved = createSavedSearch(
-        db,
-        name,
-        query,
-        Object.keys(filters).length > 0 ? filters : undefined,
-      );
-      return textResult(JSON.stringify(saved, null, 2));
-    }),
-  );
-
-  // Tool: suggest-tags
-  server.tool(
-    "suggest-tags",
-    "Suggest tags for a document based on content analysis",
-    {
-      documentId: z.string().describe("Document ID"),
-      maxSuggestions: z.number().min(1).max(20).optional().describe("Max suggestions (default: 5)"),
-    },
-    withErrorHandling((params) => {
-      const suggestions = suggestTags(db, params.documentId, params.maxSuggestions);
-      return textResult(JSON.stringify({ documentId: params.documentId, suggestions }, null, 2));
-    }),
-  );
-
-  // Tool: list-saved-searches
-  server.tool(
-    "list-saved-searches",
-    "List all saved searches",
-    {},
-    withErrorHandling(() => {
-      const searches = listSavedSearches(db);
-      return textResult(
-        searches.length === 0 ? "No saved searches." : JSON.stringify(searches, null, 2),
-      );
-    }),
-  );
-
-  // Tool: run-saved-search
-  server.tool(
-    "run-saved-search",
-    "Execute a saved search by name or ID and return results",
-    {
-      nameOrId: z.string().describe("The name or ID of the saved search to run"),
-    },
-    withErrorHandling(async (params) => {
-      const { search, results } = await runSavedSearch(db, provider, params.nameOrId);
-      return textResult(JSON.stringify({ search, resultCount: results.length, results }, null, 2));
-    }),
-  );
-
-  // Tool: delete-saved-search
-  server.tool(
-    "delete-saved-search",
-    "Delete a saved search by name or ID",
-    {
-      nameOrId: z.string().describe("The name or ID of the saved search to delete"),
-    },
-    withErrorHandling((params) => {
-      deleteSavedSearch(db, params.nameOrId);
-      return textResult(`✓ Saved search "${params.nameOrId}" deleted.`);
-    }),
-  );
-
-  // Tool: create-webhook
-  server.tool(
-    "create-webhook",
-    "Register a webhook to receive notifications for document events",
-    {
-      url: z.string().describe("The URL to send webhook POST requests to (http:// or https://)"),
-      events: z
-        .array(z.string())
-        .describe(
-          "Event types to subscribe to: document.created, document.updated, document.deleted, document.rated, search.executed",
-        ),
-      secret: z
-        .string()
-        .optional()
-        .describe("Optional secret for HMAC-SHA256 signature verification"),
-    },
-    withErrorHandling(async (params) => {
-      const webhook = await createWebhook(
-        db,
-        params.url,
-        params.events as WebhookEvent[],
-        params.secret,
-      );
-      return textResult(JSON.stringify(redactWebhook(webhook), null, 2));
-    }),
-  );
-
-  // Tool: list-webhooks
-  server.tool(
-    "list-webhooks",
-    "List all registered webhooks",
-    {},
-    withErrorHandling(() => {
-      const webhooks = listWebhooks(db);
-      return textResult(JSON.stringify(webhooks.map(redactWebhook), null, 2));
-    }),
-  );
-
-  // Tool: delete-webhook
-  server.tool(
-    "delete-webhook",
-    "Remove a registered webhook by ID",
-    {
-      id: z.string().describe("The webhook ID to delete"),
-    },
-    withErrorHandling((params) => {
-      deleteWebhook(db, params.id);
-      return textResult(`✓ Webhook "${params.id}" deleted.`);
-    }),
-  );
-
-  // Tool: get-task
-  server.tool(
-    "get-task",
-    "Get the current status, progress, and result of an async background task",
-    {
-      taskId: z.string().describe("Task ID returned by an async operation"),
-    },
-    withErrorHandling((params) => {
-      const task = taskRegistry.get(params.taskId);
-      if (!task) {
-        return textResult(
-          `Task ${params.taskId} not found or has expired (tasks are kept for 1 hour after completion).`,
-        );
-      }
-      return textResult(JSON.stringify(task, null, 2));
-    }),
-  );
-
-  // Tool: cancel-task
-  server.tool(
-    "cancel-task",
-    "Request cancellation of a pending or running async background task",
-    {
-      taskId: z.string().describe("Task ID to cancel"),
-    },
-    withErrorHandling((params) => {
-      const outcome = taskRegistry.cancel(params.taskId);
-      if (outcome === "not_found") {
-        return textResult(`Task ${params.taskId} not found or has expired.`);
-      }
-      if (outcome === "already_terminal") {
-        const task = taskRegistry.get(params.taskId);
-        const status = task?.status ?? "unknown";
-        return textResult(`Task ${params.taskId} cannot be cancelled (current status: ${status}).`);
-      }
-      return textResult(
-        `Cancellation requested for task ${params.taskId}. Running operations will stop at the next checkpoint.`,
-      );
-    }),
-  );
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  return lines.join("\n");
 }
 
-main().catch((err: unknown) => {
-  console.error("Fatal error starting LibScope MCP server:", err);
-  process.exit(1);
-});
+function packageVersion(): string {
+  const require = createRequire(import.meta.url);
+  return (require("../../package.json") as { version: string }).version;
+}
+
+export interface CreateMcpServerOptions extends BootstrapOptions {
+  /** Use this operation context instead of bootstrapping one. The caller owns its database. */
+  ctx?: OperationContext | undefined;
+  /** Optional toolsets to enable (default: from LIBSCOPE_MCP_TOOLSETS). */
+  toolsets?: readonly string[] | undefined;
+}
+
+export interface LibScopeMcpServer {
+  server: McpServer;
+  ctx: OperationContext;
+  /** Names of the registered tools, in registration order. */
+  tools: string[];
+  /** Close the MCP server, and the database if createMcpServer opened it. */
+  close(): Promise<void>;
+}
+
+type AddTool = <S extends z.ZodObject, O>(
+  op: Operation<S, O>,
+  options: OperationToolOptions<O>,
+) => void;
+
+/** Register the 11 core tools (10 when `ask` is unavailable), except `task`. */
+function registerCoreTools(ctx: OperationContext, withAsk: boolean, add: AddTool): void {
+  add(searchOperation, {
+    format: fmt.formatSearchResults,
+    description:
+      "Search the knowledge base by meaning and keywords (query), or find content similar to a document or chunk (relatedTo). Results carry documentId and chunkId.",
+  });
+  if (withAsk) {
+    add(askOperation, {
+      format: fmt.formatAnswer,
+      description: ctx.isPassthrough()
+        ? "Retrieve the knowledge-base context for a question (passthrough: no LLM is called; answer from the returned context yourself)"
+        : askOperation.summary,
+    });
+  }
+  add(getDocumentOperation, { format: fmt.formatDocumentView });
+  add(listDocumentsOperation, { format: fmt.formatDocumentList });
+  add(overviewOperation, { format: fmt.formatOverview });
+  add(addOperation, {
+    name: "submit-document",
+    description:
+      "Add to the knowledge base: inline content (with title), a web page (url), a site crawl (url + spider: true) or a public GitHub/GitLab repository URL. Local file paths are not accepted.",
+    omit: ["source", "kind", "format", "include", "exclude", "token"],
+    format: fmt.formatIngestResult,
+  });
+  add(updateDocumentOperation, { format: fmt.formatDocumentUpdated });
+  add(deleteDocumentOperation, { format: fmt.formatDocumentDeleted });
+  add(rateDocumentOperation, { format: fmt.formatRating });
+}
+
+/** Register the admin toolset. */
+function registerAdminTools(add: AddTool): void {
+  add(syncOperation, {
+    description:
+      "Sync one saved connector connection (name) or all of them (all: true) with the settings saved by 'libscope connect'",
+    format: fmt.formatSyncResult,
+  });
+  add(installPackOperation, { format: fmt.formatInstallPack });
+  add(listPacksOperation, { format: fmt.formatPackList });
+  add(reindexOperation, { name: "reindex-documents", format: fmt.formatReindex });
+}
+
+/**
+ * Build the libscope MCP server. Without `ctx`, opens the database with `bootstrap(options)`.
+ * Does not connect a transport.
+ */
+export function createMcpServer(options: CreateMcpServerOptions = {}): LibScopeMcpServer {
+  const { ctx: givenCtx, toolsets, ...bootOptions } = options;
+  let boot: Bootstrapped | undefined;
+  let ctx = givenCtx;
+  if (!ctx) {
+    boot = bootstrap(bootOptions);
+    ctx = createOperationContext({
+      db: boot.db,
+      provider: boot.provider,
+      config: boot.config,
+      surface: "mcp",
+    });
+  }
+  const opCtx = ctx;
+  const enabled = parseToolsets(toolsets ? toolsets.join(",") : process.env[TOOLSETS_ENV]);
+  const withAsk = askAvailable(opCtx);
+  const admin = enabled.has("admin");
+
+  const server = new McpServer(
+    { name: "libscope", version: packageVersion() },
+    {
+      instructions: buildInstructions({ ask: withAsk, passthrough: opCtx.isPassthrough(), admin }),
+    },
+  );
+
+  const tools: string[] = [];
+  // Formatters of tools that can run in the background, so `task` can format their results.
+  const taskFormatters = new Map<string, Formatter<unknown>>();
+  const add: AddTool = (op, toolOptions) => {
+    tools.push(registerOperationTool(server, op, opCtx, toolOptions));
+    if (op.annotations?.longRunning) {
+      taskFormatters.set(op.name, toolOptions.format as Formatter<unknown>);
+    }
+  };
+
+  registerCoreTools(opCtx, withAsk, add);
+  tools.push(
+    registerActionTool(server, opCtx, {
+      name: "link-documents",
+      description:
+        "Create a typed link from one document to another (action: create), or delete a link by linkId (action: delete). get-document lists a document's links.",
+      actions: {
+        create: toolAction(linkDocumentsOperation, fmt.formatLinkCreated),
+        delete: toolAction(unlinkDocumentsOperation, fmt.formatLinkDeleted),
+      },
+    }),
+  );
+  const formatTaskResult: fmt.TaskResultFormatter = (operation, result) =>
+    taskFormatters.get(operation)?.(result);
+  tools.push(
+    registerActionTool(server, opCtx, {
+      name: "task",
+      description:
+        "Background tasks started with async: true. status: progress and result of a task; cancel: stop it; list: tasks from the last hour.",
+      actions: {
+        status: toolAction(getTaskOperation, (task) => fmt.formatTask(task, formatTaskResult)),
+        cancel: toolAction(cancelTaskOperation, fmt.formatTaskCancel),
+        list: toolAction(listTasksOperation, fmt.formatTaskList),
+      },
+    }),
+  );
+  if (admin) registerAdminTools(add);
+
+  return {
+    server,
+    ctx: opCtx,
+    tools,
+    close: async (): Promise<void> => {
+      await server.close();
+      boot?.close();
+    },
+  };
+}
+
+export interface RunStdioServerOptions extends CreateMcpServerOptions {
+  /** Log level (default: config logging.level). Logs always go to stderr. */
+  logLevel?: LogLevel | undefined;
+}
+
+/**
+ * Start the MCP server on stdin/stdout. stdout carries only JSON-RPC: logs go to stderr.
+ * Closes the server and database on SIGINT/SIGTERM.
+ */
+export async function runStdioServer(
+  options: RunStdioServerOptions = {},
+): Promise<LibScopeMcpServer> {
+  const { logLevel, ...serverOptions } = options;
+  const config = options.ctx?.config ?? options.config ?? loadConfig();
+  initLogger(logLevel ?? config.logging.level, { destination: "stderr" });
+  const mcp = createMcpServer({ ...serverOptions, config });
+  const shutdown = (): void => {
+    mcp.close().then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+  await mcp.server.connect(new StdioServerTransport());
+  return mcp;
+}
