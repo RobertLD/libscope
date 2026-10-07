@@ -1,129 +1,60 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
-import { startRepl } from "../../src/cli/repl.js";
-import type Database from "better-sqlite3";
-import type { EmbeddingProvider } from "../../src/providers/embedding.js";
-import { EventEmitter } from "node:events";
+import { startInteractiveSearch } from "../../src/cli/repl.js";
+import type { Interface } from "node:readline/promises";
 
-/** Minimal mock readline.Interface that yields pre-programmed answers. */
-function createMockInterface(inputs: string[]) {
+/** Minimal readline.Interface that yields pre-programmed answers, then "closes". */
+function createMockInterface(inputs: string[]): { iface: Interface; closeFn: MockInstance } {
   const queue = [...inputs];
-  const emitter = new EventEmitter();
-
-  const questionFn = vi.fn(() => {
-    const next = queue.shift();
-    if (next === undefined) return Promise.reject(new Error("closed"));
-    return Promise.resolve(next);
-  });
   const closeFn = vi.fn();
-
   const iface = {
-    question: questionFn,
+    question: vi.fn(() => {
+      const next = queue.shift();
+      return next === undefined ? Promise.reject(new Error("closed")) : Promise.resolve(next);
+    }),
     close: closeFn,
-    on: emitter.on.bind(emitter),
-  } as unknown as import("node:readline/promises").Interface;
-
-  return { iface, questionFn, closeFn };
+  } as unknown as Interface;
+  return { iface, closeFn };
 }
 
-function createMockDb() {
-  return {} as unknown as Database.Database;
-}
-
-function createMockProvider() {
-  return {
-    dimensions: 3,
-    generateEmbedding: vi.fn(() => Promise.resolve(new Float32Array([0.1, 0.2, 0.3]))),
-  } as unknown as EmbeddingProvider;
-}
-
-describe("startRepl", () => {
-  let consoleSpy: MockInstance;
-  let consoleErrorSpy: MockInstance;
+describe("startInteractiveSearch", () => {
+  let log: MockInstance;
+  let error: MockInstance;
 
   beforeEach(() => {
-    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    log = vi.spyOn(console, "log").mockImplementation(() => {});
+    error = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    consoleSpy.mockRestore();
-    consoleErrorSpy.mockRestore();
+    log.mockRestore();
+    error.mockRestore();
   });
 
-  it("exits on 'quit' command", async () => {
-    const { iface, closeFn } = createMockInterface(["quit"]);
-
-    await startRepl({
-      db: createMockDb(),
-      provider: createMockProvider(),
-      createInterface: () => iface,
-    });
-
-    expect(closeFn).toHaveBeenCalled();
-    expect(consoleSpy).toHaveBeenCalledWith("Goodbye!");
+  it("runs each non-empty query and stops on 'quit'", async () => {
+    const { iface, closeFn } = createMockInterface(["  first ", "", "second", "quit", "never"]);
+    const onQuery = vi.fn(() => Promise.resolve());
+    await startInteractiveSearch({ onQuery, createInterface: () => iface });
+    expect(onQuery.mock.calls).toEqual([["first"], ["second"]]);
+    expect(closeFn).toHaveBeenCalledOnce();
   });
 
-  it("exits on 'exit' command", async () => {
-    const { iface, closeFn } = createMockInterface(["exit"]);
-
-    await startRepl({
-      db: createMockDb(),
-      provider: createMockProvider(),
-      createInterface: () => iface,
-    });
-
-    expect(closeFn).toHaveBeenCalled();
-    expect(consoleSpy).toHaveBeenCalledWith("Goodbye!");
+  it("stops when input closes (Ctrl+D)", async () => {
+    const { iface, closeFn } = createMockInterface(["one"]);
+    const onQuery = vi.fn(() => Promise.resolve());
+    await startInteractiveSearch({ onQuery, createInterface: () => iface });
+    expect(onQuery).toHaveBeenCalledTimes(1);
+    expect(closeFn).toHaveBeenCalledOnce();
   });
 
-  it("skips empty input lines", async () => {
-    const { iface, questionFn, closeFn } = createMockInterface(["", "  ", "quit"]);
-
-    await startRepl({
-      db: createMockDb(),
-      provider: createMockProvider(),
-      createInterface: () => iface,
-    });
-
-    expect(questionFn).toHaveBeenCalledTimes(3);
-    expect(closeFn).toHaveBeenCalled();
-  });
-
-  it("exits gracefully on readline close (Ctrl+C)", async () => {
-    const { iface, closeFn } = createMockInterface([]);
-
-    await startRepl({
-      db: createMockDb(),
-      provider: createMockProvider(),
-      createInterface: () => iface,
-    });
-
-    expect(closeFn).toHaveBeenCalled();
-  });
-
-  it("handles search errors gracefully", async () => {
-    const { iface, closeFn } = createMockInterface(["test query", "quit"]);
-
-    await startRepl({
-      db: createMockDb(),
-      provider: createMockProvider(),
-      createInterface: () => iface,
-    });
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Search error:"));
-    expect(closeFn).toHaveBeenCalled();
-  });
-
-  it("prints banner on start", async () => {
-    const { iface } = createMockInterface(["quit"]);
-
-    await startRepl({
-      db: createMockDb(),
-      provider: createMockProvider(),
-      createInterface: () => iface,
-    });
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("LibScope interactive search"));
+  it("prints an error and keeps going when a query fails", async () => {
+    const { iface } = createMockInterface(["bad", "good", "exit"]);
+    const onQuery = vi
+      .fn<(q: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(undefined);
+    await startInteractiveSearch({ onQuery, createInterface: () => iface });
+    expect(error).toHaveBeenCalledWith("✗ boom");
+    expect(onQuery).toHaveBeenCalledTimes(2);
   });
 });
