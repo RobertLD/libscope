@@ -416,19 +416,24 @@ function applyVaultFileOutcome(
   }
 }
 
+interface SyncVaultFilesContext {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  config: ObsidianConfig;
+  vaultFiles: string[];
+  trackedFiles: Record<string, VaultFileEntry>;
+  newTrackedFiles: Record<string, VaultFileEntry>;
+  result: SyncResult;
+  signal: AbortSignal | undefined;
+}
+
 /** Sync all vault files, populating result and newTrackedFiles. */
-async function syncVaultFiles(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  config: ObsidianConfig,
-  vaultFiles: string[],
-  trackedFiles: Record<string, VaultFileEntry>,
-  newTrackedFiles: Record<string, VaultFileEntry>,
-  result: SyncResult,
-): Promise<void> {
+async function syncVaultFiles(ctx: SyncVaultFilesContext): Promise<void> {
+  const { db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result, signal } = ctx;
   const log = getLogger();
   const fileMap = buildVaultFileMap(vaultFiles);
   for (const relPath of vaultFiles) {
+    signal?.throwIfAborted();
     try {
       const outcome = await processVaultFile(
         db,
@@ -462,7 +467,7 @@ export async function syncObsidianVault(
     db,
     "obsidian",
     options.syncName ?? config.vaultPath,
-    () => runObsidianSync(db, provider, config),
+    () => runObsidianSync(db, provider, config, options.signal),
     (result) => ({
       added: result.added,
       updated: result.updated,
@@ -476,6 +481,7 @@ async function runObsidianSync(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: ObsidianConfig,
+  signal: AbortSignal | undefined,
 ): Promise<SyncResult> {
   const log = getLogger();
   const result: SyncResult = { added: 0, updated: 0, deleted: 0, errors: [] };
@@ -496,7 +502,16 @@ async function runObsidianSync(
   const newTrackedFiles: Record<string, VaultFileEntry> = {};
   const currentFileSet = new Set(vaultFiles);
 
-  await syncVaultFiles(db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result);
+  await syncVaultFiles({
+    db,
+    provider,
+    config,
+    vaultFiles,
+    trackedFiles,
+    newTrackedFiles,
+    result,
+    signal,
+  });
 
   result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
 

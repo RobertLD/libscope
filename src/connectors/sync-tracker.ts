@@ -124,6 +124,11 @@ export interface ConnectorSyncOptions {
    * Defaults to the connector's historical name when omitted.
    */
   syncName?: string | undefined;
+  /**
+   * Cancels the sync. Checked between pages and items; an aborted sync throws the
+   * signal's reason and is recorded as failed.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 /**

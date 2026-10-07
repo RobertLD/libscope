@@ -5,7 +5,7 @@
  */
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ConfigError } from "../errors.js";
+import { ConfigError, ValidationError } from "../errors.js";
 import {
   hasNamedConnectorConfig,
   loadConnectorConfig,
@@ -205,4 +205,67 @@ export async function runSavedConnectorSync(
   options: ConnectorSyncOptions = {},
 ): Promise<void> {
   await SAVED_SYNC_RUNNERS[type](db, provider, name, { ...options, syncName: name });
+}
+
+/** Per-call values for resolveSyncConfig; undefined means "not given". */
+export type SyncConfigOverrides<C> = { [K in keyof C]?: C[K] | undefined };
+
+/** Settings for resolveSyncConfig. */
+export interface ResolveSyncConfigOptions<C> {
+  /** Values used when neither the saved config nor the call provides one. */
+  defaults?: Partial<C> | undefined;
+  /** Fields that must be non-empty after merging. */
+  required?: ReadonlyArray<keyof C & string> | undefined;
+}
+
+/**
+ * Config for an on-demand sync (the MCP sync tools): `defaults`, then saved config `name`
+ * when it exists, then every defined value in `overrides`. Lets callers omit secrets that
+ * are already saved. Throws ValidationError naming required fields that are still empty.
+ */
+export function resolveSyncConfig<C extends object>(
+  type: ConnectorType,
+  name: string,
+  overrides: SyncConfigOverrides<C>,
+  options: ResolveSyncConfigOptions<C> = {},
+): { config: C; saved: C | undefined } {
+  const saved =
+    type === "onenote"
+      ? (findSavedOneNoteConfig(name) as C | undefined)
+      : findSavedConnectorConfig<C>(type, name);
+  const defined = Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined),
+  ) as Partial<C>;
+  const config: Partial<C> = { ...options.defaults, ...saved, ...defined };
+  const missing = (options.required ?? []).filter((key) => {
+    const value = config[key];
+    return value === undefined || value === "";
+  });
+  if (missing.length > 0) {
+    throw new ValidationError(
+      `Missing ${missing.join(", ")} for ${type} sync. Pass the value as a parameter, ` +
+        `or save a connector named "${name}" with 'libscope connect ${type}'.`,
+    );
+  }
+  return { config: config as C, saved };
+}
+
+/**
+ * After a OneNote sync that used saved config `name`, save tokens the connector refreshed
+ * so a rotated refresh token is not lost. Does nothing when no refresh happened or the
+ * caller supplied its own access token (no refresh token in `used`).
+ */
+export function saveRefreshedOneNoteTokens(
+  name: string,
+  saved: OneNoteConfig | undefined,
+  used: OneNoteConfig,
+): void {
+  if (!saved || !used.refreshToken) return;
+  if (used.accessToken === saved.accessToken && used.refreshToken === saved.refreshToken) return;
+  saveConnectorSettings("onenote", name, {
+    ...saved,
+    accessToken: used.accessToken,
+    refreshToken: used.refreshToken,
+    tokenExpiry: used.tokenExpiry,
+  });
 }

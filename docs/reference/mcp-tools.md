@@ -151,55 +151,70 @@ Re-embed all document chunks with the current embedding provider. Use after swit
 | `before`      | string   |          | Only reindex docs created before this ISO-8601 date |
 | `documentIds` | string[] |          | Only reindex specific documents                     |
 
+## Connector sync tools
+
+The five `sync-*` tools share these behaviors:
+
+- `name` (string, optional) selects a saved connector config (default: the connector type). Configs are saved by `libscope connect <type>`. Any parameter you omit, including tokens, comes from that config, so an agent does not need secrets in its context. Parameters you pass apply to that call only and are not saved.
+- `async` (boolean, optional) runs the sync in the background and returns a task ID. `cancel-task` stops the sync between pages or items, and the run is recorded as failed.
+- Each call writes one entry to the connector sync history under `name`.
+
 ## sync-obsidian-vault
 
 Sync an Obsidian vault into the knowledge base. Parses wikilinks, frontmatter, embeds, and tags.
 
-| Parameter   | Type   | Required | Description                          |
-| ----------- | ------ | -------- | ------------------------------------ |
-| `vaultPath` | string | ✅       | Absolute path to the vault directory |
+| Parameter   | Type   | Required        | Description                          |
+| ----------- | ------ | --------------- | ------------------------------------ |
+| `vaultPath` | string | unless saved    | Absolute path to the vault directory |
+| `name`      | string |                 | Saved config name (default: `obsidian`) |
 
 ## sync-notion
 
 Sync Notion pages and databases.
 
-| Parameter      | Type     | Required | Description                             |
-| -------------- | -------- | -------- | --------------------------------------- |
-| `token`        | string   | ✅       | Notion integration token                |
-| `excludePages` | string[] |          | Page/database IDs to exclude            |
-| `lastSync`     | string   |          | ISO-8601 timestamp for incremental sync |
+| Parameter      | Type     | Required     | Description                             |
+| -------------- | -------- | ------------ | --------------------------------------- |
+| `token`        | string   | unless saved | Notion integration token                |
+| `excludePages` | string[] |              | Page/database IDs to exclude            |
+| `lastSync`     | string   |              | ISO-8601 timestamp for incremental sync |
+| `name`         | string   |              | Saved config name (default: `notion`)   |
 
 ## sync-confluence
 
 Sync Confluence spaces and pages.
 
-| Parameter       | Type     | Required | Description                       |
-| --------------- | -------- | -------- | --------------------------------- |
-| `baseUrl`       | string   | ✅       | Confluence base URL               |
-| `email`         | string   | ✅       | User email                        |
-| `token`         | string   | ✅       | API token                         |
-| `spaces`        | string[] |          | Space keys to sync (default: all) |
-| `excludeSpaces` | string[] |          | Space keys to exclude             |
+| Parameter       | Type     | Required     | Description                             |
+| --------------- | -------- | ------------ | --------------------------------------- |
+| `baseUrl`       | string   | unless saved | Confluence base URL                     |
+| `email`         | string   | Cloud only   | User email                              |
+| `token`         | string   | unless saved | API token or PAT                        |
+| `spaces`        | string[] |              | Space keys to sync (default: all)       |
+| `excludeSpaces` | string[] |              | Space keys to exclude                   |
+| `name`          | string   |              | Saved config name (default: `confluence`) |
 
 ## sync-slack
 
 Sync Slack channel messages and threads.
 
-| Parameter         | Type     | Required | Description                         |
-| ----------------- | -------- | -------- | ----------------------------------- |
-| `token`           | string   | ✅       | Slack bot token                     |
-| `channels`        | string[] | ✅       | Channel names/IDs, or `["all"]`     |
-| `excludeChannels` | string[] |          | Channels to exclude                 |
-| `threadMode`      | string   |          | `aggregate` (default) or `separate` |
+| Parameter         | Type     | Required     | Description                                  |
+| ----------------- | -------- | ------------ | -------------------------------------------- |
+| `token`           | string   | unless saved | Slack bot token                              |
+| `channels`        | string[] |              | Channel names/IDs, or `["all"]` (default: all) |
+| `excludeChannels` | string[] |              | Channels to exclude                          |
+| `threadMode`      | string   |              | `aggregate` (default) or `separate`          |
+| `name`            | string   |              | Saved config name (default: `slack`)         |
 
 ## sync-onenote
 
 Sync OneNote notebooks via Microsoft Graph API.
 
-| Parameter      | Type   | Required | Description                      |
-| -------------- | ------ | -------- | -------------------------------- |
-| `accessToken`  | string | ✅       | Microsoft Graph API access token |
-| `notebookName` | string |          | Specific notebook (default: all) |
+| Parameter      | Type   | Required     | Description                                                              |
+| -------------- | ------ | ------------ | ------------------------------------------------------------------------ |
+| `accessToken`  | string | unless saved | Microsoft Graph API access token, used as given                          |
+| `notebookName` | string |              | Specific notebook (default: all)                                         |
+| `name`         | string |              | Saved config name (default: `onenote`)                                   |
+
+Without `accessToken`, the saved config's refresh token is used to get a new access token when needed, and the new tokens are saved.
 
 ## install-pack
 

@@ -441,6 +441,7 @@ interface SyncOneNoteSectionOptions {
   config: OneNoteConfig;
   seenSourceUrls: Set<string>;
   result: OneNoteSyncResult;
+  signal: AbortSignal | undefined;
 }
 
 /** Sync all pages within a single section. */
@@ -455,6 +456,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
     config,
     seenSourceUrls,
     result,
+    signal,
   } = options;
   const log = getLogger();
   const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
@@ -472,6 +474,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
   }
 
   for (const page of pages) {
+    signal?.throwIfAborted();
     const sourceUrl = buildSourceUrl(notebookName, section.displayName, page.title);
     seenSourceUrls.add(sourceUrl);
 
@@ -497,14 +500,11 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
 
 /** Sync all sections within a single notebook. */
 async function syncOneNoteNotebook(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  token: string,
-  notebook: GraphNotebook,
-  config: OneNoteConfig,
-  seenSourceUrls: Set<string>,
-  result: OneNoteSyncResult,
+  options: Omit<SyncOneNoteSectionOptions, "notebookName" | "section" | "notebookTopicId"> & {
+    notebook: GraphNotebook;
+  },
 ): Promise<void> {
+  const { db, provider, token, notebook, config, seenSourceUrls, result, signal } = options;
   const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
 
   let sections: GraphSection[];
@@ -520,6 +520,7 @@ async function syncOneNoteNotebook(
   result.sections += filteredSections.length;
 
   for (const section of filteredSections) {
+    signal?.throwIfAborted();
     await syncOneNoteSection({
       db,
       provider,
@@ -530,6 +531,7 @@ async function syncOneNoteNotebook(
       config,
       seenSourceUrls,
       result,
+      signal,
     });
   }
 }
@@ -591,7 +593,7 @@ export async function syncOneNote(
     db,
     "onenote",
     options.syncName ?? "onenote",
-    () => runOneNoteSync(db, provider, config),
+    () => runOneNoteSync(db, provider, config, options.signal),
     (result) => ({
       added: result.pagesAdded,
       updated: result.pagesUpdated,
@@ -605,6 +607,7 @@ async function runOneNoteSync(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: OneNoteConfig,
+  signal: AbortSignal | undefined,
 ): Promise<OneNoteSyncResult> {
   const log = getLogger();
   await ensureOneNoteAccessToken(config);
@@ -634,7 +637,17 @@ async function runOneNoteSync(
   const seenSourceUrls = new Set<string>();
 
   for (const notebook of targetNotebooks) {
-    await syncOneNoteNotebook(db, provider, token, notebook, config, seenSourceUrls, result);
+    signal?.throwIfAborted();
+    await syncOneNoteNotebook({
+      db,
+      provider,
+      token,
+      notebook,
+      config,
+      seenSourceUrls,
+      result,
+      signal,
+    });
   }
 
   result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);

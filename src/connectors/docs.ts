@@ -638,7 +638,7 @@ export async function syncDocSite(
     db,
     CONNECTOR_TYPE,
     options.syncName ?? config.url,
-    () => runDocSiteSync(db, provider, config),
+    () => runDocSiteSync(db, provider, config, options.signal),
     (result) => ({
       added: result.pagesIndexed,
       updated: result.pagesUpdated,
@@ -652,6 +652,7 @@ async function runDocSiteSync(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: DocSiteConfig,
+  signal: AbortSignal | undefined,
 ): Promise<DocSiteSyncResult> {
   const log = getLogger();
 
@@ -723,6 +724,7 @@ async function runDocSiteSync(
 
   // --- BFS crawl ---
   while (queue.length > 0 && visited.size <= maxPages) {
+    signal?.throwIfAborted();
     const batch = queue.splice(0, concurrency);
 
     await Promise.allSettled(

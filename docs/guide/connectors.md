@@ -176,4 +176,6 @@ All connectors are also available as MCP tools, so your AI assistant can trigger
 - `sync-slack`
 - `sync-onenote`
 
+Tokens and other settings are optional when a saved config exists: the tools read the config named by their `name` parameter (default: the connector type), so the assistant does not need secrets in its context. Run a sync with `async: true` to get a task ID; `cancel-task` stops the sync between pages or items.
+
 See the [MCP Tools Reference](/reference/mcp-tools) for parameter details.

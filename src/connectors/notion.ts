@@ -106,7 +106,11 @@ async function notionFetch<T>(
   return (await response.json()) as T;
 }
 
-async function searchNotion(token: string, lastSync?: string): Promise<NotionSearchResult[]> {
+async function searchNotion(
+  token: string,
+  lastSync: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<NotionSearchResult[]> {
   const log = getLogger();
   const allResults: NotionSearchResult[] = [];
   let cursor: string | null = null;
@@ -114,6 +118,7 @@ async function searchNotion(token: string, lastSync?: string): Promise<NotionSea
   const MAX_PAGES = 10_000;
 
   while (hasMore) {
+    signal?.throwIfAborted();
     const body: Record<string, unknown> = { page_size: 100 };
     if (cursor) body["start_cursor"] = cursor;
     if (lastSync) {
@@ -460,12 +465,14 @@ async function syncNotionDatabase(
   token: string,
   item: NotionSearchResult,
   excludeSet: Set<string>,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   const log = getLogger();
   const dbTitle = extractTitle(item);
   const rows = await queryDatabase(token, item.id);
 
   for (const row of rows) {
+    signal?.throwIfAborted();
     if (excludeSet.has(row.id)) continue;
 
     const rowTitle = extractTitle(row);
@@ -490,12 +497,13 @@ async function syncNotionItem(
   item: NotionSearchResult,
   excludeSet: Set<string>,
   result: NotionSyncResult,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   if (item.object === "page") {
     const indexed = await syncNotionPage(db, provider, token, item);
     if (indexed) result.pagesIndexed++;
   } else if (item.object === "database") {
-    await syncNotionDatabase(db, provider, token, item, excludeSet);
+    await syncNotionDatabase(db, provider, token, item, excludeSet, signal);
     result.databasesIndexed++;
   }
 }
@@ -511,7 +519,7 @@ export async function syncNotion(
     db,
     "notion",
     options.syncName ?? "notion",
-    () => runNotionSync(db, provider, config),
+    () => runNotionSync(db, provider, config, options.signal),
     (result) => ({
       added: result.pagesIndexed + result.databasesIndexed,
       updated: 0,
@@ -525,6 +533,7 @@ async function runNotionSync(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: NotionConfig,
+  signal: AbortSignal | undefined,
 ): Promise<NotionSyncResult> {
   const log = getLogger();
 
@@ -541,18 +550,20 @@ async function runNotionSync(
   const excludeSet = new Set(config.excludePages ?? []);
 
   log.info({ lastSync: config.lastSync }, "Starting Notion sync");
-  const searchResults = await searchNotion(config.token, config.lastSync);
+  const searchResults = await searchNotion(config.token, config.lastSync, signal);
   log.info({ count: searchResults.length }, "Found Notion objects");
 
   for (const item of searchResults) {
+    signal?.throwIfAborted();
     if (excludeSet.has(item.id)) {
       log.debug({ id: item.id }, "Skipping excluded page");
       continue;
     }
 
     try {
-      await syncNotionItem(db, provider, config.token, item, excludeSet, result);
+      await syncNotionItem(db, provider, config.token, item, excludeSet, result, signal);
     } catch (err) {
+      if (signal?.aborted) throw err;
       const title = extractTitle(item);
       const message = err instanceof Error ? err.message : String(err);
       result.errors.push({ page: title, error: message });

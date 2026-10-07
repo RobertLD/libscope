@@ -820,6 +820,35 @@ describe("syncDocSite — mocked fetch", () => {
     expect(result.pagesIndexed).toBe(0);
   });
 
+  it("stops crawling when the abort signal fires", async () => {
+    const controller = new AbortController();
+    const root = SPHINX_ROOT_SIMPLE.replace(
+      "</body>",
+      '<a href="https://docs.example.com/docs/p1">P1</a></body>',
+    );
+    mockFetch
+      .mockImplementationOnce(() => {
+        controller.abort();
+        return Promise.resolve(htmlResponse(root));
+      })
+      .mockResolvedValueOnce(notFoundResponse()); // sitemap.xml
+
+    await expect(
+      syncDocSite(
+        db,
+        provider,
+        { url: "https://docs.example.com/docs/" },
+        {
+          signal: controller.signal,
+        },
+      ),
+    ).rejects.toThrow();
+
+    expect(mockFetch).toHaveBeenCalledTimes(2); // root + sitemap, never p1
+    const row = db.prepare("SELECT status FROM connector_syncs").get() as { status: string };
+    expect(row.status).toBe("failed");
+  });
+
   it("records sync history in the connector_syncs table", async () => {
     mockFetch
       .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root

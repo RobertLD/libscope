@@ -185,11 +185,12 @@ export async function resolveUserMentions(text: string, token: string): Promise<
   return result;
 }
 
-async function listChannels(token: string): Promise<SlackChannel[]> {
+async function listChannels(token: string, signal?: AbortSignal): Promise<SlackChannel[]> {
   const channels: SlackChannel[] = [];
   let cursor: string | undefined;
 
   do {
+    signal?.throwIfAborted();
     const params: Record<string, string> = {
       types: "public_channel,private_channel",
       limit: "200",
@@ -232,11 +233,13 @@ async function fetchMessages(
   token: string,
   channelId: string,
   oldest?: string,
+  signal?: AbortSignal,
 ): Promise<SlackMessage[]> {
   const messages: SlackMessage[] = [];
   let cursor: string | undefined;
 
   do {
+    signal?.throwIfAborted();
     const params: Record<string, string> = {
       channel: channelId,
       limit: "200",
@@ -461,9 +464,10 @@ async function syncChannel(
   config: SlackConfig,
   channel: SlackChannel,
   result: SlackSyncResult,
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   const oldest = toSlackTimestamp(config.lastSync);
-  const messages = await fetchMessages(config.token, channel.id, oldest);
+  const messages = await fetchMessages(config.token, channel.id, oldest, signal);
 
   const { threadParents, standaloneMessages } = classifyMessages(messages);
 
@@ -480,6 +484,7 @@ async function syncChannel(
   await batchResolveUsers(config.token, allUserIds);
 
   for (const msg of standaloneMessages) {
+    signal?.throwIfAborted();
     const indexed = await indexStandaloneMessage(db, provider, config.token, channel.name, msg);
     if (indexed) result.messagesIndexed++;
   }
@@ -517,7 +522,7 @@ export async function syncSlack(
     db,
     "slack",
     options.syncName ?? "slack",
-    () => runSlackSync(db, provider, config),
+    () => runSlackSync(db, provider, config, options.signal),
     (result) => ({
       added: result.messagesIndexed + result.threadsIndexed,
       updated: 0,
@@ -531,6 +536,7 @@ async function runSlackSync(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: SlackConfig,
+  signal: AbortSignal | undefined,
 ): Promise<SlackSyncResult> {
   const log = getLogger();
 
@@ -551,17 +557,19 @@ async function runSlackSync(
   };
 
   log.info("Fetching Slack channel list");
-  const allChannels = await listChannels(config.token);
+  const allChannels = await listChannels(config.token, signal);
   const channels = filterChannels(allChannels, config.channels, config.excludeChannels);
   result.channels = channels.length;
 
   log.info({ channelCount: channels.length }, "Processing Slack channels");
 
   for (const channel of channels) {
+    signal?.throwIfAborted();
     try {
       log.info({ channel: channel.name }, "Syncing channel");
-      await syncChannel(db, provider, config, channel, result);
+      await syncChannel(db, provider, config, channel, result, signal);
     } catch (err) {
+      if (signal?.aborted) throw err;
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ channel: channel.name, err }, "Error syncing Slack channel");
       result.errors.push({ channel: channel.name, error: errMsg });
