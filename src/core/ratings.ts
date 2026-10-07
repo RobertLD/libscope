@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ValidationError, DocumentNotFoundError } from "../errors.js";
 import { validateRow, validateRows } from "../db/validate.js";
+import { emitEvent } from "./events.js";
 
 const RatingSummaryRowSchema = z.object({
   avg_rating: z.number().nullable(),
@@ -90,6 +91,11 @@ export function rateDocument(db: Database.Database, input: RateDocumentInput): R
     ratedBy,
   );
 
+  emitEvent(db, "document.rated", {
+    documentId: input.documentId,
+    rating: input.rating,
+    feedback: input.feedback,
+  });
   return {
     id,
     documentId: input.documentId,

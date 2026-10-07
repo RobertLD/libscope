@@ -386,23 +386,25 @@ export LIBSCOPE_ALLOW_SELF_SIGNED_CERTS=true
 
 LibScope can push events to any HTTP endpoint. Useful for triggering CI pipelines, Slack notifications, or custom workflows whenever documents are created or updated.
 
-```bash
-libscope serve --api  # webhooks require the REST API
-```
+Events fire from every surface (CLI, MCP server, REST API, SDK) when that process changes the knowledge base. Delivery runs in the background and never fails or delays the operation that caused it.
 
 ```bash
-# Create a webhook
+# Create a webhook (CLI)
+libscope webhooks create https://hooks.example.com/libscope --events document.created,document.updated
+
+# Or via the REST API
 curl -X POST http://localhost:3378/api/v1/webhooks \
   -H "Content-Type: application/json" \
   -d '{"url": "https://hooks.example.com/libscope", "events": ["document.created", "document.updated"], "secret": "my-hmac-secret"}'
 
 # Send a test ping
+libscope webhooks test <id>
 curl -X POST http://localhost:3378/api/v1/webhooks/<id>/test
 ```
 
-Webhook payloads are signed with HMAC-SHA256 when a secret is set. The signature is in the `X-LibScope-Signature` header.
+Webhook payloads are signed with HMAC-SHA256 when a secret is set (storing a secret requires `LIBSCOPE_SECRET_KEY`). The hex signature is in the `X-LibScope-Signature` header.
 
-Supported events: `document.created`, `document.updated`, `document.deleted`.
+Supported events: `document.created`, `document.updated`, `document.deleted`, `document.rated`, `search.executed`.
 
 ## Other Tools
 

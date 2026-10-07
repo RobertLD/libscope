@@ -10,6 +10,7 @@ import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
 import { deleteChunkEmbeddings } from "./documents.js";
 import { extractAndStoreDocumentLinks } from "./links.js";
+import { emitEvent } from "./events.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 
 export interface IndexDocumentInput {
@@ -498,6 +499,12 @@ export async function indexDocument(
     log.warn({ err, docId }, "Failed to extract document links");
   }
 
+  emitEvent(db, "document.created", {
+    documentId: docId,
+    title: input.title,
+    library: input.library,
+    version: input.version,
+  });
   return { id: docId, chunkCount: chunks.length };
 }
 

@@ -47,10 +47,9 @@ import {
   listWebhooks,
   deleteWebhook,
   getWebhook,
-  buildPayload,
-  signPayload,
+  deliverWebhook,
+  TEST_PING_DATA,
   redactWebhook,
-  validateWebhookUrlSsrf,
 } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
@@ -768,19 +767,7 @@ async function handleCreateWebhook(ctx: RouteContext): Promise<void> {
 
 async function handleTestWebhook(ctx: RouteContext, webhookId: string): Promise<void> {
   const webhook = getWebhook(ctx.db, webhookId);
-  await validateWebhookUrlSsrf(webhook.url);
-  const body = buildPayload("document.created", { test: true, message: "Webhook test ping" });
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (webhook.secret) {
-    headers["X-LibScope-Signature"] = signPayload(body, webhook.secret);
-  }
-  const resp = await fetch(webhook.url, {
-    method: "POST",
-    headers,
-    body,
-    redirect: "error",
-    signal: AbortSignal.timeout(5000),
-  });
+  const resp = await deliverWebhook(webhook, "document.created", TEST_PING_DATA);
   sendJson(ctx.res, 200, { status: resp.status, statusText: resp.statusText }, elapsed(ctx.start));
 }
 

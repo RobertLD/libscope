@@ -92,8 +92,8 @@ import {
   listWebhooks,
   deleteWebhook,
   getWebhook,
-  buildPayload,
-  signPayload,
+  deliverWebhook,
+  TEST_PING_DATA,
 } from "../core/webhooks.js";
 import type { WebhookEvent } from "../core/webhooks.js";
 import { registerRegistryCommands } from "./commands/registry.js";
@@ -2958,18 +2958,8 @@ webhookCmd
     const { db } = initializeApp();
     try {
       const webhook = getWebhook(db, id);
-      const body = buildPayload("document.created", { test: true, message: "Webhook test ping" });
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (webhook.secret) {
-        headers["X-LibScope-Signature"] = signPayload(body, webhook.secret);
-      }
       console.log(`Sending test ping to ${webhook.url}...`);
-      const resp = await fetch(webhook.url, {
-        method: "POST",
-        headers,
-        body,
-        signal: AbortSignal.timeout(5000),
-      });
+      const resp = await deliverWebhook(webhook, "document.created", TEST_PING_DATA);
       console.log(`✓ Response: ${resp.status} ${resp.statusText}`);
     } finally {
       closeDatabase();
