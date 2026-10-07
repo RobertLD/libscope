@@ -36,6 +36,7 @@ import {
   searchBatch,
 } from "../core/index.js";
 import type { LinkType, BulkSelector, BatchSearchRequest } from "../core/index.js";
+import { LINK_TYPES } from "../core/links.js";
 import { loadConfig } from "../config.js";
 import { DocumentNotFoundError, FetchError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -643,7 +644,7 @@ async function handleCreateDocumentLink(ctx: RouteContext, docId: string): Promi
     sendError(ctx.res, 400, "VALIDATION_ERROR", "targetId and linkType are required");
     return;
   }
-  const validLinkTypes = ["see_also", "prerequisite", "supersedes", "related"];
+  const validLinkTypes: readonly string[] = LINK_TYPES;
   if (!validLinkTypes.includes(body.linkType)) {
     sendError(
       ctx.res,

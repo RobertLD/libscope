@@ -1148,4 +1148,27 @@ describe("Links API", () => {
     await handleRequest(req, res, db, provider);
     expect(getStatus()).toBe(204);
   });
+
+  it("POST /api/v1/documents/:id/links accepts the references link type", async () => {
+    const doc1 = await indexDocument(db, provider, {
+      title: "Doc C",
+      content: "# C\n\nContent C.",
+      sourceType: "manual",
+    });
+    const doc2 = await indexDocument(db, provider, {
+      title: "Doc D",
+      content: "# D\n\nContent D.",
+      sourceType: "manual",
+    });
+
+    const { res, getStatus, getBody } = createMockRes();
+    const req = createMockReq("POST", `/api/v1/documents/${doc1.id}/links`, {
+      targetId: doc2.id,
+      linkType: "references",
+    });
+    await handleRequest(req, res, db, provider);
+    expect(getStatus()).toBe(201);
+    const created = parseResponse(getBody());
+    expect((created.data as Record<string, unknown>)?.linkType).toBe("references");
+  });
 });

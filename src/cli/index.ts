@@ -12,7 +12,7 @@ import { getDocumentRatings, listRatings } from "../core/ratings.js";
 import { createTopic, listTopics } from "../core/topics.js";
 import { getDocument, listDocuments, deleteDocument, updateDocument } from "../core/documents.js";
 import { createLink, getDocumentLinks, deleteLink, getPrerequisiteChain } from "../core/links.js";
-import type { LinkType } from "../core/links.js";
+import { LINK_TYPES, type LinkType } from "../core/links.js";
 import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
 import { readdirSync, realpathSync, statSync } from "node:fs";
@@ -1133,10 +1133,10 @@ ratingsCmd
 program
   .command("link <sourceId> <targetId>")
   .description("Create a cross-reference link between two documents")
-  .option("--type <type>", "Link type: see_also, prerequisite, supersedes, related", "related")
+  .option("--type <type>", `Link type: ${LINK_TYPES.join(", ")}`, "related")
   .option("--label <text>", "Human-readable description of the link")
   .action((sourceId: string, targetId: string, opts: { type: string; label?: string }) => {
-    const validTypes = ["see_also", "prerequisite", "supersedes", "related"];
+    const validTypes: readonly string[] = LINK_TYPES;
     if (!validTypes.includes(opts.type)) {
       console.error(`Invalid link type: ${opts.type}. Must be one of: ${validTypes.join(", ")}`);
       process.exit(1);
