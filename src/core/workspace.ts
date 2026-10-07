@@ -133,6 +133,11 @@ export function getWorkspacePath(name: string): string {
   return join(getWorkspacesDir(), name, "libscope.db");
 }
 
+/** Database location used by older releases (and by the SDK before workspaces applied to it). */
+export function getLegacyDatabasePath(): string {
+  return join(homedir(), ".libscope", "libscope.db");
+}
+
 /**
  * Resolve the active workspace with precedence:
  * 1. LIBSCOPE_WORKSPACE env var

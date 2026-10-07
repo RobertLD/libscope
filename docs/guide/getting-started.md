@@ -20,7 +20,7 @@ Create the database:
 libscope init
 ```
 
-This sets up a SQLite database at `~/.libscope/libscope.db` with vector search and full-text indexing. On first run, it also downloads the local embedding model (~80MB).
+This sets up a SQLite database at `~/.libscope/workspaces/default/libscope.db` (the active workspace's database) with vector search and full-text indexing. The command prints the path it used. On first run, it also downloads the local embedding model (~80MB).
 
 ## Index Some Documents
 

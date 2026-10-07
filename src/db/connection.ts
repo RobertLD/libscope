@@ -4,17 +4,56 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
-import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
+import { expandHomeDir } from "../config.js";
+import { getActiveWorkspace, getLegacyDatabasePath, getWorkspacePath } from "../core/workspace.js";
 
 const require = createRequire(import.meta.url);
 
 let db: Database.Database | null = null;
 let cachedPath: string | null = null;
+let legacyWarningShown = false;
+
+export interface ResolveDatabasePathOptions {
+  /** Explicit database file (SDK `dbPath`, or `database.path` set in a config file). Wins over workspaces. */
+  explicitPath?: string | undefined;
+  /** Workspace name. Defaults to the active workspace (LIBSCOPE_WORKSPACE, project file, `workspace use`). */
+  workspace?: string | undefined;
+  /** Where to report the legacy-database notice (default: logger.warn). Called at most once per process. */
+  warn?: ((message: string) => void) | undefined;
+}
+
+/**
+ * The one rule for where the database lives, used by the CLI, MCP server, REST API and SDK:
+ * explicit path > workspace (option, else the active workspace).
+ *
+ * If no explicit path is set, the workspace database does not exist yet, and a database exists at
+ * the pre-workspace location (~/.libscope/libscope.db), a single warning names that file and how to
+ * keep using it. Nothing is moved or deleted.
+ */
+export function resolveDatabasePath(options: ResolveDatabasePathOptions = {}): string {
+  if (options.explicitPath) return expandHomeDir(options.explicitPath);
+
+  const resolved = getWorkspacePath(options.workspace ?? getActiveWorkspace());
+  const legacy = getLegacyDatabasePath();
+  if (!legacyWarningShown && !existsSync(resolved) && existsSync(legacy)) {
+    legacyWarningShown = true;
+    const message =
+      `Using a new database at ${resolved}. An existing database was found at ${legacy} ` +
+      `(the location used by earlier versions). To keep using it, run: ` +
+      `libscope config set database.path ${legacy}`;
+    (options.warn ?? ((m: string): void => getLogger().warn(m)))(message);
+  }
+  return resolved;
+}
 
 /** Resolve the database path, falling back to the active workspace. */
 export function resolveDbPath(dbPath?: string): string {
-  if (dbPath) return dbPath;
-  return getWorkspacePath(getActiveWorkspace());
+  return resolveDatabasePath({ explicitPath: dbPath });
+}
+
+/** Reset the once-per-process legacy-database warning (for tests). */
+export function resetLegacyDatabaseWarning(): void {
+  legacyWarningShown = false;
 }
 
 /** Get or create the database connection. */

@@ -163,9 +163,7 @@ function handleOpenApiSpec(ctx: RouteContext): void {
 }
 
 function handleHealthCheck(ctx: RouteContext): void {
-  const config = loadConfig();
-  const dbPath = config.database?.path;
-  const stats = getStats(ctx.db, dbPath);
+  const stats = getStats(ctx.db);
   sendJson(
     ctx.res,
     200,
@@ -545,9 +543,7 @@ function handleScheduleStatus(ctx: RouteContext): void {
 }
 
 function handleStats(ctx: RouteContext): void {
-  const config = loadConfig();
-  const dbPath = config.database?.path;
-  const stats = getStats(ctx.db, dbPath);
+  const stats = getStats(ctx.db);
   sendJson(ctx.res, 200, stats, elapsed(ctx.start));
 }
 

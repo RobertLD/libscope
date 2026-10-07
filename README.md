@@ -316,19 +316,28 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
 | Variable                           | Description                              | Default                  |
 | ---------------------------------- | ---------------------------------------- | ------------------------ |
 | `LIBSCOPE_EMBEDDING_PROVIDER`      | `local`, `ollama`, or `openai`           | `local`                  |
-| `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key                           | —                        |
+| `LIBSCOPE_OPENAI_API_KEY`          | OpenAI API key (embeddings and LLM)      | —                        |
+| `OPENAI_API_KEY`                   | Used when `LIBSCOPE_OPENAI_API_KEY` is not set | —                  |
 | `LIBSCOPE_OLLAMA_URL`              | Ollama server URL                        | `http://localhost:11434` |
+| `LIBSCOPE_OLLAMA_MODEL`            | Ollama embedding model                   | `nomic-embed-text`       |
 | `LIBSCOPE_LLM_PROVIDER`            | LLM for RAG (`openai` / `ollama` / `anthropic`) | —                |
 | `LIBSCOPE_LLM_MODEL`               | LLM model override                       | —                        |
 | `LIBSCOPE_ANTHROPIC_API_KEY`       | Anthropic API key (for Claude models)    | —                        |
+| `ANTHROPIC_API_KEY`                | Used when `LIBSCOPE_ANTHROPIC_API_KEY` is not set | —               |
 | `LIBSCOPE_ALLOW_PRIVATE_URLS`      | Allow fetching from private/internal IPs | `false`                  |
 | `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed TLS certificates      | `false`                  |
+| `LIBSCOPE_WORKSPACE`               | Active workspace for this shell          | `default`                |
+| `LIBSCOPE_API_KEY`                 | REST API key (`Authorization: Bearer <key>`) | —                    |
+| `LIBSCOPE_SECRET_KEY`              | Encrypts stored webhook secrets          | —                        |
+| `LIBSCOPE_VERBOSE`                 | `1` prints structured JSON logs (stderr) in the CLI | —             |
 | `ONENOTE_CLIENT_ID`                | Microsoft app registration client ID     | —                        |
 | `ONENOTE_TENANT_ID`                | Microsoft tenant ID                      | `common`                 |
 | `NOTION_TOKEN`                     | Notion integration token                 | —                        |
 | `CONFLUENCE_URL`                   | Confluence base URL                      | —                        |
 | `CONFLUENCE_EMAIL`                 | Confluence user email                    | —                        |
 | `CONFLUENCE_TOKEN`                 | Confluence API token                     | —                        |
+
+API keys use one rule for embeddings and the LLM: `LIBSCOPE_<PROVIDER>_API_KEY`, then `<PROVIDER>_API_KEY`, then the key in a config file. LibScope does not load `.env` files.
 
 </details>
 
@@ -345,11 +354,7 @@ export LIBSCOPE_LLM_MODEL=gpt-4o-mini # optional
   },
   "llm": {
     "provider": "openai",
-    "model": "gpt-4o-mini",
-    "anthropicApiKey": "sk-ant-..."
-  },
-  "database": {
-    "path": "~/.libscope/libscope.db"
+    "model": "gpt-4o-mini"
   },
   "logging": {
     "level": "info"
@@ -565,8 +570,11 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 | `libscope stats`                  | Usage overview               |
 | `libscope pack install <name>`    | Install a knowledge pack     |
 | `libscope pack create`            | Create a knowledge pack      |
-| `libscope config set <key> <val>` | Set config                   |
-| `libscope config show`            | Show config                  |
+| `libscope config set <key> <val>` | Set any config key (not API keys) |
+| `libscope config get <key>`       | Print one effective value    |
+| `libscope config unset <key>`     | Remove a key from the user config file |
+| `libscope config path`            | Print the user config file path |
+| `libscope config show`            | Show config (API keys masked) |
 
 **Global flags:** `--verbose`, `--log-level <level>`, `--workspace <name>`
 
@@ -574,7 +582,7 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 
 ## How It Works
 
-LibScope stores everything in a local SQLite database (at `~/.libscope/libscope.db` by default):
+LibScope stores everything in a local SQLite database, one per workspace (`~/.libscope/workspaces/<workspace>/libscope.db`; the default workspace is `default`). Set `database.path` to use a specific file instead. The CLI, MCP server, REST API, and `LibScope.create()` all open the same file:
 
 - Documents are split into chunks by heading boundaries
 - Each chunk is embedded into a vector using the configured provider

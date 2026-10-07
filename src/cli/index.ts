@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { loadConfig, saveUserConfig } from "../config.js";
+import {
+  loadConfig,
+  maskConfigSecrets,
+  getUserConfigPath,
+  CONFIG_KEY_NAMES,
+  setUserConfigValue,
+  unsetUserConfigValue,
+  getConfigValue,
+} from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
+import { resolveDatabasePath } from "../db/connection.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument, indexFile } from "../core/indexing.js";
 import { getSupportedExtensions } from "../core/parsers/index.js";
@@ -52,7 +61,6 @@ import {
   listWorkspaces,
   getActiveWorkspace,
   setActiveWorkspace,
-  getWorkspacePath,
 } from "../core/workspace.js";
 import {
   installPack,
@@ -476,7 +484,7 @@ program
       } catch {
         console.log("  ℹ Vector table skipped (embedding provider not available)");
       }
-      console.log(`✓ Database initialized at ${config.database.path}`);
+      console.log(`✓ Database initialized at ${db.name}`);
     } finally {
       closeDatabase();
     }
@@ -1538,39 +1546,67 @@ program
   });
 
 // config
-const configCmd = program.command("config").description("Manage configuration");
+const configCmd = program
+  .command("config")
+  .description(`Manage configuration (user file: ${getUserConfigPath()})`);
+
+/** Run a config subcommand: set up logging, print errors without a stack trace. */
+function runConfigAction(fn: () => void): void {
+  setupLogging(program.opts<ProgramOpts>());
+  try {
+    fn();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
 
 configCmd
   .command("set <key> <value>")
-  .description("Set a configuration value (e.g., embedding.provider local)")
+  .description(
+    `Set a value in the user config file. Keys: ${CONFIG_KEY_NAMES.join(", ")}. API keys must be set with environment variables.`,
+  )
   .action((key: string, value: string) => {
-    if (key === "embedding.provider") {
-      if (value !== "local" && value !== "ollama" && value !== "openai") {
-        console.error("Invalid provider. Must be: local, ollama, or openai");
-        process.exit(1);
-      }
-      saveUserConfig({ embedding: { provider: value } });
-      console.log(`✓ Embedding provider set to: ${value}`);
-    } else if (key === "indexing.allowPrivateUrls") {
-      const bool = value === "true";
-      saveUserConfig({ indexing: { ...loadConfig().indexing, allowPrivateUrls: bool } });
-      console.log(`✓ indexing.allowPrivateUrls set to: ${bool}`);
-    } else if (key === "indexing.allowSelfSignedCerts") {
-      const bool = value === "true";
-      saveUserConfig({ indexing: { ...loadConfig().indexing, allowSelfSignedCerts: bool } });
-      console.log(`✓ indexing.allowSelfSignedCerts set to: ${bool}`);
-    } else {
-      console.error(`Unknown config key: ${key}`);
-      process.exit(1);
-    }
+    runConfigAction(() => {
+      const stored = setUserConfigValue(key, value);
+      console.log(`✓ ${key} set to: ${String(stored)}`);
+    });
+  });
+
+configCmd
+  .command("get <key>")
+  .description("Print the effective value of a config key (API keys are masked)")
+  .action((key: string) => {
+    runConfigAction(() => {
+      const value = getConfigValue(loadConfig(), key);
+      console.log(value === undefined ? "" : String(value));
+    });
+  });
+
+configCmd
+  .command("unset <key>")
+  .description("Remove a key from the user config file (the default or other layers apply)")
+  .action((key: string) => {
+    runConfigAction(() => {
+      const removed = unsetUserConfigValue(key);
+      console.log(removed ? `✓ ${key} removed` : `${key} is not set in ${getUserConfigPath()}`);
+    });
+  });
+
+configCmd
+  .command("path")
+  .description("Print the path of the user config file")
+  .action(() => {
+    console.log(getUserConfigPath());
   });
 
 configCmd
   .command("show")
-  .description("Show current configuration")
+  .description("Show the effective configuration (API keys are masked)")
   .action(() => {
-    const config = loadConfig();
-    console.log(JSON.stringify(config, null, 2));
+    runConfigAction(() => {
+      console.log(JSON.stringify(maskConfigSecrets(loadConfig()), null, 2));
+    });
   });
 
 interface ProgramOpts {
@@ -1596,16 +1632,19 @@ function initializeApp(): {
   config: ReturnType<typeof loadConfig>;
   db: ReturnType<typeof getDatabase>;
 } {
-  const config = loadConfig();
+  // Configure logging first so warnings emitted while loading config honour the CLI log level.
   const opts = program.opts<ProgramOpts>();
   setupLogging(opts);
+  const config = loadConfig();
 
   if (opts.workspace) {
     process.env["LIBSCOPE_WORKSPACE"] = opts.workspace;
   }
 
-  const workspace = getActiveWorkspace();
-  const dbPath = getWorkspacePath(workspace);
+  const dbPath = resolveDatabasePath({
+    explicitPath: config.database.path,
+    warn: (message) => console.error(`⚠ ${message}`),
+  });
   const db = getDatabase(dbPath);
   runMigrations(db);
   return { config, db };
@@ -1847,9 +1886,9 @@ statsCmd
   .command("overview", { isDefault: true })
   .description("Show overview dashboard")
   .action(() => {
-    const { config, db } = initializeApp();
+    const { db } = initializeApp();
     try {
-      const s = getStats(db, config.database.path);
+      const s = getStats(db);
       console.log("\n\u{1f4ca} Knowledge Base Overview\n");
       console.log(`  Documents:      ${s.totalDocuments}`);
       console.log(`  Chunks:         ${s.totalChunks}`);
@@ -2343,20 +2382,7 @@ connectCmd
   .option("--sync", "Incremental re-sync only")
   .option("--notebook <name>", "Sync a specific notebook")
   .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
-    const config = loadConfig();
-    setupLogging(program.opts<ProgramOpts>());
-
-    const workspace = program.opts().workspace as string | undefined;
-    if (workspace) {
-      process.env["LIBSCOPE_WORKSPACE"] = workspace;
-    }
-    const wsName = getActiveWorkspace();
-    const wsPath = getWorkspacePath(wsName);
-    const dbPath = join(wsPath, config.database.path);
-    const db = getDatabase(dbPath);
-    runMigrations(db);
-    const provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider.dimensions);
+    const { db, provider } = initializeAppWithEmbedding();
 
     try {
       const connConfig = loadConnectorConfig();
@@ -2422,18 +2448,7 @@ disconnectCmd
     ) {
       return;
     }
-    const config = loadConfig();
-    setupLogging(program.opts<ProgramOpts>());
-
-    const workspace2 = program.opts().workspace as string | undefined;
-    if (workspace2) {
-      process.env["LIBSCOPE_WORKSPACE"] = workspace2;
-    }
-    const wsName2 = getActiveWorkspace();
-    const wsPath = getWorkspacePath(wsName2);
-    const dbPath = join(wsPath, config.database.path);
-    const db = getDatabase(dbPath);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     try {
       const removed = disconnectOneNote(db);

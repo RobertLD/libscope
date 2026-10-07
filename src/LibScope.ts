@@ -2,11 +2,10 @@ import type Database from "better-sqlite3";
 import type { LibScopeConfig } from "./config.js";
 import type { EmbeddingProvider } from "./providers/embedding.js";
 import { loadConfig } from "./config.js";
-import { createDatabase } from "./db/connection.js";
+import { createDatabase, resolveDatabasePath } from "./db/connection.js";
 import { runMigrations, createVectorTable } from "./db/schema.js";
 import { createEmbeddingProvider } from "./providers/index.js";
 import { createLlmProvider } from "./core/rag.js";
-import { getWorkspacePath, DEFAULT_WORKSPACE } from "./core/workspace.js";
 import {
   indexDocument,
   indexFile,
@@ -31,8 +30,14 @@ import {
 } from "./core/batch-search.js";
 
 export interface LibScopeOptions {
-  /** Workspace name (default: "default"). */
+  /**
+   * Workspace whose database to open. Default: the active workspace (LIBSCOPE_WORKSPACE,
+   * `.libscope.json` `workspace`, or `libscope workspace use`), the same one the CLI and MCP server use.
+   * Ignored when `dbPath` or `database.path` is set.
+   */
   workspace?: string;
+  /** Explicit SQLite database file. Wins over `workspace` and over `database.path` in config files. */
+  dbPath?: string;
   /** Override config values. */
   config?: Partial<LibScopeConfig>;
 }
@@ -65,8 +70,10 @@ export class LibScope {
       logging: { ...baseConfig.logging, ...options?.config?.logging },
     };
 
-    const workspace = options?.workspace ?? DEFAULT_WORKSPACE;
-    const dbPath = config.database.path ?? getWorkspacePath(workspace);
+    const dbPath = resolveDatabasePath({
+      explicitPath: options?.dbPath ?? config.database.path,
+      workspace: options?.workspace,
+    });
 
     const db = createDatabase(dbPath);
     runMigrations(db);
@@ -114,7 +121,7 @@ export class LibScope {
 
   /** Get overview stats. */
   stats(): OverviewStats {
-    return getStats(this.db, this.config.database.path);
+    return getStats(this.db);
   }
 
   /** List documents. */

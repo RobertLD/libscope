@@ -3,17 +3,10 @@
  * Reads/writes the "registries" array in ~/.libscope/config.json.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { ConfigError, ValidationError } from "../errors.js";
+import { readRawUserConfig, writeRawUserConfig } from "../config.js";
+import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import type { RegistryEntry } from "./types.js";
-
-/** Path to the user config file. */
-function getUserConfigPath(): string {
-  return join(homedir(), ".libscope", "config.json");
-}
 
 /** Sanitize a URL for safe display in logs — masks any embedded credentials. */
 export function sanitizeUrl(url: string): string {
@@ -66,32 +59,9 @@ export function validateGitUrl(url: string): string {
   return normalized;
 }
 
-/** Read the raw config JSON from disk. */
-function readRawConfig(): Record<string, unknown> {
-  const configPath = getUserConfigPath();
-  if (!existsSync(configPath)) return {};
-  try {
-    const raw = readFileSync(configPath, "utf-8");
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch (err) {
-    throw new ConfigError("Failed to read config file", err);
-  }
-}
-
-/** Write the raw config JSON to disk, preserving all other keys. */
-function writeRawConfig(config: Record<string, unknown>): void {
-  const dir = join(homedir(), ".libscope");
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-  const configPath = getUserConfigPath();
-  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
-  chmodSync(configPath, 0o600);
-}
-
 /** Load all registry entries from config. */
 export function loadRegistries(): RegistryEntry[] {
-  const config = readRawConfig();
+  const config = readRawUserConfig();
   const registries = config["registries"];
   if (!Array.isArray(registries)) return [];
   return registries as RegistryEntry[];
@@ -99,9 +69,9 @@ export function loadRegistries(): RegistryEntry[] {
 
 /** Save registry entries to config (merges with existing config keys). */
 export function saveRegistries(registries: RegistryEntry[]): void {
-  const config = readRawConfig();
+  const config = readRawUserConfig();
   config["registries"] = registries;
-  writeRawConfig(config);
+  writeRawUserConfig(config);
 }
 
 /** Find a registry by name. Returns undefined if not found. */

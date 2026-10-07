@@ -67,7 +67,7 @@ libscope pack install ...  # re-install packs
 
 ### `401 Unauthorized` from API
 
-The REST API requires an `X-API-Key` header. Find your key: `libscope config show`
+When the server was started with `LIBSCOPE_API_KEY` set, every request must send `Authorization: Bearer <key>` with that value. `libscope config show` does not show this key.
 
 ### MCP tools not appearing in Claude / Cursor
 
@@ -138,16 +138,10 @@ OneNote uses device code auth which caches a refresh token. If the cache is miss
 
 ### `401 Unauthorized` from API
 
-The REST API requires an `X-API-Key` header for write operations. Retrieve your key:
+Authentication is on only when the server process has `LIBSCOPE_API_KEY` set. Then every request must send that value as a bearer token:
 
 ```bash
-libscope config show
-```
-
-Then include it in requests:
-
-```bash
-curl -H "X-API-Key: <your-key>" http://localhost:3378/api/v1/documents
+curl -H "Authorization: Bearer $LIBSCOPE_API_KEY" http://localhost:3378/api/v1/documents
 ```
 
 ### `429 Too Many Requests`
@@ -221,14 +215,14 @@ The default `import` command is sequential. `import-batch` processes files in pa
 The `ask` command requires an LLM provider. Configure one:
 
 ```bash
-# OpenAI
+# OpenAI (LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY)
 libscope config set llm.provider openai
 export LIBSCOPE_OPENAI_API_KEY=sk-...
 
 # Ollama (must be running locally)
 libscope config set llm.provider ollama
 
-# Anthropic
+# Anthropic (LIBSCOPE_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY)
 libscope config set llm.provider anthropic
 export LIBSCOPE_ANTHROPIC_API_KEY=sk-ant-...
 ```
