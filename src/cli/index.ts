@@ -11,6 +11,7 @@ import {
   getConfigValue,
 } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
+import { resolveDatabasePath } from "../db/connection.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument, indexFile } from "../core/indexing.js";
 import { getSupportedExtensions } from "../core/parsers/index.js";
@@ -58,7 +59,6 @@ import {
   listWorkspaces,
   getActiveWorkspace,
   setActiveWorkspace,
-  getWorkspacePath,
 } from "../core/workspace.js";
 import {
   installPack,
@@ -482,7 +482,7 @@ program
       } catch {
         console.log("  ℹ Vector table skipped (embedding provider not available)");
       }
-      console.log(`✓ Database initialized at ${config.database.path}`);
+      console.log(`✓ Database initialized at ${db.name}`);
     } finally {
       closeDatabase();
     }
@@ -1621,8 +1621,10 @@ function initializeApp(): {
     process.env["LIBSCOPE_WORKSPACE"] = opts.workspace;
   }
 
-  const workspace = getActiveWorkspace();
-  const dbPath = getWorkspacePath(workspace);
+  const dbPath = resolveDatabasePath({
+    explicitPath: config.database.path,
+    warn: (message) => console.error(`⚠ ${message}`),
+  });
   const db = getDatabase(dbPath);
   runMigrations(db);
   return { config, db };
@@ -1857,9 +1859,9 @@ statsCmd
   .command("overview", { isDefault: true })
   .description("Show overview dashboard")
   .action(() => {
-    const { config, db } = initializeApp();
+    const { db } = initializeApp();
     try {
-      const s = getStats(db, config.database.path);
+      const s = getStats(db);
       console.log("\n\u{1f4ca} Knowledge Base Overview\n");
       console.log(`  Documents:      ${s.totalDocuments}`);
       console.log(`  Chunks:         ${s.totalChunks}`);
@@ -2350,20 +2352,7 @@ connectCmd
   .option("--sync", "Incremental re-sync only")
   .option("--notebook <name>", "Sync a specific notebook")
   .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
-    setupLogging(program.opts<ProgramOpts>());
-    const config = loadConfig();
-
-    const workspace = program.opts().workspace as string | undefined;
-    if (workspace) {
-      process.env["LIBSCOPE_WORKSPACE"] = workspace;
-    }
-    const wsName = getActiveWorkspace();
-    const wsPath = getWorkspacePath(wsName);
-    const dbPath = join(wsPath, config.database.path);
-    const db = getDatabase(dbPath);
-    runMigrations(db);
-    const provider = createEmbeddingProvider(config);
-    createVectorTable(db, provider.dimensions);
+    const { db, provider } = initializeAppWithEmbedding();
 
     try {
       const connConfig = loadConnectorConfig();
@@ -2429,18 +2418,7 @@ disconnectCmd
     ) {
       return;
     }
-    setupLogging(program.opts<ProgramOpts>());
-    const config = loadConfig();
-
-    const workspace2 = program.opts().workspace as string | undefined;
-    if (workspace2) {
-      process.env["LIBSCOPE_WORKSPACE"] = workspace2;
-    }
-    const wsName2 = getActiveWorkspace();
-    const wsPath = getWorkspacePath(wsName2);
-    const dbPath = join(wsPath, config.database.path);
-    const db = getDatabase(dbPath);
-    runMigrations(db);
+    const { db } = initializeApp();
 
     try {
       const removed = disconnectOneNote(db);

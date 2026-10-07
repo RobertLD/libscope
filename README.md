@@ -356,9 +356,6 @@ API keys use one rule for embeddings and the LLM: `LIBSCOPE_<PROVIDER>_API_KEY`,
     "provider": "openai",
     "model": "gpt-4o-mini"
   },
-  "database": {
-    "path": "~/.libscope/libscope.db"
-  },
   "logging": {
     "level": "info"
   },
@@ -585,7 +582,7 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 
 ## How It Works
 
-LibScope stores everything in a local SQLite database (at `~/.libscope/libscope.db` by default):
+LibScope stores everything in a local SQLite database, one per workspace (`~/.libscope/workspaces/<workspace>/libscope.db`; the default workspace is `default`). Set `database.path` to use a specific file instead. The CLI, MCP server, REST API, and `LibScope.create()` all open the same file:
 
 - Documents are split into chunks by heading boundaries
 - Each chunk is embedded into a vector using the configured provider

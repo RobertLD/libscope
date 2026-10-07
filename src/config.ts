@@ -28,7 +28,11 @@ export interface LibScopeConfig {
     anthropicApiKey?: string;
   };
   database: {
-    path: string;
+    /**
+     * Explicit SQLite file. Unset by default: the active workspace's database
+     * (~/.libscope/workspaces/<name>/libscope.db) is used. A leading `~` is expanded.
+     */
+    path?: string;
   };
   indexing: {
     maxDocumentSize: number;
@@ -47,9 +51,7 @@ const DEFAULT_CONFIG: LibScopeConfig = {
     ollamaModel: "nomic-embed-text",
     openaiModel: "text-embedding-3-small",
   },
-  database: {
-    path: join(homedir(), ".libscope", "libscope.db"),
-  },
+  database: {},
   indexing: {
     maxDocumentSize: 100 * 1024 * 1024, // 100MB
     allowPrivateUrls: false,
@@ -59,6 +61,13 @@ const DEFAULT_CONFIG: LibScopeConfig = {
     level: "info",
   },
 };
+
+/** Expand a leading `~` (or `~/`) to the user's home directory. */
+export function expandHomeDir(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
+  return path;
+}
 
 function getConfigDir(): string {
   return join(homedir(), ".libscope");
@@ -356,6 +365,15 @@ export function invalidateConfigCache(): void {
   _configCacheAt = 0;
 }
 
+/** database.path only when a config file sets it (project wins over user), with `~` expanded. */
+function resolveDatabaseSection(
+  userConfig: ConfigLayer,
+  projectConfig: ConfigLayer,
+): LibScopeConfig["database"] {
+  const path = projectConfig.database?.path ?? userConfig.database?.path;
+  return path ? { path: expandHomeDir(path) } : {};
+}
+
 /** Load config with precedence: env > project > user > defaults. Result is cached for 30 s. */
 export function loadConfig(): LibScopeConfig {
   const now = Date.now();
@@ -391,11 +409,7 @@ export function loadConfig(): LibScopeConfig {
       ...projectConfig.llm,
       ...envOverrides.llm,
     },
-    database: {
-      ...DEFAULT_CONFIG.database,
-      ...userConfig.database,
-      ...projectConfig.database,
-    },
+    database: resolveDatabaseSection(userConfig, projectConfig),
     indexing: {
       ...DEFAULT_CONFIG.indexing,
       ...userConfig.indexing,
@@ -441,8 +455,9 @@ function validateProviderConfig(config: LibScopeConfig, warnings: string[]): voi
   }
 }
 
-/** Check that the database directory is writable or can be created. */
+/** Check that an explicit database directory is writable or can be created. */
 function validateDatabasePath(config: LibScopeConfig, warnings: string[]): void {
+  if (!config.database.path) return; // workspace default — created on demand
   const dbDir = dirname(config.database.path);
   try {
     if (existsSync(dbDir)) {

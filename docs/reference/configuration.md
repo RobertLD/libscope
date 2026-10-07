@@ -35,9 +35,9 @@ Complete reference for all configuration options.
 
 ### Database
 
-| Key             | Type   | Default                     | Description                 |
-| --------------- | ------ | --------------------------- | --------------------------- |
-| `database.path` | string | `"~/.libscope/libscope.db"` | Path to the SQLite database |
+| Key             | Type   | Default                                              | Description                                                    |
+| --------------- | ------ | ---------------------------------------------------- | -------------------------------------------------------------- |
+| `database.path` | string | unset (`~/.libscope/workspaces/<workspace>/libscope.db`) | SQLite file to use instead of the workspace database. `~` is expanded |
 
 ### Logging
 
@@ -105,7 +105,8 @@ libscope config set llm.provider openai            # openai | ollama | anthropic
 libscope config set llm.model gpt-4o-mini
 
 # Database
-libscope config set database.path /custom/path/libscope.db
+libscope config set database.path ~/kb/libscope.db   # overrides the workspace database
+libscope config unset database.path                   # back to the workspace database
 
 # Logging
 libscope config set logging.level debug            # debug | info | warn | error | silent
@@ -154,9 +155,6 @@ libscope config set indexing.allowSelfSignedCerts true
   "llm": {
     "provider": "openai",
     "model": "gpt-4o-mini"
-  },
-  "database": {
-    "path": "~/.libscope/libscope.db"
   },
   "logging": {
     "level": "info"

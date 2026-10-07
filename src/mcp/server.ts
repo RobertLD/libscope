@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { getDatabase, runMigrations, createVectorTable } from "../db/index.js";
-import { getActiveWorkspace, getWorkspacePath } from "../core/workspace.js";
+import { resolveDatabasePath } from "../db/connection.js";
 import { createEmbeddingProvider } from "../providers/index.js";
 import { searchDocuments, getRelatedChunks } from "../core/search.js";
 import {
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
 
   let db;
   try {
-    db = getDatabase(getWorkspacePath(getActiveWorkspace()));
+    db = getDatabase(resolveDatabasePath({ explicitPath: config.database.path }));
     runMigrations(db);
   } catch (err) {
     console.error("Failed to initialize database:", err instanceof Error ? err.message : err);

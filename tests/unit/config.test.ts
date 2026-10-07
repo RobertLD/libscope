@@ -21,7 +21,7 @@ describe("config", () => {
 
     expect(config.embedding.provider).toBe("local");
     expect(config.logging.level).toBe("info");
-    expect(config.database.path).toContain("libscope.db");
+    // database.path defaults are covered with a temp HOME in db-location.test.ts
   });
 
   it("should return cached config on repeated calls", () => {

@@ -39,16 +39,24 @@ Example `~/.libscope/config.json`:
     "provider": "openai",
     "model": "gpt-4o-mini"
   },
-  "database": {
-    "path": "~/.libscope/libscope.db"
-  },
   "logging": {
     "level": "info"
   }
 }
 ```
 
-You can also create a `.libscope.json` in your project root for per-project settings. This is useful if different projects use different embedding providers or databases.
+You can also create a `.libscope.json` in your project root for per-project settings. This is useful if different projects use different embedding providers or databases. In `.libscope.json`, set `"workspace": "<name>"` to use a workspace, or `database.path` to use a specific file.
+
+## Database Location
+
+By default the database is the active workspace's file: `~/.libscope/workspaces/<workspace>/libscope.db` (workspace `default` unless you choose another). The CLI, MCP server, REST API, and `LibScope.create()` use the same rule:
+
+1. `database.path`, if set in `.libscope.json` or `~/.libscope/config.json` (or `dbPath` passed to `LibScope.create()`). A leading `~` is expanded.
+2. Otherwise the workspace: `--workspace` / `LibScope.create({ workspace })`, then `LIBSCOPE_WORKSPACE`, then `"workspace"` in `.libscope.json`, then `libscope workspace use`, then `default`.
+
+`libscope init` and `libscope stats` show the file in use.
+
+Earlier versions of the SDK stored data in `~/.libscope/libscope.db`. If that file exists and the workspace database does not, LibScope prints a warning once. To keep using the old file, run `libscope config set database.path ~/.libscope/libscope.db`. LibScope does not move or delete it.
 
 ## Embedding Providers
 
