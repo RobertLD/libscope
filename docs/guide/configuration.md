@@ -57,7 +57,7 @@ By default the database is the active workspace's file: `~/.libscope/workspaces/
 1. `database.path`, if set in `.libscope.json` or `~/.libscope/config.json` (or `dbPath` passed to `LibScope.create()`). A leading `~` is expanded.
 2. Otherwise the workspace: `--workspace` / `LibScope.create({ workspace })`, then `LIBSCOPE_WORKSPACE`, then `"workspace"` in `.libscope.json`, then `libscope workspace use`, then `default`.
 
-`libscope init` and `libscope stats` show the file in use.
+`libscope doctor` shows the workspace and the database file in use.
 
 Earlier versions of the SDK stored data in `~/.libscope/libscope.db`. If that file exists and the workspace database does not, LibScope prints a warning once. To keep using the old file, run `libscope config set database.path ~/.libscope/libscope.db`. LibScope does not move or delete it.
 
@@ -89,14 +89,14 @@ libscope config set openai.apiKey sk-...                  # or export OPENAI_API
 LibScope records the provider, model, and vector size that built the vector index. If you change the provider, the model, or `embedding.dimensions` after you index documents, LibScope stops with an error that names the old and the new model. To rebuild the vector index with the new model, run:
 
 ```bash
-libscope reindex --rebuild
+libscope admin reindex --rebuild
 ```
 
-LibScope knows the vector size of common models (for example `nomic-embed-text`, `mxbai-embed-large`, `all-minilm`, `text-embedding-3-small`, and `text-embedding-3-large`). For a different Ollama or OpenAI model, set `embedding.dimensions` to the vector size of the model. If you do not set it, `libscope reindex --rebuild` embeds one probe text to find the size. For `text-embedding-3-*` models, `embedding.dimensions` also asks OpenAI for shorter vectors.
+LibScope knows the vector size of common models (for example `nomic-embed-text`, `mxbai-embed-large`, `all-minilm`, `text-embedding-3-small`, and `text-embedding-3-large`). For a different Ollama or OpenAI model, set `embedding.dimensions` to the vector size of the model. If you do not set it, `libscope admin reindex --rebuild` embeds one probe text to find the size. For `text-embedding-3-*` models, `embedding.dimensions` also asks OpenAI for shorter vectors.
 
 ## LLM Configuration
 
-The `ask` command and the `ask-question` MCP tool use an LLM to write answers from search results (RAG).
+The `ask` command, the `ask` MCP tool and `POST /api/v1/ask` use an LLM to write answers from search results (RAG).
 
 `llm.provider` is `auto` by default. LibScope selects the LLM when `ask` runs, without network calls:
 
@@ -128,7 +128,7 @@ export LIBSCOPE_ANTHROPIC_API_KEY=sk-ant-...   # or: libscope config set anthrop
 
 With `llm.provider` set to `auto`, this key alone selects Anthropic (when no OpenAI key is set). You can set `llm.model` to choose a specific Claude model.
 
-The `passthrough` provider does not call an LLM. The MCP `ask-question` tool then returns the retrieved context, and the calling assistant writes the answer.
+The `passthrough` provider does not call an LLM. `ask` then returns the retrieved context, and the caller (for example the assistant that called the MCP `ask` tool) writes the answer. `libscope doctor` shows which LLM `ask` will use.
 
 ## API keys
 
@@ -142,34 +142,18 @@ The OpenAI key is used for OpenAI embeddings and the OpenAI LLM. LibScope ignore
 
 ## Environment Variables
 
-| Variable                                          | Config key                                          | Default                  |
-| ------------------------------------------------- | --------------------------------------------------- | ------------------------ |
-| `LIBSCOPE_EMBEDDING_PROVIDER`                     | `embedding.provider`                                | `local`                  |
-| `LIBSCOPE_EMBEDDING_MODEL`                        | `embedding.model`                                   | provider default         |
-| `LIBSCOPE_EMBEDDING_URL`                          | `embedding.url`                                     | `http://localhost:11434` |
-| `LIBSCOPE_EMBEDDING_DIMENSIONS`                   | `embedding.dimensions`                              | size of the model        |
-| `LIBSCOPE_LLM_PROVIDER`                           | `llm.provider`                                      | `auto`                   |
-| `LIBSCOPE_LLM_MODEL`                              | `llm.model`                                         | provider default         |
-| `LIBSCOPE_LLM_URL`                                | `llm.url`                                           | `embedding.url`          |
-| `LIBSCOPE_OPENAI_API_KEY`, `OPENAI_API_KEY`       | `openai.apiKey`                                     | —                        |
-| `LIBSCOPE_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY` | `anthropic.apiKey`                                  | —                        |
-| `LIBSCOPE_DATABASE_PATH`                          | `database.path`                                     | workspace database       |
-| `LIBSCOPE_LOGGING_LEVEL`                          | `logging.level`                                     | `info`                   |
-| `LIBSCOPE_INDEXING_MAX_DOCUMENT_SIZE`             | `indexing.maxDocumentSize`                          | `104857600`              |
-| `LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS`            | `indexing.allowPrivateUrls`                         | `false`                  |
-| `LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS`       | `indexing.allowSelfSignedCerts`                     | `false`                  |
-| `LIBSCOPE_WORKSPACE`                              | Active workspace for this shell                     | `default`                |
-| `LIBSCOPE_API_KEY`                                | REST API key (`Authorization: Bearer <key>`)        | —                        |
-| `LIBSCOPE_SECRET_KEY`                             | Encrypts stored webhook secrets                     | —                        |
-| `LIBSCOPE_VERBOSE`                                | `1` prints structured JSON logs (stderr) in the CLI | —                        |
-| `ONENOTE_CLIENT_ID`                               | Microsoft app registration client ID                | —                        |
-| `ONENOTE_TENANT_ID`                               | Microsoft tenant ID                                 | `common`                 |
-| `NOTION_TOKEN`                                    | Notion integration token                            | —                        |
-| `CONFLUENCE_URL`                                  | Confluence base URL                                 | —                        |
-| `CONFLUENCE_EMAIL`                                | Confluence user email                               | —                        |
-| `CONFLUENCE_TOKEN`                                | Confluence API token                                | —                        |
+Every config key has an environment variable `LIBSCOPE_<SECTION>_<FIELD>`, for example `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_LLM_MODEL` or `LIBSCOPE_MCP_TOOLSETS`. The API keys also accept `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. The [configuration reference](../reference/configuration.md#all-config-keys) lists every key with its variable and default.
 
-Environment variables take precedence over config files. LibScope does not load `.env` files; export the variables in your shell or MCP client config.
+These variables are not config keys:
+
+| Variable              | Description                                                |
+| --------------------- | ---------------------------------------------------------- |
+| `LIBSCOPE_WORKSPACE`  | Active workspace for this shell (default `default`)        |
+| `LIBSCOPE_API_KEY`    | REST API key; requests must send `Authorization: Bearer …` |
+| `LIBSCOPE_SECRET_KEY` | Encrypts stored webhook secrets                            |
+| `LIBSCOPE_VERBOSE`    | `1` prints structured JSON logs (stderr) in the CLI        |
+
+Environment variables take precedence over config files. LibScope does not load `.env` files; export the variables in your shell or MCP client config. Connector credentials are not read from environment variables: give them to `libscope connect` (see [Connectors](./connectors.md)).
 
 ## Workspaces
 

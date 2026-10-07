@@ -13,67 +13,66 @@ LibScope is an **AI-powered knowledge base with MCP (Model Context Protocol) int
 
 ## Quick Reference — Commands
 
-| Task                    | Command                 |
-| ----------------------- | ----------------------- |
-| Build                   | `npm run build`         |
-| Typecheck (no emit)     | `npm run typecheck`     |
-| Run all tests           | `npm test`              |
-| Run tests in watch mode | `npm run test:watch`    |
-| Run tests with coverage | `npm run test:coverage` |
-| Lint                    | `npm run lint`          |
-| Lint and auto-fix       | `npm run lint:fix`      |
-| Format check            | `npm run format:check`  |
-| Format and write        | `npm run format`        |
-| Start MCP server        | `npm run serve`         |
-| TypeScript watch        | `npm run dev`           |
+| Task                      | Command                             |
+| ------------------------- | ----------------------------------- |
+| Build                     | `npm run build`                     |
+| Typecheck (no emit)       | `npm run typecheck`                 |
+| Run all tests             | `npm test`                          |
+| Run tests in watch mode   | `npm run test:watch`                |
+| Run tests with coverage   | `npm run test:coverage`             |
+| Lint                      | `npm run lint`                      |
+| Lint and auto-fix         | `npm run lint:fix`                  |
+| Format check              | `npm run format:check`              |
+| Format and write          | `npm run format`                    |
+| Start MCP server          | `npm run serve`                     |
+| TypeScript watch          | `npm run dev`                       |
+| Regenerate reference docs | `npm run build && npm run docs:gen` |
+| Check reference docs      | `npm run docs:check`                |
 
 **Always run `npm run typecheck` and `npm test` before committing.**
 
 ## Architecture
 
+One operation layer, four thin surfaces. Every operation (add, search, ask, get-document, ...) is defined once in `src/core/operations/`: a name, a zod input schema (parameter names, defaults, validation, descriptions), annotations, an optional REST mapping (`http`) and a handler. The CLI, the MCP server, the REST API and the SDK are adapters: they parse input, call `runOperation()` (or `startOperationTask()` for long-running operations) and format the result.
+
 ```
 src/
-├── cli/index.ts          # CLI entry point (commander). All commands in one file.
-├── mcp/server.ts         # MCP server (stdio transport, @modelcontextprotocol/sdk)
+├── core/
+│   ├── operations/        # The operation layer: types.ts (defineOperation, runOperation,
+│   │                      #   startOperationTask, createOperationContext), schemas.ts (shared
+│   │                      #   input fields), one file per group, index.ts (OPERATIONS)
+│   ├── bootstrap.ts       # One startup for every surface: config, database, provider, vector table
+│   ├── ingest.ts          # Add inline content, files, directories, URLs, crawls, repositories
+│   ├── search.ts, rag.ts  # Hybrid search (vector + FTS5, RRF) and answer() for ask
+│   ├── tasks.ts           # In-memory background task registry (AbortSignal, progress)
+│   ├── overview.ts, document-view.ts, documents.ts, topics.ts, tags.ts, links.ts, packs.ts, ...
+│   └── parsers/           # File format parsers (markdown, pdf, docx, html, epub, pptx, csv, yaml, json)
+├── cli/
+│   ├── index.ts           # Commander program, global options, one error handler
+│   └── commands/          # One file per command group; each exports register(program)
+├── mcp/
+│   ├── server.ts          # createMcpServer(): tools generated from operations (core + admin toolsets)
+│   ├── format.ts          # Compact text output for tools
+│   └── main.ts            # Executable entry point (stdio)
 ├── api/
-│   ├── server.ts          #   HTTP server bootstrap (createServer, listen)
-│   ├── routes.ts          #   All REST route handlers in one function (~700 lines)
-│   ├── middleware.ts       #   Auth (checkApiKey), rate limiting, body parsing, sendError/sendJson
-│   └── openapi.ts         #   OpenAPI spec generation
-├── core/                 # Business logic — framework-agnostic, no side effects
-│   ├── indexing.ts        #   Document parsing, chunking by heading, embedding + storage
-│   ├── search.ts          #   Semantic (vector) + FTS5 + LIKE fallback search
-│   ├── ratings.ts         #   Rating storage, aggregation, correction suggestions
-│   ├── documents.ts       #   Document CRUD
-│   ├── topics.ts          #   Topic hierarchy management
-│   ├── bulk.ts            #   Bulk delete/move/retag operations with selector resolution
-│   ├── tags.ts            #   Tag CRUD and document–tag associations
-│   ├── dedup.ts           #   Content deduplication helpers
-│   ├── rag.ts             #   Retrieval-augmented generation (ask a question over the index)
-│   ├── url-fetcher.ts     #   Fetch URL → convert HTML to markdown-like text (SSRF-protected)
-│   └── index.ts           #   Public re-exports (barrel file)
-├── connectors/           # External-service sync connectors
-│   ├── obsidian.ts        #   Obsidian vault sync (reads .md files + YAML frontmatter)
-│   ├── confluence.ts      #   Confluence Cloud sync (REST API)
-│   ├── notion.ts          #   Notion sync (official API)
-│   ├── onenote.ts         #   OneNote sync (Microsoft Graph API)
-│   ├── slack.ts           #   Slack channel sync (Web API)
-│   ├── sync-tracker.ts    #   Tracks last-synced state per connector in SQLite
-│   ├── http-utils.ts      #   Authenticated fetch helper shared by connectors (respects allowSelfSignedCerts)
-│   └── index.ts           #   Re-exports
-├── db/
-│   ├── connection.ts      #   SQLite connection + sqlite-vec extension loading
-│   ├── schema.ts          #   Migrations (versioned) + vector table creation
-│   └── index.ts           #   Re-exports
-├── providers/
-│   ├── embedding.ts       #   EmbeddingProvider interface
-│   ├── local.ts           #   all-MiniLM-L6-v2 via @xenova/transformers (384 dims)
-│   ├── ollama.ts          #   Ollama API provider (768 dims default)
-│   ├── openai.ts          #   OpenAI text-embedding-3-small (1536 dims)
-│   └── index.ts           #   Factory function + re-exports
-├── config.ts              # 3-tier config: env > project .libscope.json > user ~/.libscope/config.json > defaults
-├── logger.ts              # pino structured logging wrapper
-└── errors.ts              # Custom error hierarchy
+│   ├── routes.ts          # API_ROUTES: one route per operation with `http`, plus /openapi.json and /health
+│   ├── openapi.ts         # buildOpenApiSpec() from the same routes
+│   ├── adapter.ts         # Request to operation input; response and error mapping
+│   ├── middleware.ts      # Auth, rate limiting, CORS, body parsing
+│   └── server.ts          # HTTP server
+├── web/                   # Dashboard server; dashboard.ts is one large template literal (do not edit)
+├── LibScope.ts            # SDK: LibScope.create(), add/search/ask/askStream/overview and namespaces
+│                          #   (docs, topics, tags, links, searches, packs, registries, connectors,
+│                          #   tasks, admin, analytics, webhooks) bound to operations
+├── lite/                  # libscope/lite: createLite() preset, tree-sitter code chunker, normalizeRawInput
+├── connectors/            # Notion, Slack, Confluence, Obsidian, OneNote, docs sites; registry.ts lists them
+├── registry/              # Git-backed pack registries
+├── db/                    # better-sqlite3 + sqlite-vec; schema.ts has the migrations (schema version 19)
+├── providers/             # Embedding providers: local (384 dims), ollama, openai
+├── config-schema.ts       # One zod schema: keys, defaults, env var names, docs table
+├── config.ts              # loadConfig(), secrets.json, config set/unset
+├── logger.ts              # pino
+└── errors.ts              # Error hierarchy
 ```
 
 ## Critical Conventions
@@ -109,15 +108,18 @@ All errors extend `LibScopeError` from `src/errors.ts`:
 LibScopeError (base)
 ├── DatabaseError
 ├── EmbeddingError
-├── ValidationError
+├── ValidationError     (REST 400)
+├── FetchError          (REST 502)
 ├── ConfigError
-├── DocumentNotFoundError
-└── ChunkNotFoundError
+└── NotFoundError       (REST 404; the code names the resource, e.g. LINK_NOT_FOUND)
+    ├── DocumentNotFoundError
+    ├── ChunkNotFoundError
+    └── TopicNotFoundError
 ```
 
 - Public functions should throw typed errors from this hierarchy, never raw `Error`.
-- MCP tool handlers catch errors and return structured error responses.
-- CLI shows user-friendly messages; `--verbose` enables full stack traces.
+- MCP tools return the error message with `isError: true`. REST answers `{ "error": { "code", "message" } }`.
+- The CLI prints `✗ <message>` and a next step; `--verbose` adds the stack trace.
 
 ### Logging
 
@@ -125,7 +127,7 @@ Uses **pino** for structured JSON logging via `src/logger.ts`.
 
 - Call `initLogger(level)` once at startup.
 - Use `getLogger()` everywhere else to obtain the singleton.
-- Default level: `info` for CLI, `warn` for MCP server (to avoid polluting stdio).
+- The CLI logs nothing by default (`--verbose` or `--log-level` turns logs on). The MCP server logs at `logging.level` to stderr, so stdout carries only JSON-RPC.
 - Never use `console.log` in `src/core/`, `src/db/`, or `src/providers/`. Use the logger. (`console.log` is acceptable in `src/cli/` for user-facing output.)
 
 ### Database
@@ -141,7 +143,7 @@ Uses **pino** for structured JSON logging via `src/logger.ts`.
 1. Increment `SCHEMA_VERSION` at the top of `src/db/schema.ts`.
 2. Add a new key to the `MIGRATIONS` record with the SQL.
 3. The migration must insert its version into `schema_version`.
-4. Update the schema version assertion in `tests/unit/schema.test.ts`.
+4. Update the tests that assert the schema version.
 
 ### Embedding Providers
 
@@ -158,11 +160,13 @@ interface EmbeddingProvider {
 
 The factory in `src/providers/index.ts` selects the provider based on config. Default is `local` (runs in-process, downloads model on first use).
 
-### Config Precedence
+### Configuration
 
-Environment variables > project `.libscope.json` > user `~/.libscope/config.json` > hardcoded defaults.
+One zod schema (`src/config-schema.ts`) defines every key, its default, its validation and its environment variable (`LIBSCOPE_<SECTION>_<FIELD>`, for example `embedding.model` becomes `LIBSCOPE_EMBEDDING_MODEL`). The key table in `docs/reference/configuration.md` is generated from it.
 
-Env vars: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_OPENAI_API_KEY`, `LIBSCOPE_OLLAMA_URL`, `LIBSCOPE_ALLOW_PRIVATE_URLS`, `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS`.
+Precedence: environment variables > `~/.libscope/secrets.json` (API keys only) > project `.libscope.json` > user `~/.libscope/config.json` > defaults.
+
+Main env vars: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_EMBEDDING_MODEL`, `LIBSCOPE_EMBEDDING_URL`, `LIBSCOPE_LLM_PROVIDER`, `LIBSCOPE_LLM_MODEL`, `LIBSCOPE_LLM_URL`, `LIBSCOPE_OPENAI_API_KEY` (or `OPENAI_API_KEY`), `LIBSCOPE_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY`), `LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS`, `LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS`, `LIBSCOPE_MCP_TOOLSETS`. Not config keys: `LIBSCOPE_WORKSPACE`, `LIBSCOPE_API_KEY` (REST auth), `LIBSCOPE_SECRET_KEY`.
 
 ## Security Patterns
 
@@ -205,23 +209,6 @@ const response = await fetch(url, {
 process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";
 ```
 
-### SSE streaming — check backpressure
-
-`res.write()` returns `false` when the socket buffer is full or the client has disconnected. Ignoring the return value wastes compute and holds open connections indefinitely.
-
-```typescript
-// ✅ Correct
-for await (const event of stream) {
-  const ok = res.write(`data: ${JSON.stringify(event)}\n\n`);
-  if (!ok) break;
-}
-
-// ❌ Wrong — no backpressure handling
-for await (const event of stream) {
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
-}
-```
-
 ## Testing
 
 ### Framework
@@ -233,28 +220,20 @@ for await (const event of stream) {
 ```
 tests/
 ├── fixtures/
-│   ├── mock-provider.ts      # Deterministic 4D embedding provider (use in all unit tests)
-│   ├── test-db.ts             # In-memory SQLite with migrations (no sqlite-vec)
-│   ├── sample-api-docs.md     # Sample library documentation
-│   └── sample-topic-docs.md   # Sample topic documentation
-├── unit/                      # Fast, isolated, no I/O or network
-│   ├── chunking.test.ts
-│   ├── config.test.ts
-│   ├── documents.test.ts
-│   ├── errors.test.ts
-│   ├── ratings.test.ts
-│   ├── schema.test.ts
-│   └── topics.test.ts
-└── integration/
-    └── workflow.test.ts       # Full index → search → rate → query flow
+│   ├── mock-provider.ts       # Deterministic 4D embedding provider (use in all unit tests)
+│   ├── test-db.ts             # createTestDb(): in-memory SQLite with migrations; createTestDbWithVec()
+│   ├── helpers.ts             # insertDoc, insertChunk, seedTestDocument
+│   └── sample-*.md            # Sample documents
+├── unit/                      # Fast, isolated, no network (unit/operations/ tests the operations)
+└── integration/               # Real SQLite, full workflows (index, search, rate)
 ```
 
 ### Writing Tests
 
 - **Use `MockEmbeddingProvider`** from `tests/fixtures/mock-provider.ts` for all tests that need embeddings. It returns deterministic 4D vectors — no model download, no network.
 - **Use `createTestDb()`** from `tests/fixtures/test-db.ts` for an in-memory SQLite instance with all migrations applied.
-- **sqlite-vec is NOT available in tests.** The test DB is plain SQLite. Vector search tests exercise the FTS5/LIKE fallback path. This is by design.
-- **Coverage thresholds** (enforced in `vitest.config.ts`): statements ≥ 75%, branches ≥ 74%, functions ≥ 75%, lines ≥ 75%. CLI code (`src/cli/`) is excluded from coverage.
+- **`createTestDb()` does not load sqlite-vec.** Vector search tests use `createTestDbWithVec()` or exercise the FTS5/keyword path.
+- **Coverage thresholds** (enforced in `vitest.config.ts`): statements ≥ 75%, branches ≥ 74%, functions ≥ 75%, lines ≥ 75%. `src/cli/`, `src/mcp/main.ts` and the network embedding providers are excluded from coverage.
 - **Always run `npm run test:coverage`** (not just `npm test`) before pushing. CI runs `test:coverage`, which fails if any threshold is missed. `npm test` alone does NOT check coverage.
 - When adding new source files, ensure adequate test coverage so global thresholds are not violated. New files with many uncovered branches will drag the overall percentage down.
 - Tests should be fast (< 1 second total), deterministic, and not depend on ordering.
@@ -276,25 +255,23 @@ SQLite `datetime('now')` has **second-level precision**. If you insert multiple 
 
 ## CI/CD
 
-Three GitHub Actions workflows in `.github/workflows/`:
+Workflows in `.github/workflows/`:
 
-| Workflow      | Trigger       | What it does                                        |
-| ------------- | ------------- | --------------------------------------------------- |
-| `ci.yml`      | Push & PR     | Lint, typecheck, test (Node 18/20/22 matrix), build |
-| `release.yml` | Tags `v*.*.*` | Full CI then `npm publish --provenance`             |
-| `codeql.yml`  | Weekly + PR   | CodeQL security scanning                            |
+| Workflow                       | What it does                                                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`                       | Lint, format check, typecheck, `test:coverage` (Node 20 and 22), build, `docs:check` (the generated reference docs must be current) |
+| `codeql.yml`                   | CodeQL security scanning                                                                                                            |
+| `release-please.yml`           | Release PRs and the changelog                                                                                                       |
+| `docker.yml`                   | Docker image                                                                                                                        |
+| `sdk-python.yml`, `sdk-go.yml` | Python and Go client SDKs                                                                                                           |
+| `release-python.yml`           | Python SDK release                                                                                                                  |
 
-## MCP Server
+## Surfaces
 
-The MCP server (`src/mcp/server.ts`) uses **stdio transport** and exposes 5 tools:
-
-1. `search-docs` — Semantic search with optional topic/library/version/rating filters
-2. `get-document` — Retrieve a document by ID
-3. `rate-document` — Rate a document or suggest corrections
-4. `submit-document` — Submit a new document for indexing
-5. `list-topics` — List available topics
-
-To test the MCP server locally: `npm run build && npm run serve`
+- **MCP** (`src/mcp/server.ts`): 11 core tools (`search`, `ask`, `get-document`, `list-documents`, `overview`, `submit-document`, `update-document`, `delete-document`, `rate-document`, `link-documents`, `task`). `ask` is registered only with passthrough or a configured LLM. The admin toolset (`mcp.toolsets` or `LIBSCOPE_MCP_TOOLSETS=admin`) adds `sync`, `install-pack`, `list-packs` and `reindex-documents`. See `docs/reference/mcp-tools.md`. Test locally: `npm run build && npm run serve`.
+- **CLI** (`src/cli/commands/*`): see `docs/reference/cli.md` or `libscope --help`.
+- **REST** (`src/api/routes.ts`): every route under `/api/v1` comes from an operation's `http` mapping. Long-running operations answer `202` with a task ID. See `docs/reference/rest-api.md`.
+- **SDK** (`src/LibScope.ts`): methods call the same operations. The package root exports only the class, its types, the provider interfaces and the errors.
 
 ## Parallel Agent Work — Git Worktrees
 
@@ -367,9 +344,9 @@ Every PR must follow this complete lifecycle. **Do not consider a PR done until 
 
 ## Adding a New Feature — Checklist
 
-1. Add business logic in `src/core/` (no framework dependencies).
+1. Add business logic in `src/core/` (no surface dependencies).
 2. If it needs new DB tables/columns, add a migration in `src/db/schema.ts`.
-3. Expose via MCP tool in `src/mcp/server.ts` and/or CLI command in `src/cli/index.ts`.
+3. Add or extend an operation in `src/core/operations/` (an input schema with `.describe()` on every field, defaults only in the schema, an `http` mapping for REST). The REST route and the OpenAPI entry follow from it. Add it to an SDK namespace in `src/LibScope.ts`, a CLI command in `src/cli/commands/`, and, only if assistants need it, an MCP tool in `src/mcp/server.ts`.
 4. Write unit tests in `tests/unit/` using `MockEmbeddingProvider` and `createTestDb()`.
 5. Add integration coverage in `tests/integration/workflow.test.ts` if it's a core flow.
 6. Run `npm run typecheck && npm run test:coverage && npm run lint` — all must pass. **Use `test:coverage`, not `test`** — CI enforces coverage thresholds and will fail if new code drops coverage below the configured minimums (see `vitest.config.ts` thresholds).
@@ -380,21 +357,17 @@ Every PR must follow this complete lifecycle. **Do not consider a PR done until 
 
 ## Documentation
 
-Every user-facing change **must** update all relevant documentation. Documentation lives in multiple places — check each one:
+Every user-facing change **must** update the documentation. The CLI, MCP tool, config key and REST route tables in `docs/reference/` are generated from the code: run `npm run build && npm run docs:gen` and commit the result. CI runs `npm run docs:check`, which fails when a generated block is out of date.
 
-| Location                          | What it covers                                                     |
-| --------------------------------- | ------------------------------------------------------------------ |
-| `README.md`                       | Top-level overview, quickstart, config tables, CLI summary         |
-| `docs/guide/getting-started.md`   | First-run walkthrough                                              |
-| `docs/guide/configuration.md`     | Config guide with env var table and examples                       |
-| `docs/reference/cli.md`           | Full CLI command reference                                         |
-| `docs/reference/configuration.md` | Complete config key reference, env vars, example config            |
-| `agents.md`                       | Agent/Copilot guide — architecture, conventions, config precedence |
+| Location                          | What it covers                                                               |
+| --------------------------------- | ---------------------------------------------------------------------------- |
+| `README.md`                       | Pitch and quick start (CLI, MCP, SDK); links to the docs site                |
+| `docs/guide/*.md`                 | Guides (getting started, configuration, connectors, programmatic usage, ...) |
+| `docs/reference/cli.md`           | CLI reference (generated option tables, hand-written examples)               |
+| `docs/reference/mcp-tools.md`     | MCP tools (generated)                                                        |
+| `docs/reference/rest-api.md`      | REST routes (generated) and conventions                                      |
+| `docs/reference/configuration.md` | Config keys (generated), config files, other env vars                        |
+| `docs/migration-v2.md`            | Every name removed or renamed in 2.0                                         |
+| `agents.md`, `CLAUDE.md`          | Agent guides: architecture, conventions                                      |
 
-**What to update for common change types:**
-
-- **New config key:** `src/config.ts` (interface + defaults + env override) → `README.md` (env var table, example config) → `docs/guide/configuration.md` (env var table) → `docs/reference/configuration.md` (config keys table, env vars table, example config) → `agents.md` (config precedence env var list)
-- **New CLI command:** `src/cli/index.ts` → `README.md` (CLI table) → `docs/reference/cli.md` (command reference)
-- **New MCP tool:** `src/mcp/server.ts` → `README.md` (MCP tools list) → `agents.md` (MCP Server section)
-- **New connector:** `src/connectors/` → `README.md` (connectors section) → `docs/guide/` (new guide page) → `docs/reference/cli.md` (sync/disconnect commands)
-- **New env var:** All env var tables: `README.md`, `docs/guide/configuration.md`, `docs/reference/configuration.md`
+Do not edit `CHANGELOG.md` or `docs/changelog.md`; release-please writes them.

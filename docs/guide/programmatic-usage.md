@@ -111,34 +111,47 @@ for await (const event of scope.askStream("How does OAuth2 work?")) {
 
 The other operations are grouped in namespaces. Each method takes one input object and returns a promise. The input type is the operation's schema input, so your editor shows each field and its description.
 
-| Method                                                                                                                                          | Operation                            |
-| ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `scope.overview()`                                                                                                                              | Counts, topics, packs, index, health |
-| `docs.get({ documentId, offset?, maxLength? })`                                                                                                 | Document with tags, links, ratings   |
-| `docs.list({ topic?, library?, version?, sourceType?, tags?, limit?, offset? })`                                                                | List documents                       |
-| `docs.update({ documentId, title?, content?, library?, version?, url?, topic?, tags? })`                                                        | Update a document                    |
-| `docs.delete({ documentId })`                                                                                                                   | Delete a document                    |
-| `docs.rate({ documentId, rating, chunkId?, feedback?, suggestedCorrection? })`                                                                  | Rate a document                      |
-| `docs.history({ documentId })`, `docs.rollback({ documentId, version })`                                                                        | Saved versions                       |
-| `topics.list()`, `topics.create({ name })`, `topics.delete({ topic })`                                                                          | Topics                               |
-| `tags.add`, `tags.remove` (`{ documentId, tags }`), `tags.list()`, `tags.suggest({ documentId })`                                               | Tags                                 |
-| `links.create({ documentId, targetDocumentId, linkType })`, `links.delete({ linkId })`, `links.list()`, `links.prerequisites({ documentId })`   | Document links                       |
-| `searches.save`, `searches.list`, `searches.run`, `searches.delete`                                                                             | Saved searches                       |
-| `packs.install`, `packs.remove`, `packs.list`, `packs.create`                                                                                   | Knowledge packs                      |
-| `connectors.list()`, `connectors.sync({ name } \| { all: true })`, `connectors.disconnect({ name })`                                            | Saved connections                    |
-| `tasks.get`, `tasks.cancel`, `tasks.list`                                                                                                       | Background tasks                     |
-| `admin.reindex`, `admin.dedupe`, `admin.backup`, `admin.restore`, `admin.pruneExpired`, `admin.bulkDelete`, `admin.bulkRetag`, `admin.bulkMove` | Maintenance                          |
-| `analytics.popular`, `analytics.stale`, `analytics.topQueries`, `analytics.searches`                                                            | Search analytics                     |
-| `webhooks.create`, `webhooks.list`, `webhooks.delete`, `webhooks.test`                                                                          | Webhooks                             |
+| Method                                                                                                                                                                                                                                                                                       | Operation                            |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `scope.overview()`                                                                                                                                                                                                                                                                           | Counts, topics, packs, index, health |
+| `docs.get({ documentId, offset?, maxLength? })`                                                                                                                                                                                                                                              | Document with tags, links, ratings   |
+| `docs.list({ topic?, library?, version?, sourceType?, tags?, limit?, offset? })`                                                                                                                                                                                                             | List documents                       |
+| `docs.update({ documentId, title?, content?, library?, version?, url?, topic?, tags? })`                                                                                                                                                                                                     | Update a document                    |
+| `docs.delete({ documentId })`                                                                                                                                                                                                                                                                | Delete a document                    |
+| `docs.rate({ documentId, rating, chunkId?, feedback?, suggestedCorrection? })`                                                                                                                                                                                                               | Rate a document                      |
+| `docs.history({ documentId })`, `docs.rollback({ documentId, version })`                                                                                                                                                                                                                     | Saved versions                       |
+| `topics.list({ parent? })`, `topics.create({ name, description?, parent? })`, `topics.delete({ topic, deleteDocuments? })`                                                                                                                                                                   | Topics                               |
+| `tags.add`, `tags.remove` (`{ documentId, tags }`), `tags.list()`, `tags.suggest({ documentId })`                                                                                                                                                                                            | Tags                                 |
+| `links.create({ documentId, targetDocumentId, linkType, label? })`, `links.delete({ linkId })`, `links.list({ documentId?, linkType? })`, `links.prerequisites({ documentId })`                                                                                                              | Document links                       |
+| `links.graph({ topic?, tag?, threshold?, maxNodes? })`                                                                                                                                                                                                                                       | Knowledge graph (nodes and edges)    |
+| `searches.save`, `searches.list`, `searches.run`, `searches.delete`                                                                                                                                                                                                                          | Saved searches                       |
+| `packs.install({ pack, registry? })`, `packs.remove({ pack })`, `packs.list({ available?, registry? })`, `packs.create({ name, ... })`                                                                                                                                                       | Knowledge packs                      |
+| `registries.list()`, `registries.add({ url, name? })`, `registries.remove({ name })`, `registries.sync({ name? })`, `registries.search({ query, registry? })`, `registries.create({ path })`, `registries.publish({ file, registry, version? })`, `registries.unpublish({ pack, registry })` | Git pack registries                  |
+| `connectors.list()`, `connectors.sync({ name } \| { all: true })`, `connectors.disconnect({ name })`                                                                                                                                                                                         | Saved connections                    |
+| `tasks.get`, `tasks.cancel`, `tasks.list`                                                                                                                                                                                                                                                    | Background tasks                     |
+| `admin.reindex`, `admin.dedupe`, `admin.backup`, `admin.restore`, `admin.pruneExpired`, `admin.bulkDelete`, `admin.bulkRetag`, `admin.bulkMove`                                                                                                                                              | Maintenance                          |
+| `analytics.popular`, `analytics.stale`, `analytics.topQueries`, `analytics.searches`                                                                                                                                                                                                         | Search analytics                     |
+| `webhooks.create`, `webhooks.list`, `webhooks.delete`, `webhooks.test`                                                                                                                                                                                                                       | Webhooks                             |
 
 ```ts
 const doc = await scope.docs.get({ documentId: "doc-id" });
 await scope.tags.add({ documentId: "doc-id", tags: ["reviewed"] });
 await scope.docs.update({ documentId: "doc-id", topic: "security" });
 const { stats } = await scope.overview();
+
+// Knowledge graph of one topic
+const graph = await scope.links.graph({ topic: "security", maxNodes: 100 });
+console.log(graph.nodes.length, graph.edges.length);
+
+// Git pack registries
+await scope.registries.add({ url: "https://github.com/org/packs.git", name: "team" });
+const found = await scope.registries.search({ query: "react" });
+await scope.packs.install({ pack: "react-docs", registry: "team" });
 ```
 
-Long-running methods (`add`, `admin.reindex`, `packs.install`, `connectors.sync`) take a second argument with an `AbortSignal` and a progress callback:
+See [Pack Registries](/guide/pack-registries) for the registry layout and publishing.
+
+Every method except `askStream` takes an optional second argument with an `AbortSignal` and a progress callback. The long-running methods (`add`, `admin.reindex`, `admin.dedupe`, `packs.install`, `connectors.sync`) report progress:
 
 ```ts
 const controller = new AbortController();

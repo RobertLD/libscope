@@ -51,7 +51,7 @@ The **Topics** panel shows your topic hierarchy. Clicking a topic filters the do
 Navigate to `/graph` (e.g. `http://localhost:3377/graph`) to view an interactive visualization of your knowledge base:
 
 - **Nodes** represent documents
-- **Edges** represent cross-reference links (`link-documents`, `libscope link`)
+- **Edges** represent cross-reference links (`libscope docs link`, the `link-documents` MCP tool, `POST /api/v1/documents/:documentId/links`)
 - **Clusters** are automatically detected and color-coded by topic
 - Hover a node to see the document title; click to open it in the document browser
 

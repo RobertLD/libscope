@@ -8,44 +8,56 @@ Thanks for your interest in contributing! Here's how to get started.
 git clone https://github.com/RobertLD/libscope.git
 cd libscope
 npm install
-npm run build && node dist/cli/index.js init
+npm run build && node dist/cli/index.js doctor --fix
 npm run dev  # TypeScript watch mode
 ```
 
 ## Scripts
 
-| Command                 | Description                   |
-| ----------------------- | ----------------------------- |
-| `npm run build`         | Compile TypeScript to `dist/` |
-| `npm run dev`           | Watch mode compilation        |
-| `npm run lint`          | Run ESLint                    |
-| `npm run lint:fix`      | ESLint with auto-fix          |
-| `npm run format`        | Format with Prettier          |
-| `npm run format:check`  | Check formatting              |
-| `npm run typecheck`     | Type-check without emitting   |
-| `npm test`              | Run tests                     |
-| `npm run test:watch`    | Tests in watch mode           |
-| `npm run test:coverage` | Tests with coverage report    |
+| Command                 | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `npm run build`         | Compile TypeScript to `dist/`                                           |
+| `npm run dev`           | Watch mode compilation                                                  |
+| `npm run lint`          | Run ESLint                                                              |
+| `npm run lint:fix`      | ESLint with auto-fix                                                    |
+| `npm run format`        | Format with Prettier                                                    |
+| `npm run format:check`  | Check formatting                                                        |
+| `npm run typecheck`     | Type-check without emitting                                             |
+| `npm test`              | Run tests                                                               |
+| `npm run test:watch`    | Tests in watch mode                                                     |
+| `npm run test:coverage` | Tests with coverage report                                              |
+| `npm run docs:gen`      | Update the generated blocks in `docs/reference` (after `npm run build`) |
+| `npm run docs:check`    | Fail when a generated block is out of date (runs in CI)                 |
+| `npm run docs:dev`      | Docs site dev server (VitePress)                                        |
+| `npm run docs:build`    | Build the docs site                                                     |
 
 ## Project Structure
 
 ```
 src/
-├── core/        # Business logic (indexing, search, ratings, topics, documents)
-├── db/          # SQLite schema, migrations, connection management
+├── core/
+│   ├── operations/  # The operation layer: every command, tool, route and SDK method calls one
+│   ├── parsers/     # File format parsers
+│   └── ...          # Business logic (ingest, indexing, search, rag, documents, tasks, ...)
+├── cli/         # CLI: index.ts and one file per command group in commands/
+├── mcp/         # MCP server: tools generated from operations
+├── api/         # REST API: routes generated from operations, OpenAPI
+├── web/         # Web dashboard
+├── lite/        # libscope/lite: createLite(), code chunker, normalizeRawInput()
+├── db/          # SQLite schema, migrations, connection
 ├── providers/   # Embedding providers (local, Ollama, OpenAI)
-├── mcp/         # MCP server and tool definitions
-├── cli/         # CLI entry point and commands
-├── api/         # REST API server and routes
-├── web/         # Web dashboard and knowledge graph
-├── connectors/  # Third-party syncs (Obsidian, Notion, Confluence, Slack, OneNote)
-├── registry/    # Git-backed pack registry system
-├── config.ts    # Configuration management
+├── connectors/  # Notion, Slack, Confluence, Obsidian, OneNote, doc sites
+├── registry/    # Git pack registries
+├── config-schema.ts  # Config schema (keys, defaults, env vars)
+├── config.ts    # Config loading
+├── LibScope.ts  # Node.js SDK class
 ├── logger.ts    # Structured logging (pino)
-└── errors.ts    # Custom error hierarchy
+└── errors.ts    # Error hierarchy
+scripts/
+└── gen-docs.mjs # Fills the generated blocks of docs/reference
 tests/
 ├── unit/        # Fast isolated tests with mocked dependencies
-├── integration/ # Tests with real SQLite DB
+├── integration/ # Tests with a real SQLite database
 └── fixtures/    # Test helpers, mock providers, sample data
 ```
 
@@ -53,15 +65,17 @@ For a full module-by-module breakdown and data flow diagrams, see the [Architect
 
 ## Design Principles
 
-**Entry points are thin.** The CLI, MCP server, and REST API are adapters. They parse input and format output. All business logic lives in `src/core/`.
+**Operations first.** New functionality is an operation in `src/core/operations/` (a zod input schema and a handler). The CLI, MCP server, REST API and SDK are thin adapters over the operations: they parse input and format output. Business logic lives in `src/core/`. See [How to Add an Operation](/guide/architecture#how-to-add-an-operation).
 
-**Errors are typed.** Use the appropriate `LibScopeError` subclass (`DatabaseError`, `ValidationError`, `FetchError`, etc.) rather than throwing plain `Error`. MCP tool handlers must be wrapped with `withErrorHandling()` from `src/mcp/errors.ts`.
+**Errors are typed.** Use the appropriate `LibScopeError` subclass (`DatabaseError`, `ValidationError`, `FetchError`, etc.) rather than throwing plain `Error`. Each surface maps errors in one place (`src/cli/errors.ts`, `withErrorHandling()` in `src/mcp/errors.ts`, `describeError()` in `src/api/adapter.ts`).
 
 **Core modules are testable.** They accept `db` and `provider` as parameters — never import them directly inside a function. This makes it easy to swap in `createTestDb()` and `MockEmbeddingProvider` in tests.
 
 **Migrations are additive.** Never modify an existing migration. Add a new entry in `MIGRATIONS` and increment `SCHEMA_VERSION` in `src/db/schema.ts`.
 
 **No `any`.** Use `unknown` and narrow with type guards. The ESLint rule `no-explicit-any: "error"` is enforced.
+
+**Generated references.** The CLI, MCP tool, configuration and REST references are partly generated from the code. After you change a command, tool, config key or route, run `npm run build && npm run docs:gen` and commit the result.
 
 ## Making Changes
 
@@ -70,7 +84,8 @@ For a full module-by-module breakdown and data flow diagrams, see the [Architect
 3. **Add tests** for new functionality
 4. **Run the full check suite:**
    ```bash
-   npm run lint && npm run typecheck && npm test
+   npm run format:check && npm run lint && npm run typecheck && npm test
+   npm run build && npm run docs:check
    ```
 5. **Commit** with [Conventional Commits](https://www.conventionalcommits.org/):
    - `feat: add bulk import from directory`
@@ -104,4 +119,4 @@ Open an issue on GitHub with:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the project's license (Business Source License 1.1, see `LICENSE`).
