@@ -167,4 +167,27 @@ describe("schema migrations", () => {
       }
     });
   });
+
+  describe("migration 18: documents title index", () => {
+    it("indexes documents.title and uses it for the dedup lookup", () => {
+      const db = newDb();
+      runMigrations(db, 17);
+      seedChunks(db, 2, 1);
+
+      runMigrations(db);
+
+      const index = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_documents_title'",
+        )
+        .get();
+      expect(index).toBeDefined();
+      const plan = db
+        .prepare(
+          "EXPLAIN QUERY PLAN SELECT id FROM documents WHERE title = ? AND LENGTH(content) = ?",
+        )
+        .all("Document 1", 22) as Array<{ detail: string }>;
+      expect(plan.map((p) => p.detail).join(" ")).toContain("idx_documents_title");
+    });
+  });
 });

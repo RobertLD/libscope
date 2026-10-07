@@ -310,6 +310,9 @@ const MIGRATIONS: Record<number, string> = {
 
     ${FTS_BACKFILL_SQL}
 
+    -- Serves the title + length dedup lookup that runs on every index call.
+    CREATE INDEX IF NOT EXISTS idx_documents_title ON documents(title);
+
     INSERT INTO schema_version (version) VALUES (18);
   `,
 };
