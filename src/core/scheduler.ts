@@ -1,19 +1,17 @@
 import type Database from "better-sqlite3";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 // NOTE: @types/node-cron v3 is used with node-cron v4 — no v4 types are published yet.
 // The schedule() and ScheduledTask.stop() APIs are compatible across versions.
 import cron from "node-cron";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
-import { getConnectorsDir } from "../connectors/index.js";
+import { listNamedConnectorConfigs } from "../connectors/index.js";
 import {
   isConnectorType,
   recordFailedSync,
   resolveConnectorType,
-  runSavedConnectorSync,
 } from "../connectors/saved-config.js";
+import { runSavedConnectorSync } from "../connectors/registry.js";
 
 export interface ScheduleConfig {
   cronExpression: string;
@@ -191,34 +189,16 @@ export class ConnectorScheduler {
  * Each connector config can have a `schedule` field with a `cronExpression`.
  */
 export function loadScheduleEntries(): ConnectorScheduleEntry[] {
-  const log = getLogger();
   const entries: ConnectorScheduleEntry[] = [];
-
-  const connectorsDir = getConnectorsDir();
-  if (!existsSync(connectorsDir)) {
-    return entries;
-  }
-
-  const files = readdirSync(connectorsDir).filter((f) => f.endsWith(".json"));
-  for (const file of files) {
-    try {
-      const raw = readFileSync(join(connectorsDir, file), "utf-8");
-      const config = JSON.parse(raw) as Record<string, unknown>;
-      const schedule = config.schedule as { cronExpression?: string } | undefined;
-
-      if (schedule?.cronExpression) {
-        const connectorName = file.slice(0, -".json".length);
-        const connectorType = resolveConnectorType(connectorName, config);
-        entries.push({
-          connectorType,
-          connectorName,
-          cronExpression: schedule.cronExpression,
-        });
-      }
-    } catch (err) {
-      log.warn({ file, err }, "Failed to read connector config for scheduling");
+  for (const { name, config } of listNamedConnectorConfigs()) {
+    const schedule = config["schedule"] as { cronExpression?: string } | undefined;
+    if (schedule?.cronExpression) {
+      entries.push({
+        connectorType: resolveConnectorType(name, config),
+        connectorName: name,
+        cronExpression: schedule.cronExpression,
+      });
     }
   }
-
   return entries;
 }

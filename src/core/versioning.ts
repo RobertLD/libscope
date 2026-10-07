@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { DocumentNotFoundError } from "../errors.js";
+import { NotFoundError } from "../errors.js";
 import { getDocument, updateDocument } from "./documents.js";
 import { getLogger } from "../logger.js";
 import { validateRow, validateRows } from "../db/validate.js";
@@ -124,7 +124,10 @@ export function getVersion(
     .get(documentId, version);
 
   if (!raw) {
-    throw new DocumentNotFoundError(`Version ${version} of document ${documentId}`);
+    throw new NotFoundError(
+      `Version ${version} of document ${documentId} not found`,
+      "VERSION_NOT_FOUND",
+    );
   }
 
   const row = validateRow(VersionRowSchema, raw, "getVersion");

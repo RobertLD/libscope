@@ -89,7 +89,7 @@ export {
   deleteTag,
   listTags,
   addTagsToDocument,
-  removeTagFromDocument,
+  removeTagsFromDocument,
   getDocumentTags,
   getDocumentsByTag,
   suggestTags,

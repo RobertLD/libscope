@@ -32,8 +32,8 @@ const {
   loadSavedConnectorConfig,
   findSavedOneNoteConfig,
   resolveConnectorType,
-  runSavedConnectorSync,
 } = await import("../../src/connectors/saved-config.js");
+const { runSavedConnectorSync } = await import("../../src/connectors/registry.js");
 const { saveConnectorConfig, getConnectorsDir } = await import("../../src/connectors/index.js");
 const { ConnectorScheduler, loadScheduleEntries } = await import("../../src/core/scheduler.js");
 const { _resetRateLimiter } = await import("../../src/connectors/onenote.js");

@@ -51,7 +51,7 @@ import { confirmOrCancel } from "./confirm.js";
 import { createReporter, isVerbose } from "./reporter.js";
 import {
   addTagsToDocument,
-  removeTagFromDocument,
+  removeTagsFromDocument,
   listTags,
   getDocumentTags,
   suggestTags,
@@ -1408,14 +1408,12 @@ tagCmd
   .action((docId: string, tagName: string) => {
     const { db } = initializeApp();
     try {
-      const docTags = getDocumentTags(db, docId);
-      const tag = docTags.find((t) => t.name === tagName.trim().toLowerCase());
-      if (!tag) {
+      const [removed] = removeTagsFromDocument(db, docId, [tagName]);
+      if (!removed) {
         console.log(`Tag "${tagName}" not found on document ${docId}`);
         return;
       }
-      removeTagFromDocument(db, docId, tag.id);
-      console.log(`✓ Removed tag "${tag.name}" from document ${docId}`);
+      console.log(`✓ Removed tag "${removed}" from document ${docId}`);
     } finally {
       closeDatabase();
     }

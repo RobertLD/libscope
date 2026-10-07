@@ -247,18 +247,28 @@ export function addTagsToDocument(
   return tags;
 }
 
-/** Remove a specific tag from a document. */
-export function removeTagFromDocument(
+/**
+ * Remove tags (by name, case-insensitive) from a document. Names the document does not carry
+ * are ignored. Returns the names that were removed.
+ */
+export function removeTagsFromDocument(
   db: Database.Database,
   documentId: string,
-  tagId: string,
-): void {
-  const log = createChildLogger({ operation: "removeTagFromDocument" });
-  db.prepare("DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?").run(
-    documentId,
-    tagId,
+  tagNames: string[],
+): string[] {
+  const log = createChildLogger({ operation: "removeTagsFromDocument" });
+  const remove = db.prepare(
+    "DELETE FROM document_tags WHERE document_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
   );
-  log.info({ documentId, tagId }, "Tag removed from document");
+  const removed: string[] = [];
+  const run = db.transaction(() => {
+    for (const name of new Set(tagNames.map((t) => t.trim().toLowerCase()))) {
+      if (remove.run(documentId, name).changes > 0) removed.push(name);
+    }
+  });
+  run();
+  log.info({ documentId, removed }, "Tags removed from document");
+  return removed;
 }
 
 /** Get all tags for multiple documents in a single query. Returns a Map of documentId → tags. */

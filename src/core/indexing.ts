@@ -17,7 +17,7 @@ import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 export interface IndexDocumentInput {
   title: string;
   content: string;
-  sourceType: "library" | "topic" | "manual" | "model-generated";
+  sourceType: SourceType;
   library?: string | undefined;
   version?: string | undefined;
   topicId?: string | undefined;
@@ -570,12 +570,31 @@ export interface IndexFileOptions {
   dedup?: "skip" | "warn" | "force" | undefined;
   /** Overrides the source type derived from `library`/`topic`. */
   sourceType?: IndexDocumentInput["sourceType"] | undefined;
+  /** ISO 8601 expiry timestamp (see IndexDocumentInput.expiresAt). */
+  expiresAt?: string | undefined;
 }
 
-function fileSourceType(options: IndexFileOptions): IndexDocumentInput["sourceType"] {
-  if (options.sourceType) return options.sourceType;
-  if (options.library) return "library";
-  return options.topic ? "topic" : "manual";
+/** Document source types. */
+export const SOURCE_TYPES = ["library", "topic", "manual", "model-generated"] as const;
+export type SourceType = (typeof SOURCE_TYPES)[number];
+
+/**
+ * The one rule for a document's default source type, used by every write path
+ * (indexFile, ingest, and through ingest the CLI, MCP, REST and SDK):
+ *   1. an explicit `sourceType` wins;
+ *   2. else "library" when a library name is given;
+ *   3. else "topic" when a topic is given;
+ *   4. else "manual".
+ * "model-generated" is never inferred; callers set it explicitly.
+ */
+export function resolveSourceType(input: {
+  sourceType?: SourceType | undefined;
+  library?: string | undefined;
+  topic?: string | undefined;
+}): SourceType {
+  if (input.sourceType) return input.sourceType;
+  if (input.library) return "library";
+  return input.topic ? "topic" : "manual";
 }
 
 /**
@@ -613,10 +632,11 @@ export async function indexFile(
   return indexDocument(db, provider, {
     title,
     content,
-    sourceType: fileSourceType(options),
+    sourceType: resolveSourceType(options),
     library: options.library,
     version: options.version,
     topicId: options.topic,
     dedup: options.dedup,
+    expiresAt: options.expiresAt,
   });
 }

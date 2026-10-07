@@ -18,6 +18,12 @@ export interface RagOptions {
   topK?: number | undefined;
   topic?: string | undefined;
   library?: string | undefined;
+  version?: string | undefined;
+  /** Filter by document source type. */
+  sourceType?: string | undefined;
+  /** Only documents carrying all of these tags. */
+  tags?: string[] | undefined;
+  minRating?: number | undefined;
   systemPrompt?: string | undefined;
 }
 
@@ -137,6 +143,10 @@ async function retrieveResults(
     query: options.question,
     topic: options.topic,
     library: options.library,
+    version: options.version,
+    source: options.sourceType,
+    tags: options.tags,
+    minRating: options.minRating,
     limit: options.topK ?? 5,
   });
   return results;
@@ -408,4 +418,35 @@ export async function askQuestion(
     model: llmProvider.model,
     tokensUsed,
   };
+}
+
+/** How `answer` should produce its result. */
+export interface AnswerMode {
+  /** Return the retrieved context instead of calling an LLM (the caller is the LLM). */
+  passthrough: boolean;
+  /** LLM used when not in passthrough mode; null when none is configured. */
+  llm: LlmProvider | null;
+}
+
+/** An LLM answer, or (passthrough) the context prompt for the caller to answer from. */
+export type AnswerResult =
+  | ({ mode: "answer" } & RagResult)
+  | ({ mode: "context" } & PassthroughResult);
+
+/**
+ * Answer a question from the knowledge base. Every surface uses this one function:
+ * passthrough mode returns the context prompt and sources; otherwise the LLM writes the answer.
+ * @throws ConfigError when not in passthrough mode and no LLM is configured.
+ */
+export async function answer(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  mode: AnswerMode,
+  options: RagOptions,
+): Promise<AnswerResult> {
+  if (mode.passthrough) {
+    return { mode: "context", ...(await getContextForQuestion(db, embeddingProvider, options)) };
+  }
+  if (!mode.llm) throw new ConfigError(NO_LLM_HINT);
+  return { mode: "answer", ...(await askQuestion(db, embeddingProvider, mode.llm, options)) };
 }

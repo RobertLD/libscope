@@ -188,6 +188,9 @@ const MIGRATIONS: Record<number, string> = {
 
     INSERT INTO schema_version (version) VALUES (8);
   `,
+  // connector_configs is unused: no CLI, MCP, REST or scheduler code reads or writes it.
+  // Connector settings live in ~/.libscope/connectors/<name>.json. Only the exported
+  // save/load/deleteDbConnectorConfig helpers in src/connectors/index.ts touch it.
   9: `
     CREATE TABLE IF NOT EXISTS connector_configs (
       type TEXT PRIMARY KEY,

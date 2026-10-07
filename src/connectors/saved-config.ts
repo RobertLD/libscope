@@ -4,7 +4,6 @@
  * scheduler and the MCP sync tools read them.
  */
 import type Database from "better-sqlite3";
-import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ConfigError, ValidationError } from "../errors.js";
 import {
   hasNamedConnectorConfig,
@@ -12,15 +11,18 @@ import {
   loadNamedConnectorConfig,
   saveNamedConnectorConfig,
 } from "./index.js";
-import { startSync, failSync, type ConnectorSyncOptions } from "./sync-tracker.js";
-import { syncNotion, type NotionConfig } from "./notion.js";
-import { syncSlack, type SlackConfig } from "./slack.js";
-import { syncConfluence, type ConfluenceConfig } from "./confluence.js";
-import { syncObsidianVault, type ObsidianConfig } from "./obsidian.js";
-import { syncOneNote, type OneNoteConfig } from "./onenote.js";
+import { startSync, failSync } from "./sync-tracker.js";
+import type { OneNoteConfig } from "./onenote.js";
 
 /** Connector types that can be saved, re-synced and scheduled. */
-export const CONNECTOR_TYPES = ["notion", "slack", "confluence", "obsidian", "onenote"] as const;
+export const CONNECTOR_TYPES = [
+  "notion",
+  "slack",
+  "confluence",
+  "obsidian",
+  "onenote",
+  "docs",
+] as const;
 export type ConnectorType = (typeof CONNECTOR_TYPES)[number];
 
 export function isConnectorType(value: unknown): value is ConnectorType {
@@ -161,50 +163,6 @@ export async function syncSavedConnector<C extends HasLastSync, R>(
     throw err;
   }
   return runAndSaveConnector(type, name, config, sync);
-}
-
-type SavedSyncRunner = (
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  name: string,
-  options: ConnectorSyncOptions,
-) => Promise<unknown>;
-
-const SAVED_SYNC_RUNNERS: Record<ConnectorType, SavedSyncRunner> = {
-  notion: (db, provider, name, options) =>
-    syncSavedConnector<NotionConfig, unknown>(db, "notion", name, (c) =>
-      syncNotion(db, provider, c, options),
-    ),
-  slack: (db, provider, name, options) =>
-    syncSavedConnector<SlackConfig, unknown>(db, "slack", name, (c) =>
-      syncSlack(db, provider, c, options),
-    ),
-  confluence: (db, provider, name, options) =>
-    syncSavedConnector<ConfluenceConfig, unknown>(db, "confluence", name, (c) =>
-      syncConfluence(db, provider, c, options),
-    ),
-  obsidian: (db, provider, name, options) =>
-    syncSavedConnector<ObsidianConfig, unknown>(db, "obsidian", name, (c) =>
-      syncObsidianVault(db, provider, c, options),
-    ),
-  onenote: (db, provider, name, options) =>
-    syncSavedConnector<OneNoteConfig, unknown>(db, "onenote", name, (c) =>
-      syncOneNote(db, provider, c, options),
-    ),
-};
-
-/**
- * Re-sync saved connector `name` of type `type` (used by the scheduler). Writes exactly one
- * connector_syncs row, recorded under `name`.
- */
-export async function runSavedConnectorSync(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  type: ConnectorType,
-  name: string,
-  options: ConnectorSyncOptions = {},
-): Promise<void> {
-  await SAVED_SYNC_RUNNERS[type](db, provider, name, { ...options, syncName: name });
 }
 
 /** Per-call values for resolveSyncConfig; undefined means "not given". */

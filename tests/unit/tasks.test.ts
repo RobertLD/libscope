@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { TaskRegistry, isAbortRejection } from "../../src/mcp/tasks.js";
-import type { TaskType } from "../../src/mcp/tasks.js";
+import { TaskRegistry, isAbortRejection } from "../../src/core/tasks.js";
+import type { TaskType } from "../../src/core/tasks.js";
 import { reindex } from "../../src/core/reindex.js";
 import { initLogger } from "../../src/logger.js";
 import { createTestDbWithVec } from "../fixtures/test-db.js";
@@ -341,7 +341,7 @@ describe("TaskRegistry", () => {
 
 describe("taskRegistry singleton", () => {
   it("exports a module-level TaskRegistry instance", async () => {
-    const { taskRegistry } = await import("../../src/mcp/tasks.js");
+    const { taskRegistry } = await import("../../src/core/tasks.js");
     expect(taskRegistry).toBeInstanceOf(TaskRegistry);
   });
 });

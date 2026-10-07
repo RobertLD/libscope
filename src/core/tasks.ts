@@ -1,7 +1,17 @@
+/**
+ * In-process registry of background tasks (long-running work started by MCP tools, REST
+ * routes or operations). Tasks are kept for one hour after they finish.
+ */
 import { randomUUID } from "node:crypto";
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
-export type TaskType = "index_document" | "reindex_documents" | "sync_connector" | "install_pack";
+export type TaskType =
+  | "index_document"
+  | "reindex_documents"
+  | "sync_connector"
+  | "install_pack"
+  /** Any operation from src/core/operations run in the background; see Task.operation. */
+  | "operation";
 
 export interface TaskProgress {
   current: number;
@@ -12,6 +22,8 @@ export interface TaskProgress {
 export interface Task {
   id: string;
   type: TaskType;
+  /** Operation name when `type` is "operation". */
+  operation?: string | undefined;
   status: TaskStatus;
   progress?: TaskProgress | undefined;
   result?: string | undefined;
@@ -41,11 +53,12 @@ export class TaskRegistry {
   private readonly controllers = new Map<string, AbortController>();
 
   /** Create a new task and return it along with its AbortSignal. */
-  create(type: TaskType): { task: Task; signal: AbortSignal } {
+  create(type: TaskType, operation?: string): { task: Task; signal: AbortSignal } {
     const id = randomUUID();
     const task: Task = {
       id,
       type,
+      ...(operation === undefined ? {} : { operation }),
       status: "pending",
       createdAt: new Date(),
     };
@@ -61,8 +74,8 @@ export class TaskRegistry {
    * to stop it), "cancelled" if it rejects because the task signal was aborted, else "failed".
    * `done` settles after the final status is recorded; it never rejects.
    */
-  run(type: TaskType, work: TaskWork): { task: Task; done: Promise<void> } {
-    const { task, signal } = this.create(type);
+  run(type: TaskType, work: TaskWork, operation?: string): { task: Task; done: Promise<void> } {
+    const { task, signal } = this.create(type, operation);
     this.update(task.id, { status: "running", startedAt: new Date() });
     const onProgress = (current: number, total: number): void => {
       this.update(task.id, { progress: { current, total } });
@@ -93,6 +106,12 @@ export class TaskRegistry {
   get(id: string): Task | undefined {
     this.prune();
     return this.tasks.get(id);
+  }
+
+  /** All tasks that have not expired, newest first. */
+  list(): Task[] {
+    this.prune();
+    return [...this.tasks.values()].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   /** Apply partial updates to a task. No-op if task not found. */
@@ -138,5 +157,5 @@ export class TaskRegistry {
   }
 }
 
-/** Module-level singleton task registry used by the MCP server. */
+/** Module-level singleton task registry shared by the MCP server, REST API and operations. */
 export const taskRegistry = new TaskRegistry();
