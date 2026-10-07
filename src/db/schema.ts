@@ -2,7 +2,13 @@ import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
+
+/** Copy every chunk into chunks_fts, keyed by the chunk's rowid. */
+const FTS_BACKFILL_SQL = `
+  INSERT INTO chunks_fts(rowid, content, chunk_id, document_id)
+  SELECT rowid, content, id, document_id FROM chunks;
+`;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -269,12 +275,44 @@ const MIGRATIONS: Record<number, string> = {
 
     INSERT INTO schema_version (version) VALUES (17);
   `,
-};
+  // Rebuild chunks_fts keyed by chunks.rowid. The old triggers matched rows on the
+  // UNINDEXED chunk_id column, so every chunk delete scanned the whole FTS table.
+  // Repopulating from chunks also drops duplicate rows left by earlier backfills.
+  18: `
+    DROP TRIGGER IF EXISTS chunks_ai;
+    DROP TRIGGER IF EXISTS chunks_ad;
+    DROP TRIGGER IF EXISTS chunks_au;
+    DROP TABLE IF EXISTS chunks_fts;
 
-const FTS_BACKFILL_SQL = `
-  INSERT INTO chunks_fts(content, chunk_id, document_id)
-  SELECT content, id, document_id FROM chunks;
-`;
+    CREATE VIRTUAL TABLE chunks_fts USING fts5(
+      content,
+      chunk_id UNINDEXED,
+      document_id UNINDEXED,
+      tokenize='porter unicode61'
+    );
+
+    -- The DELETE before each INSERT clears a stale row that may hold the same rowid.
+    CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE rowid = new.rowid;
+      INSERT INTO chunks_fts(rowid, content, chunk_id, document_id)
+      VALUES (new.rowid, new.content, new.id, new.document_id);
+    END;
+
+    CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE rowid = old.rowid;
+    END;
+
+    CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE rowid = old.rowid;
+      INSERT INTO chunks_fts(rowid, content, chunk_id, document_id)
+      VALUES (new.rowid, new.content, new.id, new.document_id);
+    END;
+
+    ${FTS_BACKFILL_SQL}
+
+    INSERT INTO schema_version (version) VALUES (18);
+  `,
+};
 
 /**
  * Populate chunks_fts from chunks, but only when the FTS index is empty (for example,

@@ -38,7 +38,7 @@ describe("database schema", () => {
       const version = db.prepare("SELECT MAX(version) as v FROM schema_version").get() as {
         v: number;
       };
-      expect(version.v).toBe(17);
+      expect(version.v).toBe(18);
     });
 
     it("should create expected indexes", () => {
