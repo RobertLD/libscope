@@ -49,21 +49,32 @@ export class ConfigError extends LibScopeError {
   }
 }
 
-export class DocumentNotFoundError extends LibScopeError {
+/**
+ * A requested resource does not exist. REST maps every NotFoundError to HTTP 404.
+ * Subclasses keep their own `code`; other resources use this class directly with a specific code.
+ */
+export class NotFoundError extends LibScopeError {
+  constructor(message: string, code: string = "NOT_FOUND", cause?: unknown) {
+    super(message, code, cause);
+    this.name = "NotFoundError";
+  }
+}
+
+export class DocumentNotFoundError extends NotFoundError {
   constructor(documentId: string) {
     super(`Document not found: ${documentId}`, "DOCUMENT_NOT_FOUND");
     this.name = "DocumentNotFoundError";
   }
 }
 
-export class ChunkNotFoundError extends LibScopeError {
+export class ChunkNotFoundError extends NotFoundError {
   constructor(chunkId: string) {
     super(`Chunk not found: ${chunkId}`, "CHUNK_NOT_FOUND");
     this.name = "ChunkNotFoundError";
   }
 }
 
-export class TopicNotFoundError extends LibScopeError {
+export class TopicNotFoundError extends NotFoundError {
   constructor(topicId: string) {
     super(`Topic not found: ${topicId}`, "TOPIC_NOT_FOUND");
     this.name = "TopicNotFoundError";

@@ -9,7 +9,7 @@ import {
 import { promises as dns, lookup as dnsLookup } from "node:dns";
 import { promisify } from "node:util";
 import type Database from "better-sqlite3";
-import { ValidationError } from "../errors.js";
+import { NotFoundError, ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { isPrivateIP } from "./url-fetcher.js";
 import { LIBSCOPE_EVENTS, onEvent, type LibScopeEvent } from "./events.js";
@@ -245,7 +245,7 @@ export function listWebhooks(db: Database.Database, limit?: number, offset?: num
 export function getWebhook(db: Database.Database, id: string): Webhook {
   const row = db.prepare("SELECT * FROM webhooks WHERE id = ?").get(id) as WebhookRow | undefined;
   if (!row) {
-    throw new ValidationError(`Webhook not found: ${id}`);
+    throw new NotFoundError(`Webhook not found: ${id}`, "WEBHOOK_NOT_FOUND");
   }
   return rowToWebhook(row);
 }
@@ -253,7 +253,7 @@ export function getWebhook(db: Database.Database, id: string): Webhook {
 export function deleteWebhook(db: Database.Database, id: string): void {
   const result = db.prepare("DELETE FROM webhooks WHERE id = ?").run(id);
   if (result.changes === 0) {
-    throw new ValidationError(`Webhook not found: ${id}`);
+    throw new NotFoundError(`Webhook not found: ${id}`, "WEBHOOK_NOT_FOUND");
   }
 }
 

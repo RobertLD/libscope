@@ -38,7 +38,7 @@ import {
 import type { LinkType, BulkSelector, BatchSearchRequest } from "../core/index.js";
 import { LINK_TYPES } from "../core/links.js";
 import { loadConfig } from "../config.js";
-import { DocumentNotFoundError, FetchError, LibScopeError } from "../errors.js";
+import { NotFoundError, FetchError, LibScopeError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { parseJsonBody, sendJson, sendError } from "./middleware.js";
 import { OPENAPI_SPEC } from "./openapi.js";
@@ -861,7 +861,7 @@ function handleRouteError(
   const log = getLogger();
   log.error({ err, method, pathname }, "API request error");
 
-  if (err instanceof DocumentNotFoundError) {
+  if (err instanceof NotFoundError) {
     sendError(res, 404, "NOT_FOUND", err.message);
     return;
   }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../fixtures/test-db.js";
 import type { WebhookEvent } from "../../src/core/webhooks.js";
-import { ValidationError } from "../../src/errors.js";
+import { NotFoundError, ValidationError } from "../../src/errors.js";
 import { initLogger } from "../../src/logger.js";
 
 // Mock DNS resolution so webhook SSRF checks pass in tests
@@ -139,8 +139,8 @@ describe("webhooks", () => {
       expect(fetched.url).toBe(created.url);
     });
 
-    it("should throw ValidationError for non-existent id", () => {
-      expect(() => getWebhook(db, "non-existent")).toThrow(ValidationError);
+    it("should throw NotFoundError for non-existent id", () => {
+      expect(() => getWebhook(db, "non-existent")).toThrow(NotFoundError);
     });
   });
 
@@ -151,8 +151,8 @@ describe("webhooks", () => {
       expect(listWebhooks(db)).toHaveLength(0);
     });
 
-    it("should throw ValidationError for non-existent id", () => {
-      expect(() => deleteWebhook(db, "non-existent")).toThrow(ValidationError);
+    it("should throw NotFoundError for non-existent id", () => {
+      expect(() => deleteWebhook(db, "non-existent")).toThrow(NotFoundError);
     });
   });
 
@@ -215,9 +215,9 @@ describe("webhooks", () => {
       ).rejects.toThrow(ValidationError);
     });
 
-    it("should throw ValidationError for non-existent id", async () => {
+    it("should throw NotFoundError for non-existent id", async () => {
       await expect(updateWebhook(db, "non-existent", { url: "https://new.com" })).rejects.toThrow(
-        ValidationError,
+        NotFoundError,
       );
     });
   });

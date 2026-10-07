@@ -8,6 +8,7 @@ import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-m
 import { logSearch, recordSearchQuery } from "./analytics.js";
 import { emitEvent } from "./events.js";
 import { performance } from "node:perf_hooks";
+import { ChunkNotFoundError } from "../errors.js";
 
 /** Build SQL clause and params for AND-logic tag filtering on a document alias. */
 function buildTagFilter(
@@ -871,7 +872,7 @@ export function getRelatedChunks(
     "getRelatedChunks.sourceChunk",
   );
   if (!sourceChunkRow) {
-    throw new Error(`Chunk not found: ${chunkId}`);
+    throw new ChunkNotFoundError(chunkId);
   }
 
   const sourceChunk = {

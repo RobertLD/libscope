@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { searchDocuments } from "./search.js";
 import type { SearchOptions, SearchResult } from "./search.js";
-import { ValidationError, DocumentNotFoundError } from "../errors.js";
+import { ValidationError, NotFoundError } from "../errors.js";
 import { getLogger } from "../logger.js";
 
 export interface SavedSearch {
@@ -101,7 +101,7 @@ export function getSavedSearch(db: Database.Database, id: string): SavedSearch {
     | SavedSearchRow
     | undefined;
   if (!row) {
-    throw new DocumentNotFoundError(id);
+    throw new NotFoundError(`Saved search not found: ${id}`, "SAVED_SEARCH_NOT_FOUND");
   }
   return rowToSavedSearch(row);
 }
@@ -109,7 +109,7 @@ export function getSavedSearch(db: Database.Database, id: string): SavedSearch {
 export function deleteSavedSearch(db: Database.Database, id: string): void {
   const result = db.prepare("DELETE FROM saved_searches WHERE id = ? OR name = ?").run(id, id);
   if (result.changes === 0) {
-    throw new DocumentNotFoundError(id);
+    throw new NotFoundError(`Saved search not found: ${id}`, "SAVED_SEARCH_NOT_FOUND");
   }
 }
 

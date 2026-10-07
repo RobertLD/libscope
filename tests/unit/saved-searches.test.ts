@@ -9,7 +9,7 @@ import {
   runSavedSearch,
 } from "../../src/core/saved-searches.js";
 import { indexDocument } from "../../src/core/indexing.js";
-import { ValidationError, DocumentNotFoundError } from "../../src/errors.js";
+import { ValidationError, NotFoundError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 import { initLogger } from "../../src/logger.js";
 
@@ -90,7 +90,7 @@ describe("saved-searches", () => {
     });
 
     it("should throw for nonexistent search", () => {
-      expect(() => getSavedSearch(db, "nonexistent")).toThrow(DocumentNotFoundError);
+      expect(() => getSavedSearch(db, "nonexistent")).toThrow(NotFoundError);
     });
   });
 
@@ -108,7 +108,7 @@ describe("saved-searches", () => {
     });
 
     it("should throw for nonexistent search", () => {
-      expect(() => deleteSavedSearch(db, "nonexistent")).toThrow(DocumentNotFoundError);
+      expect(() => deleteSavedSearch(db, "nonexistent")).toThrow(NotFoundError);
     });
   });
 
@@ -168,9 +168,7 @@ describe("saved-searches", () => {
     });
 
     it("should throw for nonexistent search", async () => {
-      await expect(runSavedSearch(db, provider, "nonexistent")).rejects.toThrow(
-        DocumentNotFoundError,
-      );
+      await expect(runSavedSearch(db, provider, "nonexistent")).rejects.toThrow(NotFoundError);
     });
   });
 
