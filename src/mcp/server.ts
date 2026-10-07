@@ -232,7 +232,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  initLogger(config.logging.level);
+  // stdout carries the MCP protocol stream — logs must go to stderr.
+  initLogger(config.logging.level, { destination: "stderr" });
 
   let db;
   try {

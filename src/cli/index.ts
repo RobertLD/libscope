@@ -1524,6 +1524,7 @@ configCmd
   .command("set <key> <value>")
   .description("Set a configuration value (e.g., embedding.provider local)")
   .action((key: string, value: string) => {
+    setupLogging(program.opts<ProgramOpts>());
     if (key === "embedding.provider") {
       if (value !== "local" && value !== "ollama" && value !== "openai") {
         console.error("Invalid provider. Must be: local, ollama, or openai");
@@ -1549,6 +1550,7 @@ configCmd
   .command("show")
   .description("Show current configuration")
   .action(() => {
+    setupLogging(program.opts<ProgramOpts>());
     const config = loadConfig();
     console.log(JSON.stringify(config, null, 2));
   });
@@ -1576,9 +1578,10 @@ function initializeApp(): {
   config: ReturnType<typeof loadConfig>;
   db: ReturnType<typeof getDatabase>;
 } {
-  const config = loadConfig();
+  // Configure logging first so warnings emitted while loading config honour the CLI log level.
   const opts = program.opts<ProgramOpts>();
   setupLogging(opts);
+  const config = loadConfig();
 
   if (opts.workspace) {
     process.env["LIBSCOPE_WORKSPACE"] = opts.workspace;
@@ -2313,8 +2316,8 @@ connectCmd
   .option("--sync", "Incremental re-sync only")
   .option("--notebook <name>", "Sync a specific notebook")
   .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
-    const config = loadConfig();
     setupLogging(program.opts<ProgramOpts>());
+    const config = loadConfig();
 
     const workspace = program.opts().workspace as string | undefined;
     if (workspace) {
@@ -2392,8 +2395,8 @@ disconnectCmd
     ) {
       return;
     }
-    const config = loadConfig();
     setupLogging(program.opts<ProgramOpts>());
+    const config = loadConfig();
 
     const workspace2 = program.opts().workspace as string | undefined;
     if (workspace2) {
