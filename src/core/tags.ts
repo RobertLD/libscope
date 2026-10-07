@@ -4,7 +4,7 @@ import { z } from "zod";
 import { DocumentNotFoundError, ValidationError } from "../errors.js";
 import { validateRow, validateRows } from "../db/validate.js";
 import { createChildLogger } from "../logger.js";
-import type { Document } from "./documents.js";
+import { rowToDocument, type Document } from "./documents.js";
 
 const TagRowSchema = z.object({
   id: z.string(),
@@ -131,7 +131,6 @@ const STOPWORDS = new Set([
   "your",
   "his",
   "her",
-  "our",
   "out",
   "then",
   "there",
@@ -140,7 +139,6 @@ const STOPWORDS = new Set([
   "them",
   "they",
   "you",
-  "your",
   "only",
   "own",
   "same",
@@ -354,20 +352,7 @@ export function getDocumentsByTag(
 
   log.info({ tagNames: normalized, resultCount: rows.length }, "Documents retrieved by tags");
 
-  return rows.map((row) => ({
-    id: row.id,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    title: row.title,
-    content: row.content,
-    url: row.url,
-    contentHash: row.content_hash,
-    submittedBy: row.submitted_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return rows.map((row) => rowToDocument(row));
 }
 
 /** Tokenize text into lowercase words, filtering stopwords and short words. */
