@@ -3,7 +3,7 @@ export { LocalEmbeddingProvider } from "./local.js";
 export { OllamaEmbeddingProvider } from "./ollama.js";
 export { OpenAIEmbeddingProvider } from "./openai.js";
 
-import type { LibScopeConfig } from "../config.js";
+import { DEFAULT_OLLAMA_URL, type LibScopeConfig } from "../config.js";
 import { ConfigError } from "../errors.js";
 import { validateDimensionsOverride } from "./dimensions.js";
 import type { EmbeddingProvider } from "./embedding.js";
@@ -28,37 +28,28 @@ export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvid
     return registered(config);
   }
 
-  switch (config.embedding.provider) {
+  const { embedding } = config;
+  switch (embedding.provider) {
     case "local":
       return new LocalEmbeddingProvider();
-    case "ollama": {
-      if (!config.embedding.ollamaUrl) {
-        throw new ConfigError(
-          "Ollama URL is required. Set LIBSCOPE_OLLAMA_URL or configure in ~/.libscope/config.json",
-        );
-      }
-      if (!config.embedding.ollamaModel) {
-        throw new ConfigError(
-          "Ollama model is required. Set LIBSCOPE_OLLAMA_MODEL or configure in ~/.libscope/config.json",
-        );
-      }
+    case "ollama":
       return new OllamaEmbeddingProvider(
-        config.embedding.ollamaUrl,
-        config.embedding.ollamaModel,
-        validateDimensionsOverride(config.embedding.dimensions),
+        embedding.url ?? DEFAULT_OLLAMA_URL,
+        embedding.model ?? "nomic-embed-text",
+        validateDimensionsOverride(embedding.dimensions),
       );
-    }
     case "openai": {
-      const apiKey = config.embedding.openaiApiKey;
+      const apiKey = config.openai?.apiKey;
       if (!apiKey) {
         throw new ConfigError(
-          "OpenAI API key is required. Set LIBSCOPE_OPENAI_API_KEY or configure in ~/.libscope/config.json",
+          "OpenAI API key is required. Set LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY, " +
+            'or run "libscope config set openai.apiKey <key>".',
         );
       }
       return new OpenAIEmbeddingProvider(
         apiKey,
-        config.embedding.openaiModel,
-        validateDimensionsOverride(config.embedding.dimensions),
+        embedding.model,
+        validateDimensionsOverride(embedding.dimensions),
       );
     }
     default:

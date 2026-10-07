@@ -28,9 +28,10 @@ function vector(size: number): number[] {
   return Array.from({ length: size }, () => 0.1);
 }
 
-function config(embedding: LibScopeConfig["embedding"]): LibScopeConfig {
+function config(embedding: LibScopeConfig["embedding"], openaiApiKey?: string): LibScopeConfig {
   return {
     embedding,
+    ...(openaiApiKey ? { openai: { apiKey: openaiApiKey } } : {}),
     database: { path: ":memory:" },
     indexing: { maxDocumentSize: 1024, allowPrivateUrls: false, allowSelfSignedCerts: false },
     logging: { level: "silent" },
@@ -164,8 +165,8 @@ describe("createEmbeddingProvider dimensions", () => {
     const provider = createEmbeddingProvider(
       config({
         provider: "ollama",
-        ollamaUrl: "http://x",
-        ollamaModel: "custom-embed",
+        url: "http://x",
+        model: "custom-embed",
         dimensions: 2048,
       }),
     );
@@ -175,7 +176,7 @@ describe("createEmbeddingProvider dimensions", () => {
 
   it("uses the known size for the configured OpenAI model", () => {
     const provider = createEmbeddingProvider(
-      config({ provider: "openai", openaiApiKey: "k", openaiModel: "text-embedding-3-large" }),
+      config({ provider: "openai", model: "text-embedding-3-large" }, "k"),
     );
     expect(provider.dimensions).toBe(3072);
   });
@@ -183,7 +184,7 @@ describe("createEmbeddingProvider dimensions", () => {
   it("rejects an invalid embedding.dimensions", () => {
     expect(() =>
       createEmbeddingProvider(
-        config({ provider: "ollama", ollamaUrl: "http://x", ollamaModel: "m", dimensions: -5 }),
+        config({ provider: "ollama", url: "http://x", model: "m", dimensions: -5 }),
       ),
     ).toThrow(ConfigError);
   });

@@ -65,6 +65,8 @@ export class LibScope {
     const config: LibScopeConfig = {
       embedding: { ...baseConfig.embedding, ...options?.config?.embedding },
       llm: { ...baseConfig.llm, ...options?.config?.llm },
+      openai: { ...baseConfig.openai, ...options?.config?.openai },
+      anthropic: { ...baseConfig.anthropic, ...options?.config?.anthropic },
       database: { ...baseConfig.database, ...options?.config?.database },
       indexing: { ...baseConfig.indexing, ...options?.config?.indexing },
       logging: { ...baseConfig.logging, ...options?.config?.logging },

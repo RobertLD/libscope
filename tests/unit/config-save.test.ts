@@ -1,10 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  chmodSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { initLogger } from "../../src/logger.js";
-import type { LibScopeConfig } from "../../src/config.js";
 
 // Create a unique temp HOME for each test run — must be initialized before module load
 let tempHome: string = join(tmpdir(), `libscope-config-save-test-${process.pid}`);
@@ -20,32 +27,42 @@ vi.mock("node:os", async (importOriginal) => {
 
 // Dynamic import after mock is set up
 const {
-  saveUserConfig,
   invalidateConfigCache,
   setUserConfigValue,
   unsetUserConfigValue,
   getConfigValue,
+  getConfigFileFor,
   getUserConfigPath,
+  getSecretsPath,
   loadConfig,
   CONFIG_KEY_NAMES,
+  getConfigKeyTable,
 } = await import("../../src/config.js");
 const { saveRegistries, loadRegistries } = await import("../../src/registry/config.js");
+
+/** Env vars that would leak into loadConfig from the developer's shell. */
+const ENV_VARS = getConfigKeyTable().flatMap((row) => row.env);
+const savedEnv: Record<string, string | undefined> = {};
 
 function configPath(): string {
   return join(tempHome, ".libscope", "config.json");
 }
 
+function secretsPath(): string {
+  return join(tempHome, ".libscope", "secrets.json");
+}
+
+function readJson(path: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+}
+
 function readSavedRaw(): Record<string, unknown> {
-  return JSON.parse(readFileSync(configPath(), "utf-8")) as Record<string, unknown>;
+  return readJson(configPath());
 }
 
-function readSavedConfig(): LibScopeConfig {
-  return readSavedRaw() as unknown as LibScopeConfig;
-}
-
-function writeExisting(data: unknown): void {
+function writeExisting(data: unknown, path = configPath()): void {
   mkdirSync(join(tempHome, ".libscope"), { recursive: true });
-  writeFileSync(configPath(), JSON.stringify(data), "utf-8");
+  writeFileSync(path, JSON.stringify(data), "utf-8");
 }
 
 const REGISTRY = {
@@ -58,171 +75,111 @@ const REGISTRY = {
 
 beforeEach(() => {
   initLogger("silent");
+  for (const key of ENV_VARS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
   tempHome = join(tmpdir(), `libscope-config-save-test-${randomUUID()}`);
   mkdirSync(tempHome, { recursive: true });
   invalidateConfigCache();
 });
 
 afterEach(() => {
+  for (const [key, val] of Object.entries(savedEnv)) {
+    if (val === undefined) delete process.env[key];
+    else process.env[key] = val;
+  }
   rmSync(tempHome, { recursive: true, force: true });
 });
 
-describe("saveUserConfig credential stripping", () => {
-  it("should not persist embedding.openaiApiKey to disk", () => {
-    saveUserConfig({ embedding: { provider: "openai", openaiApiKey: "sk-test-key" } });
-
-    const written = readFileSync(configPath(), "utf-8");
-    const parsed = readSavedConfig();
-
-    expect(parsed.embedding.provider).toBe("openai");
-    expect(parsed.embedding.openaiApiKey).toBeUndefined();
-    expect(written).not.toContain("sk-test-key");
-  });
-
-  it("should not persist llm.openaiApiKey to disk", () => {
-    saveUserConfig({ llm: { provider: "openai", openaiApiKey: "sk-llm-key" } });
-
-    const written = readFileSync(configPath(), "utf-8");
-    expect(readSavedConfig().llm?.openaiApiKey).toBeUndefined();
-    expect(written).not.toContain("sk-llm-key");
-  });
-
-  it("should not persist llm.anthropicApiKey to disk", () => {
-    saveUserConfig({ llm: { provider: "anthropic", anthropicApiKey: "sk-ant-key" } });
-
-    const written = readFileSync(configPath(), "utf-8");
-    expect(readSavedConfig().llm?.anthropicApiKey).toBeUndefined();
-    expect(written).not.toContain("sk-ant-key");
-  });
-
-  it("should strip all credential fields simultaneously", () => {
-    saveUserConfig({
-      embedding: { provider: "openai", openaiApiKey: "sk-embed" },
-      llm: { provider: "openai", openaiApiKey: "sk-llm", anthropicApiKey: "sk-ant" },
-    });
-
-    const written = readFileSync(configPath(), "utf-8");
-    expect(written).not.toContain("sk-embed");
-    expect(written).not.toContain("sk-llm");
-    expect(written).not.toContain("sk-ant");
-    expect(written).not.toContain("ApiKey");
-  });
-
-  it("should preserve non-credential config fields", () => {
-    saveUserConfig({
-      embedding: {
-        provider: "openai",
-        openaiModel: "text-embedding-3-large",
-        openaiApiKey: "sk-test",
-      },
-      logging: { level: "debug" },
-    });
-
-    const parsed = readSavedConfig();
-    expect(parsed.embedding.provider).toBe("openai");
-    expect(parsed.embedding.openaiModel).toBe("text-embedding-3-large");
-    expect(parsed.logging.level).toBe("debug");
-    expect(parsed.embedding.openaiApiKey).toBeUndefined();
-  });
-});
-
-describe("saveUserConfig read-modify-write", () => {
-  it("keeps registries and unknown top-level keys", () => {
-    writeExisting({ registries: [REGISTRY], customTool: { a: 1 } });
-    saveUserConfig({ embedding: { provider: "ollama" } });
-
-    const raw = readSavedRaw();
-    expect(raw["registries"]).toEqual([REGISTRY]);
-    expect(raw["customTool"]).toEqual({ a: 1 });
-  });
-
-  it("writes only the values that were set, not defaults", () => {
-    saveUserConfig({ logging: { level: "warn" } });
-    expect(readSavedRaw()).toEqual({ logging: { level: "warn" } });
-  });
-
-  it("keeps sibling keys in the same section", () => {
-    writeExisting({ embedding: { ollamaUrl: "http://gpu:11434" } });
-    saveUserConfig({ embedding: { provider: "ollama" } });
-    expect(readSavedRaw()["embedding"]).toEqual({
-      ollamaUrl: "http://gpu:11434",
-      provider: "ollama",
-    });
-  });
-
-  it("does not delete an API key the user put in the file by hand", () => {
-    writeExisting({ embedding: { openaiApiKey: "sk-hand-written" } });
-    saveUserConfig({ embedding: { provider: "openai" } });
-    expect(readSavedConfig().embedding.openaiApiKey).toBe("sk-hand-written");
-  });
-
-  it("writes the file with mode 0600, also when it already existed", () => {
-    writeExisting({});
-    chmodSync(configPath(), 0o644);
-    saveUserConfig({ logging: { level: "info" } });
-    expect(statSync(configPath()).mode & 0o777).toBe(0o600);
-  });
-
-  it("invalidates the config cache so the next load sees the change", () => {
-    loadConfig();
-    saveUserConfig({ logging: { level: "error" } });
-    expect(loadConfig().logging.level).toBe("error");
-  });
-});
-
-describe("setUserConfigValue", () => {
-  it("covers every key in the LibScopeConfig shape", () => {
+describe("config keys", () => {
+  it("are derived from the schema", () => {
     expect([...CONFIG_KEY_NAMES].sort()).toEqual(
       [
+        "anthropic.apiKey",
         "database.path",
         "embedding.dimensions",
-        "embedding.ollamaModel",
-        "embedding.ollamaUrl",
-        "embedding.openaiApiKey",
-        "embedding.openaiModel",
+        "embedding.model",
         "embedding.provider",
+        "embedding.url",
         "indexing.allowPrivateUrls",
         "indexing.allowSelfSignedCerts",
         "indexing.maxDocumentSize",
-        "llm.anthropicApiKey",
         "llm.model",
-        "llm.ollamaUrl",
-        "llm.openaiApiKey",
         "llm.provider",
+        "llm.url",
         "logging.level",
+        "openai.apiKey",
       ].sort(),
     );
   });
 
+  it("key table lists type, default, env vars, secret flag, and description", () => {
+    const table = getConfigKeyTable();
+    expect(table.map((r) => r.key)).toEqual([...CONFIG_KEY_NAMES]);
+    for (const row of table) expect(row.description).not.toBe("");
+
+    expect(table.find((r) => r.key === "llm.provider")).toMatchObject({
+      type: "auto | openai | anthropic | ollama | passthrough",
+      default: "auto",
+      env: ["LIBSCOPE_LLM_PROVIDER"],
+      secret: false,
+    });
+    expect(table.find((r) => r.key === "indexing.allowSelfSignedCerts")).toMatchObject({
+      type: "boolean",
+      default: "false",
+      env: ["LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS"],
+    });
+    expect(table.find((r) => r.key === "indexing.maxDocumentSize")).toMatchObject({
+      type: "integer",
+      default: String(100 * 1024 * 1024),
+    });
+    expect(table.find((r) => r.key === "openai.apiKey")).toMatchObject({
+      env: ["LIBSCOPE_OPENAI_API_KEY", "OPENAI_API_KEY"],
+      secret: true,
+    });
+    expect(table.find((r) => r.key === "anthropic.apiKey")).toMatchObject({
+      env: ["LIBSCOPE_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"],
+      secret: true,
+    });
+  });
+});
+
+describe("setUserConfigValue", () => {
   it.each([
-    ["embedding.ollamaModel", "mxbai-embed-large", "mxbai-embed-large"],
-    ["embedding.openaiModel", "text-embedding-3-large", "text-embedding-3-large"],
+    ["embedding.provider", "ollama", "ollama"],
+    ["embedding.model", "mxbai-embed-large", "mxbai-embed-large"],
+    ["embedding.url", "http://gpu:11434", "http://gpu:11434"],
     ["embedding.dimensions", "1024", 1024],
     ["llm.provider", "anthropic", "anthropic"],
     ["llm.model", "gpt-4o", "gpt-4o"],
-    ["llm.ollamaUrl", "http://localhost:11434", "http://localhost:11434"],
+    ["llm.url", "http://localhost:11434", "http://localhost:11434"],
     ["database.path", "/data/libscope.db", "/data/libscope.db"],
     ["logging.level", "debug", "debug"],
     ["indexing.maxDocumentSize", "2048", 2048],
     ["indexing.allowPrivateUrls", "true", true],
     ["indexing.allowSelfSignedCerts", "0", false],
-  ] as const)("sets %s", (key, input, expected) => {
+  ] as const)("sets %s in config.json", (key, input, expected) => {
     expect(setUserConfigValue(key, input)).toBe(expected);
     const [section = "", field = ""] = key.split(".");
     const sectionObj = readSavedRaw()[section] as Record<string, unknown>;
     expect(sectionObj[field]).toBe(expected);
+    expect(existsSync(secretsPath())).toBe(false);
   });
 
-  it("rejects unknown keys and lists valid keys", () => {
+  it("rejects unknown and old keys and lists valid keys", () => {
     expect(() => setUserConfigValue("embedding.nope", "x")).toThrow(
       /Unknown config key.*llm\.model/,
     );
+    expect(() => setUserConfigValue("embedding.ollamaModel", "x")).toThrow(/Unknown config key/);
+    expect(() => setUserConfigValue("embedding.openaiApiKey", "x")).toThrow(/Unknown config key/);
   });
 
   it("rejects values outside an enum", () => {
     expect(() => setUserConfigValue("embedding.provider", "cohere")).toThrow(
       /one of: local, ollama, openai/,
     );
+    expect(() => setUserConfigValue("llm.provider", "gemini")).toThrow(/one of: auto/);
     expect(() => setUserConfigValue("logging.level", "loud")).toThrow(/one of/);
   });
 
@@ -230,15 +187,34 @@ describe("setUserConfigValue", () => {
     expect(() => setUserConfigValue("indexing.allowPrivateUrls", "yes")).toThrow(/true or false/);
     expect(() => setUserConfigValue("indexing.maxDocumentSize", "-5")).toThrow(/positive integer/);
     expect(() => setUserConfigValue("indexing.maxDocumentSize", "1.5")).toThrow(/positive integer/);
+    expect(() => setUserConfigValue("embedding.dimensions", "20000")).toThrow(/dimensions/);
+    expect(() => setUserConfigValue("llm.model", "  ")).toThrow(/must not be empty/);
   });
 
-  it("refuses API keys and names the env var to use", () => {
-    expect(() => setUserConfigValue("embedding.openaiApiKey", "sk-x")).toThrow(
-      /LIBSCOPE_OPENAI_API_KEY/,
-    );
-    expect(() => setUserConfigValue("llm.anthropicApiKey", "sk-x")).toThrow(
-      /LIBSCOPE_ANTHROPIC_API_KEY/,
-    );
+  it("writes the file with mode 0600, also when it already existed", () => {
+    writeExisting({});
+    chmodSync(configPath(), 0o644);
+    setUserConfigValue("logging.level", "info");
+    expect(statSync(configPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps registries, unknown top-level keys, and sibling keys", () => {
+    writeExisting({
+      registries: [REGISTRY],
+      customTool: { a: 1 },
+      embedding: { url: "http://gpu:11434" },
+    });
+    setUserConfigValue("embedding.provider", "ollama");
+    const raw = readSavedRaw();
+    expect(raw["registries"]).toEqual([REGISTRY]);
+    expect(raw["customTool"]).toEqual({ a: 1 });
+    expect(raw["embedding"]).toEqual({ url: "http://gpu:11434", provider: "ollama" });
+  });
+
+  it("invalidates the config cache so the next load sees the change", () => {
+    loadConfig();
+    setUserConfigValue("logging.level", "error");
+    expect(loadConfig().logging.level).toBe("error");
   });
 
   it("keeps registries written by the registry module", () => {
@@ -256,6 +232,42 @@ describe("setUserConfigValue", () => {
   });
 });
 
+describe("secrets", () => {
+  it("API keys are written to secrets.json (0600), never to config.json", () => {
+    writeExisting({ logging: { level: "warn" } });
+    expect(setUserConfigValue("openai.apiKey", "sk-openai-test")).toBe("sk-openai-test");
+    expect(setUserConfigValue("anthropic.apiKey", "sk-ant-test")).toBe("sk-ant-test");
+
+    expect(readJson(secretsPath())).toEqual({
+      openai: { apiKey: "sk-openai-test" },
+      anthropic: { apiKey: "sk-ant-test" },
+    });
+    expect(statSync(secretsPath()).mode & 0o777).toBe(0o600);
+    expect(readFileSync(configPath(), "utf-8")).not.toContain("sk-");
+    expect(readSavedRaw()).toEqual({ logging: { level: "warn" } });
+  });
+
+  it("tightens an existing secrets.json to 0600", () => {
+    writeExisting({}, secretsPath());
+    chmodSync(secretsPath(), 0o644);
+    setUserConfigValue("openai.apiKey", "sk-x");
+    expect(statSync(secretsPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it("keys written by config set are loaded and masked by config get", () => {
+    setUserConfigValue("openai.apiKey", "sk-proj-abcdefghijkl9876");
+    const config = loadConfig();
+    expect(config.openai?.apiKey).toBe("sk-proj-abcdefghijkl9876");
+    expect(getConfigValue(config, "openai.apiKey")).toBe("sk-…9876");
+  });
+
+  it("getConfigFileFor names the file a key is stored in", () => {
+    expect(getConfigFileFor("openai.apiKey")).toBe(getSecretsPath());
+    expect(getConfigFileFor("llm.model")).toBe(getUserConfigPath());
+    expect(getSecretsPath()).toBe(secretsPath());
+  });
+});
+
 describe("unsetUserConfigValue", () => {
   it("removes the key and drops an empty section", () => {
     writeExisting({ logging: { level: "debug" }, registries: [REGISTRY] });
@@ -264,8 +276,8 @@ describe("unsetUserConfigValue", () => {
   });
 
   it("keeps other keys in the section", () => {
-    writeExisting({ embedding: { provider: "ollama", ollamaModel: "m" } });
-    unsetUserConfigValue("embedding.ollamaModel");
+    writeExisting({ embedding: { provider: "ollama", model: "m" } });
+    unsetUserConfigValue("embedding.model");
     expect(readSavedRaw()["embedding"]).toEqual({ provider: "ollama" });
   });
 
@@ -273,10 +285,11 @@ describe("unsetUserConfigValue", () => {
     expect(unsetUserConfigValue("llm.model")).toBe(false);
   });
 
-  it("can remove a hand-written API key", () => {
-    writeExisting({ embedding: { openaiApiKey: "sk-old" } });
-    expect(unsetUserConfigValue("embedding.openaiApiKey")).toBe(true);
-    expect(readFileSync(configPath(), "utf-8")).not.toContain("sk-old");
+  it("removes an API key from secrets.json", () => {
+    setUserConfigValue("openai.apiKey", "sk-old");
+    setUserConfigValue("anthropic.apiKey", "sk-ant-keep");
+    expect(unsetUserConfigValue("openai.apiKey")).toBe(true);
+    expect(readJson(secretsPath())).toEqual({ anthropic: { apiKey: "sk-ant-keep" } });
   });
 
   it("rejects unknown keys", () => {
@@ -290,19 +303,12 @@ describe("getConfigValue", () => {
     const config = loadConfig();
     expect(getConfigValue(config, "indexing.maxDocumentSize")).toBe(4096);
     expect(getConfigValue(config, "logging.level")).toBe("info");
-  });
-
-  it("masks API keys", () => {
-    const config = loadConfig();
-    const withKey: LibScopeConfig = {
-      ...config,
-      embedding: { ...config.embedding, openaiApiKey: "sk-proj-abcdefghijkl9876" },
-    };
-    expect(getConfigValue(withKey, "embedding.openaiApiKey")).toBe("sk-…9876");
+    expect(getConfigValue(config, "llm.provider")).toBe("auto");
   });
 
   it("returns undefined for unset optional keys", () => {
     expect(getConfigValue(loadConfig(), "llm.model")).toBeUndefined();
+    expect(getConfigValue(loadConfig(), "openai.apiKey")).toBeUndefined();
   });
 
   it("reports the user config path under HOME", () => {

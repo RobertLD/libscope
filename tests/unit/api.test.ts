@@ -424,7 +424,8 @@ describe("API routes", () => {
 
       vi.spyOn(configModule, "loadConfig").mockReturnValue({
         embedding: { provider: "local" },
-        llm: { provider: "openai", openaiApiKey: "sk-test" },
+        llm: { provider: "openai" },
+        openai: { apiKey: "sk-test" },
         database: { path: ":memory:" },
         indexing: { maxDocumentSize: 1024 },
         logging: { level: "silent" },

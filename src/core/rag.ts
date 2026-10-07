@@ -1,6 +1,11 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import type { LibScopeConfig } from "../config.js";
+import {
+  DEFAULT_OLLAMA_URL,
+  resolveLlmProviderName,
+  type LibScopeConfig,
+  type LlmSurface,
+} from "../config.js";
 import { searchDocuments, type SearchResult } from "./search.js";
 import { ConfigError, FetchError } from "../errors.js";
 
@@ -66,38 +71,60 @@ export function extractSources(results: SearchResult[]): RagSource[] {
   }));
 }
 
-interface LlmConfig {
-  provider?: "openai" | "ollama" | "anthropic" | "passthrough";
-  model?: string;
-  ollamaUrl?: string;
-  openaiApiKey?: string;
-  anthropicApiKey?: string;
+export { resolveLlmProviderName, type LlmSurface } from "../config.js";
+
+type LlmConfig = NonNullable<LibScopeConfig["llm"]>;
+
+/** Options for resolving `llm.provider` ("auto" depends on the calling surface). */
+export interface LlmResolveOptions {
+  surface?: LlmSurface | undefined;
 }
 
-/** Returns true if the config is set to passthrough mode (delegate synthesis to the calling LLM). */
-export function isPassthroughMode(config: LibScopeConfig): boolean {
-  return config.llm?.provider === "passthrough";
+/**
+ * Returns true if the LLM step is delegated to the caller: `llm.provider` is "passthrough",
+ * or it is "auto" and the surface is "mcp" (the calling assistant is the LLM).
+ */
+export function isPassthroughMode(
+  config: LibScopeConfig,
+  options: LlmResolveOptions = {},
+): boolean {
+  return resolveLlmProviderName(config, options) === "passthrough";
 }
 
-/** Create an LLM provider from config. */
-export function createLlmProvider(config: LibScopeConfig): LlmProvider {
+const NO_LLM_HINT =
+  "No LLM provider configured. Set an OpenAI or Anthropic API key (LIBSCOPE_OPENAI_API_KEY, " +
+  "OPENAI_API_KEY, LIBSCOPE_ANTHROPIC_API_KEY, ANTHROPIC_API_KEY), or run " +
+  '"libscope config set llm.provider <openai|anthropic|ollama|passthrough>".';
+
+/**
+ * Create an LLM provider from config. `llm.provider` "auto" (the default) is resolved with
+ * resolveLlmProviderName. Throws ConfigError when no LLM is available, or when the result is
+ * passthrough (no LLM is created; check isPassthroughMode first).
+ */
+export function createLlmProvider(
+  config: LibScopeConfig,
+  options: LlmResolveOptions = {},
+): LlmProvider {
   const llmConfig: LlmConfig | undefined = config.llm;
-  const providerType = llmConfig?.provider;
+  const providerType = resolveLlmProviderName(config, options);
 
   if (providerType === "openai") {
-    return createOpenAiProvider(config.embedding, llmConfig);
+    return createOpenAiProvider(config.openai?.apiKey, llmConfig);
   }
   if (providerType === "ollama") {
     return createOllamaProvider(config.embedding, llmConfig);
   }
   if (providerType === "anthropic") {
-    return createAnthropicProvider(llmConfig);
+    return createAnthropicProvider(config.anthropic?.apiKey, llmConfig);
+  }
+  if (providerType === "passthrough") {
+    throw new ConfigError(
+      'llm.provider resolves to "passthrough": no LLM is created and the caller writes the ' +
+        "answer from the retrieved context.",
+    );
   }
 
-  throw new ConfigError(
-    "No LLM provider configured. Set llm.provider to 'openai', 'ollama', 'anthropic', or 'passthrough' in your config, " +
-      "or set LIBSCOPE_LLM_PROVIDER environment variable.",
-  );
+  throw new ConfigError(NO_LLM_HINT);
 }
 
 /** Retrieve the top-K search results for a RAG question (default K = 5). */
@@ -138,13 +165,13 @@ export async function getContextForQuestion(
 }
 
 function createOpenAiProvider(
-  embedding: LibScopeConfig["embedding"],
+  apiKey: string | undefined,
   llmConfig: LlmConfig | undefined,
 ): LlmProvider {
-  const apiKey = llmConfig?.openaiApiKey ?? embedding.openaiApiKey;
   if (!apiKey) {
     throw new ConfigError(
-      "OpenAI API key is required. Set llm.openaiApiKey or embedding.openaiApiKey in config.",
+      "OpenAI API key is required. Set LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY, " +
+        'or run "libscope config set openai.apiKey <key>".',
     );
   }
 
@@ -220,7 +247,7 @@ function createOllamaProvider(
   embedding: LibScopeConfig["embedding"],
   llmConfig: LlmConfig | undefined,
 ): LlmProvider {
-  const baseUrl = llmConfig?.ollamaUrl ?? embedding.ollamaUrl ?? "http://localhost:11434";
+  const baseUrl = llmConfig?.url ?? embedding.url ?? DEFAULT_OLLAMA_URL;
   const model = llmConfig?.model ?? "llama3.2";
 
   return {
@@ -282,11 +309,14 @@ function createOllamaProvider(
   };
 }
 
-function createAnthropicProvider(llmConfig: LlmConfig | undefined): LlmProvider {
-  const apiKey = llmConfig?.anthropicApiKey ?? process.env["ANTHROPIC_API_KEY"];
+function createAnthropicProvider(
+  apiKey: string | undefined,
+  llmConfig: LlmConfig | undefined,
+): LlmProvider {
   if (!apiKey) {
     throw new ConfigError(
-      "Anthropic API key is required. Set llm.anthropicApiKey in config or ANTHROPIC_API_KEY env var.",
+      "Anthropic API key is required. Set LIBSCOPE_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY, " +
+        'or run "libscope config set anthropic.apiKey <key>".',
     );
   }
 
