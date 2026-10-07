@@ -64,71 +64,81 @@ function getProjectConfigPath(): string {
   return join(process.cwd(), ".libscope.json");
 }
 
-function loadJsonFile(path: string): Partial<LibScopeConfig> {
+/** A partial config layer (file or env): every key optional, only set keys present. */
+export interface ConfigLayer {
+  embedding?: Partial<LibScopeConfig["embedding"]>;
+  llm?: LibScopeConfig["llm"];
+  database?: Partial<LibScopeConfig["database"]>;
+  indexing?: Partial<LibScopeConfig["indexing"]>;
+  logging?: Partial<LibScopeConfig["logging"]>;
+}
+
+function loadJsonFile(path: string): ConfigLayer {
   try {
     if (!existsSync(path)) return {};
     const content = readFileSync(path, "utf-8");
-    return JSON.parse(content) as Partial<LibScopeConfig>;
+    return JSON.parse(content) as ConfigLayer;
   } catch (err) {
     throw new ConfigError(`Failed to read config file: ${path}`, err);
   }
 }
 
+const EMBEDDING_PROVIDERS = ["local", "ollama", "openai"] as const;
 const LLM_PROVIDERS = ["openai", "ollama", "anthropic", "passthrough"] as const;
+type EmbeddingProviderName = (typeof EMBEDDING_PROVIDERS)[number];
 type LlmProviderName = (typeof LLM_PROVIDERS)[number];
+
+function isEmbeddingProvider(value: string | undefined): value is EmbeddingProviderName {
+  return value !== undefined && (EMBEDDING_PROVIDERS as readonly string[]).includes(value);
+}
 
 function isLlmProvider(value: string | undefined): value is LlmProviderName {
   return value !== undefined && (LLM_PROVIDERS as readonly string[]).includes(value);
 }
 
 /** Env-var flag parsing: only "true" and "1" enable a flag. */
-function truthy(value: string | undefined): boolean {
-  return value === "true" || value === "1";
+function truthy(value: string | undefined): true | undefined {
+  return value === "true" || value === "1" ? true : undefined;
 }
 
-function getEnvOverrides(): Partial<LibScopeConfig> {
-  const overrides: Partial<LibScopeConfig> = {};
-  const provider = process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
-  const openaiKey = process.env["LIBSCOPE_OPENAI_API_KEY"];
-  const ollamaUrl = process.env["LIBSCOPE_OLLAMA_URL"];
+type Compact<T> = { [K in keyof T]?: Exclude<T[K], undefined> };
 
-  if (provider === "local" || provider === "ollama" || provider === "openai") {
-    overrides.embedding = { ...DEFAULT_CONFIG.embedding, provider };
+/** Drop undefined and empty-string values so a layer only carries keys that were actually set. */
+function compact<T extends Record<string, unknown>>(obj: T): Compact<T> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined && value !== "") out[key] = value;
   }
-  if (openaiKey) {
-    overrides.embedding = {
-      ...(overrides.embedding ?? DEFAULT_CONFIG.embedding),
-      openaiApiKey: openaiKey,
-    };
-  }
-  if (ollamaUrl) {
-    overrides.embedding = { ...(overrides.embedding ?? DEFAULT_CONFIG.embedding), ollamaUrl };
-  }
+  return out as Compact<T>;
+}
 
-  const llmProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
-  const llmModel = process.env["LIBSCOPE_LLM_MODEL"];
-  const allowPrivate = truthy(process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"]);
-  const allowSelfSigned = truthy(process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"]);
-
-  if (allowPrivate || allowSelfSigned) {
-    overrides.indexing = {
-      ...DEFAULT_CONFIG.indexing,
-      ...(allowPrivate ? { allowPrivateUrls: true } : {}),
-      ...(allowSelfSigned ? { allowSelfSignedCerts: true } : {}),
-    };
-  }
-
+/** Collect config values from LIBSCOPE_* env vars. Only variables that are set appear in the result. */
+function getEnvOverrides(): ConfigLayer {
+  const env = process.env;
+  const provider = env["LIBSCOPE_EMBEDDING_PROVIDER"];
+  const llmProvider = env["LIBSCOPE_LLM_PROVIDER"];
+  const llmModel = env["LIBSCOPE_LLM_MODEL"];
   const validLlmProvider = isLlmProvider(llmProvider);
-  if (validLlmProvider || llmModel) {
-    const anthropicKey = process.env["LIBSCOPE_ANTHROPIC_API_KEY"];
-    overrides.llm = {
-      ...(validLlmProvider ? { provider: llmProvider } : {}),
-      ...(llmModel ? { model: llmModel } : {}),
-      ...(anthropicKey ? { anthropicApiKey: anthropicKey } : {}),
-    };
-  }
 
-  return overrides;
+  return {
+    embedding: compact({
+      provider: isEmbeddingProvider(provider) ? provider : undefined,
+      openaiApiKey: env["LIBSCOPE_OPENAI_API_KEY"],
+      ollamaUrl: env["LIBSCOPE_OLLAMA_URL"],
+    }),
+    llm:
+      validLlmProvider || llmModel
+        ? compact({
+            provider: validLlmProvider ? llmProvider : undefined,
+            model: llmModel,
+            anthropicApiKey: env["LIBSCOPE_ANTHROPIC_API_KEY"],
+          })
+        : {},
+    indexing: compact({
+      allowPrivateUrls: truthy(env["LIBSCOPE_ALLOW_PRIVATE_URLS"]),
+      allowSelfSignedCerts: truthy(env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"]),
+    }),
+  };
 }
 
 let _configCache: LibScopeConfig | null = null;
