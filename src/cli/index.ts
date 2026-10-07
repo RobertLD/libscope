@@ -17,6 +17,7 @@ import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
+import { globToRegExp, toPosixPath } from "../utils/glob.js";
 import { fileURLToPath } from "node:url";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { spiderUrl } from "../core/spider.js";
@@ -744,10 +745,11 @@ program
     ) => {
       const { db, provider } = initializeAppWithEmbedding();
       try {
-        const { globSync } = await import("node:fs");
-        const files = globSync(opts.filter, { cwd: directory }).map((f: string) =>
-          join(directory, f),
-        );
+        const matcher = globToRegExp(opts.filter);
+        const files = readdirSync(directory, { recursive: true, encoding: "utf8" })
+          .filter((f) => matcher.test(toPosixPath(f)))
+          .map((f) => join(directory, f))
+          .filter((f) => statSync(f).isFile());
         files.sort();
 
         if (files.length === 0) {

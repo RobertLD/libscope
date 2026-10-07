@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, rmSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
+import { globToRegExp, toPosixPath } from "../../utils/glob.js";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { LibScopeLite } from "../../lite/core.js";
@@ -54,20 +55,10 @@ function detectLanguage(filePath: string): string | undefined {
   return EXTENSION_MAP[ext];
 }
 
-/** Convert a glob-style pattern to a RegExp. Handles ** and * wildcards. */
-function globToRegex(pattern: string): RegExp {
-  const escaped = pattern
-    .replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
-    .replaceAll("**", "§DOUBLESTAR§")
-    .replaceAll("*", "[^/]*")
-    .replaceAll("§DOUBLESTAR§", ".*");
-  return new RegExp(`^${escaped}$`);
-}
-
 /** Recursively list all files under dir, returning paths relative to dir. */
 function walkFiles(dir: string, include?: string[], exclude?: string[]): string[] {
-  const includeRegexes = include?.map(globToRegex);
-  const excludeRegexes = exclude?.map(globToRegex);
+  const includeRegexes = include?.map(globToRegExp);
+  const excludeRegexes = exclude?.map(globToRegExp);
   const results: string[] = [];
 
   function recurse(current: string): void {
@@ -85,8 +76,9 @@ function walkFiles(dir: string, include?: string[], exclude?: string[]): string[
         if (entry.name.startsWith(".")) continue;
         recurse(full);
       } else if (entry.isFile()) {
-        if (excludeRegexes?.some((rx) => rx.test(rel))) continue;
-        if (includeRegexes && !includeRegexes.some((rx) => rx.test(rel))) continue;
+        const posixRel = toPosixPath(rel);
+        if (excludeRegexes?.some((rx) => rx.test(posixRel))) continue;
+        if (includeRegexes && !includeRegexes.some((rx) => rx.test(posixRel))) continue;
         results.push(rel);
       }
     }

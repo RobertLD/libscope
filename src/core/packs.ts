@@ -24,6 +24,7 @@ import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { suggestTagsFromText } from "./tags.js";
 import { fetchAndConvert } from "./url-fetcher.js";
+import { globToRegExp, toPosixPath } from "../utils/glob.js";
 
 export interface PackDocument {
   title: string;
@@ -709,18 +710,6 @@ export function createPack(db: Database.Database, options: CreatePackOptions): K
 // Create pack from filesystem / URL sources (no database required)
 // ---------------------------------------------------------------------------
 
-/** Simple glob-style pattern matching (supports * and ** wildcards). */
-function matchesExcludePattern(relativePath: string, pattern: string): boolean {
-  // Escape regex special chars except * and **
-  // prettier-ignore
-  const escaped = pattern
-    .replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
-    .replaceAll("**", "\0")
-    .replaceAll("*", "[^/]*")
-    .replaceAll("\0", ".*");
-  return new RegExp(`^${escaped}$`).test(relativePath);
-}
-
 /** Recursively collect files from a directory. */
 function collectFiles(
   dir: string,
@@ -730,6 +719,7 @@ function collectFiles(
   excludePatterns: string[],
 ): string[] {
   const results: string[] = [];
+  const excludeRegexes = excludePatterns.map(globToRegExp);
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -744,7 +734,7 @@ function collectFiles(
     const rel = relative(rootDir, fullPath);
 
     // Check exclude patterns
-    if (excludePatterns.some((p) => matchesExcludePattern(rel, p))) {
+    if (excludeRegexes.some((rx) => rx.test(toPosixPath(rel)))) {
       continue;
     }
 
