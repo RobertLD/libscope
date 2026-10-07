@@ -10,6 +10,7 @@ import {
   listDocumentsOperation,
   rateDocumentOperation,
   rollbackDocumentOperation,
+  startOperationTask,
   updateDocumentOperation,
 } from "../../../src/core/operations/index.js";
 import { createTopic } from "../../../src/core/topics.js";
@@ -72,6 +73,13 @@ describe("document operations", () => {
 
         const mcp = makeContext({ db: t.db, surface: "mcp" });
         await expectValidationError(run(addOperation, mcp.ctx, { source: dir }));
+        // Refused before a background task starts, also for paths that do not exist.
+        const api = makeContext({ db: t.db, surface: "api" });
+        for (const source of [dir, join(dir, "missing")]) {
+          expect(() => startOperationTask(addOperation, api.ctx, { source })).toThrow(
+            /only available from the CLI/,
+          );
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

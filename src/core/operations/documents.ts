@@ -9,7 +9,7 @@ import {
   type Document,
 } from "../documents.js";
 import { getDocumentView } from "../document-view.js";
-import { detectIngestKind, ingest } from "../ingest.js";
+import { detectIngestKind, ingest, isHttpUrl } from "../ingest.js";
 import { rateDocument } from "../ratings.js";
 import { addTagsToDocument, getDocumentTags, removeTagsFromDocument } from "../tags.js";
 import { findTopicId, resolveTopicId } from "../topics.js";
@@ -39,6 +39,15 @@ export function topicForFilter(
   topic: string | undefined,
 ): string | undefined {
   return topic === undefined ? undefined : (findTopicId(ctx.db, topic) ?? topic);
+}
+
+/** What `add` reads: `source`, else `url` when no inline content is given. */
+function addSource(input: {
+  source?: string | undefined;
+  content?: string | undefined;
+  url?: string | undefined;
+}): string | undefined {
+  return input.source ?? (input.content === undefined ? input.url : undefined);
 }
 
 export const addOperation = defineOperation({
@@ -117,23 +126,31 @@ export const addOperation = defineOperation({
   }),
   annotations: { longRunning: true },
   http: { method: "POST", path: "/documents" },
-  async handler(ctx, input) {
-    const source = input.source ?? (input.content === undefined ? input.url : undefined);
-    const ingestInput = {
-      ...input,
-      source,
-      topic: topicForWrite(ctx, input.topic),
-    };
-    const kind = detectIngestKind(ingestInput);
-    // Remote callers must not read files from the server's disk.
-    if (
-      (kind === "file" || kind === "directory") &&
-      (ctx.surface === "mcp" || ctx.surface === "api")
-    ) {
+  validate(ctx, input) {
+    const source = addSource(input);
+    if (input.content === undefined && source === undefined) {
+      throw new ValidationError("Provide content, or a file, directory or URL to add");
+    }
+    topicForWrite(ctx, input.topic);
+    // Remote callers must not read (or probe for) files on the server's disk.
+    if (ctx.surface !== "mcp" && ctx.surface !== "api") return;
+    const local =
+      input.kind === "file" ||
+      input.kind === "directory" ||
+      (input.kind === "auto" && input.content === undefined && !isHttpUrl(source ?? ""));
+    if (local) {
       throw new ValidationError(
         "Adding local files or directories is only available from the CLI and SDK",
       );
     }
+  },
+  async handler(ctx, input) {
+    const ingestInput = {
+      ...input,
+      source: addSource(input),
+      topic: topicForWrite(ctx, input.topic),
+    };
+    const kind = detectIngestKind(ingestInput);
     return ingest(
       {
         db: ctx.db,

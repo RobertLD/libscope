@@ -71,6 +71,11 @@ export interface Operation<S extends z.ZodObject = z.ZodObject, O = unknown> {
   annotations?: OperationAnnotations;
   /** REST mapping; `:name` path segments are filled from input fields of the same name. */
   http?: { method: HttpMethod; path: string };
+  /**
+   * Synchronous checks that need the context (e.g. the surface or saved settings). They run
+   * before the handler and before a background task starts, so callers get the error at once.
+   */
+  validate?(ctx: OperationContext, input: z.output<S>): void;
   handler(ctx: OperationContext, input: z.output<S>): Promise<O> | O;
 }
 
@@ -101,20 +106,31 @@ export function parseOperationInput<S extends z.ZodObject>(
   return parsed.data;
 }
 
+/** Parse `rawInput`, then run the operation's `validate` hook. */
+function prepareInput<S extends z.ZodObject>(
+  op: Operation<S, unknown>,
+  ctx: OperationContext,
+  rawInput: unknown,
+): z.output<S> {
+  const input = parseOperationInput(op, rawInput);
+  op.validate?.(ctx, input);
+  return input;
+}
+
 /** Validate `rawInput` against the operation's schema and run it. ZodError -> ValidationError. */
 export async function runOperation<S extends z.ZodObject, O>(
   op: Operation<S, O>,
   ctx: OperationContext,
   rawInput: unknown,
 ): Promise<O> {
-  const input = parseOperationInput(op, rawInput);
+  const input = prepareInput(op, ctx, rawInput);
   ctx.signal?.throwIfAborted();
   return op.handler(ctx, input);
 }
 
 /**
- * Validate input now, then run the operation as a background task in the shared task
- * registry. The task's signal and progress replace any in `ctx`. Returns the task; its
+ * Validate input now (schema and `validate` hook), then run the operation as a background
+ * task in the shared task registry. The task's signal and progress replace any in `ctx`. Returns the task; its
  * `result` is the JSON-encoded operation result.
  */
 export function startOperationTask<S extends z.ZodObject, O>(
@@ -122,7 +138,7 @@ export function startOperationTask<S extends z.ZodObject, O>(
   ctx: OperationContext,
   rawInput: unknown,
 ): Task {
-  const input = parseOperationInput(op, rawInput);
+  const input = prepareInput(op, ctx, rawInput);
   const { task } = taskRegistry.run(
     "operation",
     async (signal, onProgress) => {

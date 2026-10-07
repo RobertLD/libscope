@@ -257,7 +257,7 @@ export async function runSavedConnectorSync(
 }
 
 /** Connector type of saved connection `name`. Throws NotFoundError when it does not exist. */
-function savedConnectionType(name: string): ConnectorType {
+export function savedConnectionType(name: string): ConnectorType {
   if (!hasNamedConnectorConfig(name)) {
     throw new NotFoundError(
       `No saved connection named "${name}". Create one with 'libscope connect <type>'.`,
@@ -372,7 +372,8 @@ export function listConnections(db: Database.Database): ConnectionInfo[] {
 /**
  * Disconnect saved connection `name`: remove the documents its connector created (unless
  * `keepDocuments`) and delete the saved config (it may hold credentials). Without a saved
- * config, `type` must be given and only documents are removed.
+ * config, `type` (or a `name` that is a connector type) selects the connector and only
+ * documents are removed; otherwise an unknown name throws NotFoundError.
  */
 export async function disconnectConnection(
   db: Database.Database,
@@ -385,7 +386,12 @@ export async function disconnectConnection(
   configRemoved: boolean;
 }> {
   const saved = hasNamedConnectorConfig(name);
-  const type = saved ? savedConnectionType(name) : getConnector(options.type ?? name).type;
+  // Without a saved connection, `name` may be a connector type (connection saved before names).
+  const fallbackType = options.type ?? (isConnectorType(name) ? name : undefined);
+  const type =
+    saved || fallbackType === undefined
+      ? savedConnectionType(name)
+      : getConnector(fallbackType).type;
   if (options.type && options.type !== type) {
     throw new ValidationError(`Connection "${name}" is a ${type} connection, not ${options.type}`);
   }

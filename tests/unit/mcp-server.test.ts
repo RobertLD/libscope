@@ -424,6 +424,10 @@ describe("MCP server: tool calls", () => {
     expect(status).toContain("Background (documentId: ");
 
     expect(await callError(client, "submit-document", {})).toContain("Provide content");
+    // Checked before a background task starts: the error comes back at once, with no taskId.
+    const background = await callError(client, "submit-document", { async: true });
+    expect(background).toContain("Provide content");
+    expect(background).not.toContain("taskId");
     expect(await callError(client, "submit-document", { url: "/etc/passwd" })).toMatch(/url/);
     expect(await callError(client, "submit-document", { title: "T", content: "" })).toMatch(
       /content/,
