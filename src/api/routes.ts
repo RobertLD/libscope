@@ -1,41 +1,25 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
-import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { performance } from "node:perf_hooks";
 import type { EmbeddingProvider } from "../providers/embedding.js";
+import { searchDocuments } from "../core/search.js";
+import { listDocuments, getDocument, deleteDocument, updateDocument } from "../core/documents.js";
+import { indexDocument } from "../core/indexing.js";
+import { listTopics, createTopic } from "../core/topics.js";
+import { listTags, addTagsToDocument, suggestTags } from "../core/tags.js";
+import { getStats, getSearchAnalytics, getKnowledgeGaps } from "../core/analytics.js";
+import { fetchAndConvert } from "../core/url-fetcher.js";
+import { askQuestion, askQuestionStream, createLlmProvider } from "../core/rag.js";
+import { createLink, getDocumentLinks, deleteLink, type LinkType } from "../core/links.js";
 import {
-  searchDocuments,
-  listDocuments,
-  getDocument,
-  indexDocument,
-  deleteDocument,
-  updateDocument,
-  listTopics,
-  createTopic,
-  listTags,
-  addTagsToDocument,
-  suggestTags,
-  getStats,
-  getSearchAnalytics,
-  getKnowledgeGaps,
-  fetchAndConvert,
-  askQuestion,
-  askQuestionStream,
-  createLlmProvider,
-  createLink,
-  getDocumentLinks,
-  deleteLink,
   createSavedSearch,
   listSavedSearches,
   runSavedSearch,
   deleteSavedSearch,
-  bulkDelete,
-  bulkRetag,
-  bulkMove,
-  searchBatch,
-} from "../core/index.js";
-import type { LinkType, BulkSelector, BatchSearchRequest } from "../core/index.js";
+} from "../core/saved-searches.js";
+import { bulkDelete, bulkRetag, bulkMove, type BulkSelector } from "../core/bulk.js";
+import { searchBatch, type BatchSearchRequest } from "../core/batch-search.js";
 import { LINK_TYPES } from "../core/links.js";
 import { loadConfig } from "../config.js";
 import { NotFoundError, FetchError, LibScopeError } from "../errors.js";
@@ -56,8 +40,6 @@ import type { WebhookEvent } from "../core/webhooks.js";
 import { loadScheduleEntries } from "../core/scheduler.js";
 import { spiderUrl } from "../core/spider.js";
 import type { SpiderOptions } from "../core/spider.js";
-import { loadReposConfig, createRepoLibScope } from "./indexing/repoConfig.js";
-import { indexRepo, type IndexJobStats } from "./indexing/repoIndexer.js";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -72,22 +54,6 @@ interface RouteContext {
   url: URL;
   start: number;
 }
-
-// ---------------------------------------------------------------------------
-// Repo index job registry
-// ---------------------------------------------------------------------------
-
-interface IndexJob {
-  jobId: string;
-  repoSlug: string;
-  status: "queued" | "running" | "completed" | "failed";
-  startedAt: string;
-  completedAt?: string;
-  stats?: IndexJobStats;
-  error?: string;
-}
-
-const repoIndexJobs = new Map<string, IndexJob>();
 
 // ---------------------------------------------------------------------------
 // URL / path helpers
@@ -775,80 +741,6 @@ function handleDeleteWebhook(ctx: RouteContext, webhookId: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Repo indexing webhook handler
-// ---------------------------------------------------------------------------
-
-function handleGetIndexJob(ctx: RouteContext, jobId: string): void {
-  const job = repoIndexJobs.get(jobId);
-  if (!job) {
-    sendError(ctx.res, 404, "NOT_FOUND", `Index job "${jobId}" not found`);
-    return;
-  }
-  sendJson(ctx.res, 200, job, elapsed(ctx.start));
-}
-
-async function handleIndexRepo(ctx: RouteContext, repoSlug: string): Promise<void> {
-  const log = getLogger();
-
-  // Parse optional body — empty body is valid (full reindex)
-  let body: Record<string, unknown> = {};
-  try {
-    const parsed = await parseJsonBody(ctx.req);
-    if (parsed && typeof parsed === "object") {
-      body = parsed as Record<string, unknown>;
-    }
-  } catch {
-    /* empty body or non-JSON — treat as full reindex request */
-  }
-
-  const branch = typeof body["branch"] === "string" ? body["branch"] : undefined;
-  const files = Array.isArray(body["files"])
-    ? (body["files"] as unknown[]).filter((f): f is string => typeof f === "string")
-    : undefined;
-
-  const config = loadReposConfig();
-  const entry = config.repos[repoSlug];
-  if (!entry) {
-    sendError(ctx.res, 404, "NOT_FOUND", `Repo "${repoSlug}" not found in repos config`);
-    return;
-  }
-
-  const jobId = randomUUID();
-  const job: IndexJob = {
-    jobId,
-    repoSlug,
-    status: "queued",
-    startedAt: new Date().toISOString(),
-  };
-  repoIndexJobs.set(jobId, job);
-
-  sendJson(ctx.res, 202, { jobId, status: "queued" }, elapsed(ctx.start));
-
-  // Fire-and-forget indexing job
-  const libscope = createRepoLibScope(repoSlug);
-  job.status = "running";
-  const indexOpts: { branch?: string; files?: string[] } = {};
-  if (branch !== undefined) indexOpts.branch = branch;
-  if (files !== undefined) indexOpts.files = files;
-  indexRepo(libscope, repoSlug, entry, indexOpts)
-    .then((stats) => {
-      job.status = "completed";
-      job.completedAt = new Date().toISOString();
-      job.stats = stats;
-      log.info({ jobId, repoSlug, stats }, "Repo indexing completed");
-    })
-    .catch((err: unknown) => {
-      job.status = "failed";
-      job.completedAt = new Date().toISOString();
-      job.error = err instanceof Error ? err.message : String(err);
-      log.error({ jobId, repoSlug, err }, "Repo indexing failed");
-    })
-    .finally(() => {
-      libscope.close();
-    });
-}
-
-// ---------------------------------------------------------------------------
 // Error classification helper
 // ---------------------------------------------------------------------------
 
@@ -964,8 +856,6 @@ const PATTERN_ROUTES: PatternRoute[] = [
   route("POST /api/v1/searches", handleCreateSavedSearch),
   route("POST /api/v1/bulk/:operation", handleBulkOperation),
   route("DELETE /api/v1/searches/:id", handleDeleteSavedSearch),
-  route("GET /api/v1/index/jobs/:jobId", handleGetIndexJob),
-  route("POST /api/v1/index/repos/:repoSlug", handleIndexRepo),
   route("GET /api/v1/webhooks", handleListWebhooks),
   route("POST /api/v1/webhooks", handleCreateWebhook),
   route("POST /api/v1/webhooks/:id/test", handleTestWebhook),
