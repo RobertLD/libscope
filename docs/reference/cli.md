@@ -2,6 +2,8 @@
 
 Every command is a thin wrapper over one LibScope operation, so the CLI, the MCP server, the REST API and the SDK use the same parameters and defaults. Upgrading from 1.x? See [Migrating to LibScope 2.0](/migration-v2#cli).
 
+The usage lines and option tables on this page are generated from the CLI code (`npm run docs:gen`). `libscope <command> --help` prints the same text.
+
 | Command                                                       | What it does                                                   |
 | ------------------------------------------------------------- | -------------------------------------------------------------- |
 | [`add`](#libscope-add)                                        | Add files, directories, URLs (optionally crawled) or repos     |
@@ -23,12 +25,19 @@ Every command is a thin wrapper over one LibScope operation, so the CLI, the MCP
 
 These go before or after the command name.
 
-| Option                | Description                                                     |
-| --------------------- | --------------------------------------------------------------- |
-| `--json`              | Print the operation result as JSON (for scripts)                |
-| `-v, --verbose`       | Debug logging, and the stack trace when a command fails         |
-| `--log-level <level>` | `debug`, `info`, `warn`, `error` or `silent` (default `silent`) |
-| `--workspace <name>`  | Use this workspace instead of the active one                    |
+<!-- generated:start cli:global -->
+Usage: `libscope [options] <command>`
+
+| Option                | Description                                                                     |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `-V, --version`       | output the version number                                                       |
+| `--json`              | Print results as JSON                                                           |
+| `-v, --verbose`       | Debug logging, and stack traces on errors                                       |
+| `--log-level <level>` | Log level (default silent). One of: `debug`, `info`, `warn`, `error`, `silent`. |
+| `--workspace <name>`  | Use this workspace instead of the active one                                    |
+
+`-h, --help` shows the help of the program or of any command.
+<!-- generated:end cli:global -->
 
 Every result shows document IDs (and chunk IDs for search hits), so you can pass them to the next command.
 
@@ -51,10 +60,6 @@ Commands that select documents (`search`, `ask`, `docs list`, `searches save`, `
 
 ## `libscope add`
 
-```bash
-libscope add <sources...> [options]
-```
-
 Each source can be a file, a directory, a URL or a GitHub/GitLab repository URL. LibScope detects which one it is. A local file's absolute path is stored as its URL, so adding a changed file again replaces the old version.
 
 ```bash
@@ -67,39 +72,41 @@ libscope add https://github.com/org/repo --branch main --path docs
 libscope add ./docs --dry-run                    # list what would be added
 ```
 
-| Option                   | Applies to | Description                                                                                          |
-| ------------------------ | ---------- | ---------------------------------------------------------------------------------------------------- |
-| `--topic <topic>`        | all        | Topic ID or name (the topic must exist)                                                              |
-| `--library <name>`       | all        | Library name                                                                                         |
-| `--lib-version <ver>`    | all        | Library version                                                                                      |
-| `--source-type <type>`   | all        | Default: `library` with `--library`, `topic` with `--topic`, else `manual` (repositories: `library`) |
-| `--tags <a,b>`           | all        | Tags to add to every new document                                                                    |
-| `--title <title>`        | file, URL  | Title (default: file name or page title)                                                             |
-| `--format <ext>`         | files      | Read files as this format, e.g. `.pdf`                                                               |
-| `--dedup <mode>`         | all        | `skip`, `warn` or `force`                                                                            |
-| `--expires <time>`       | all        | ISO 8601 time after which `admin prune` deletes the documents                                        |
-| `--include <globs>`      | directory  | Only files matching these globs (comma-separated)                                                    |
-| `--exclude <globs>`      | directory  | Skip files matching these globs (comma-separated)                                                    |
-| `--watch`                | directory  | Keep running and re-index files when they change                                                     |
-| `--spider`               | URL        | Also crawl linked pages                                                                              |
-| `--max-pages <n>`        | crawl      | Page limit (default 25, max 200)                                                                     |
-| `--max-depth <n>`        | crawl      | Link depth (default 2, max 5)                                                                        |
-| `--no-same-domain`       | crawl      | Also follow links to other domains                                                                   |
-| `--path-prefix <path>`   | crawl      | Only follow links under this path                                                                    |
-| `--exclude-urls <globs>` | crawl      | Skip URLs matching these globs (comma-separated)                                                     |
-| `--branch <name>`        | repository | Branch (default: from the URL, else `main`)                                                          |
-| `--path <dirs>`          | repository | Only these subdirectories (comma-separated)                                                          |
-| `--extensions <exts>`    | repository | File extensions (default `.md,.mdx,.txt,.rst`)                                                       |
-| `--token <token>`        | repository | Access token for a private repository                                                                |
-| `--dry-run`              | all        | List what would be added without adding it                                                           |
+<!-- generated:start cli:add -->
+Usage: `libscope add <sources...>`
+
+Add files, directories, URLs or GitHub/GitLab repository URLs to the knowledge base.
+
+| Option                    | Description                                                   |
+| ------------------------- | ------------------------------------------------------------- |
+| `--topic <topic>`         | Topic (ID or name)                                            |
+| `--library <name>`        | Library name                                                  |
+| `--lib-version <version>` | Library version                                               |
+| `--source-type <type>`    | Source type (library, topic, manual, model-generated)         |
+| `--tags <tags>`           | Tags to add (comma-separated)                                 |
+| `--title <title>`         | Title (one file or URL; default: detected)                    |
+| `--format <ext>`          | Read files as this format, e.g. .pdf                          |
+| `--dedup <mode>`          | Duplicate handling: skip, warn or force                       |
+| `--expires <time>`        | ISO 8601 time after which `admin prune` deletes the documents |
+| `--include <globs>`       | Directory: only files matching these globs (comma-separated)  |
+| `--exclude <globs>`       | Directory: skip files matching these globs (comma-separated)  |
+| `--watch`                 | Directory: keep running and re-index files when they change   |
+| `--spider`                | URL: also crawl linked pages                                  |
+| `--max-pages <n>`         | Crawl: page limit (default 25, max 200)                       |
+| `--max-depth <n>`         | Crawl: link depth (default 2, max 5)                          |
+| `--no-same-domain`        | Crawl: also follow links to other domains                     |
+| `--path-prefix <path>`    | Crawl: only follow links under this path                      |
+| `--exclude-urls <globs>`  | Crawl: skip URLs matching these globs (comma-separated)       |
+| `--branch <name>`         | Repository: branch (default: from the URL, else main)         |
+| `--path <dirs>`           | Repository: only these subdirectories (comma-separated)       |
+| `--extensions <exts>`     | Repository: file extensions (default .md,.mdx,.txt,.rst)      |
+| `--token <token>`         | Repository: access token for a private repository             |
+| `--dry-run`               | List what would be added without adding it                    |
+<!-- generated:end cli:add -->
 
 With `--json`, `add` prints one result per source: `{ kind, documents: [{ documentId, title, chunkCount, source }], errors, skipped, planned?, crawl? }`.
 
 ## `libscope search`
-
-```bash
-libscope search [query] [options]
-```
 
 ```bash
 libscope search "authentication best practices" --library my-lib -n 10
@@ -108,15 +115,25 @@ libscope search --related <documentId|chunkId>   # content similar to a document
 libscope search                                  # interactive search (on a terminal)
 ```
 
-Takes the [document filters](#document-filters) and:
+<!-- generated:start cli:search -->
+Usage: `libscope search [query]`
 
-| Option              | Description                                            |
-| ------------------- | ------------------------------------------------------ |
-| `--related <id>`    | Find content similar to this document or chunk ID      |
-| `--offset <n>`      | Results to skip (paging)                               |
-| `--min-rating <n>`  | Only documents with at least this average rating (1-5) |
-| `--max-per-doc <n>` | At most this many chunks per document                  |
-| `--context <n>`     | Neighbouring chunks to show around each result (0-2)   |
+Search by meaning and keywords. With no query on a terminal, start interactive search.
+
+| Option                    | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `--related <id>`          | Find content similar to this document or chunk ID instead       |
+| `--topic <topic>`         | Only this topic (ID or name)                                    |
+| `--library <name>`        | Only this library                                               |
+| `--lib-version <version>` | Only this library version                                       |
+| `--source-type <type>`    | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`           | Only documents with all these tags (comma-separated)            |
+| `-n, --limit <n>`         | Maximum results                                                 |
+| `--offset <n>`            | Results to skip (paging)                                        |
+| `--min-rating <n>`        | Only documents rated at least this (1-5)                        |
+| `--max-per-doc <n>`       | At most this many chunks per document                           |
+| `--context <n>`           | Neighbouring chunks to show around each result (0-2)            |
+<!-- generated:end cli:search -->
 
 With no query and no `--related`, on a terminal, `search` starts interactive mode: type a query, see results, repeat. Type `quit`, `exit` or press Ctrl+D to leave. The filters given on the command line apply to every query.
 
@@ -127,30 +144,135 @@ libscope ask "How do I configure OAuth2?" --library my-lib -n 8
 libscope ask "What changed in v2?" --model gpt-4o-mini
 ```
 
-Takes the [document filters](#document-filters) (`-n` is the number of chunks used as context, default 5), `--min-rating <n>` and `--model <model>` (LLM model for this question).
+<!-- generated:start cli:ask -->
+Usage: `libscope ask <question>`
+
+Answer a question from the knowledge base with the configured LLM.
+
+| Option                    | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `--topic <topic>`         | Only this topic (ID or name)                                    |
+| `--library <name>`        | Only this library                                               |
+| `--lib-version <version>` | Only this library version                                       |
+| `--source-type <type>`    | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`           | Only documents with all these tags (comma-separated)            |
+| `-n, --limit <n>`         | Chunks to use as context (default 5)                            |
+| `--min-rating <n>`        | Only documents rated at least this (1-5)                        |
+| `--model <model>`         | LLM model for this question (default: llm.model)                |
+<!-- generated:end cli:ask -->
 
 `ask` needs an LLM. With `llm.provider` set to `auto` (the default), LibScope uses OpenAI when an OpenAI API key is set, else Anthropic when an Anthropic key is set, else Ollama when `llm.url` is set or the embedding provider is Ollama. Without an LLM, `ask` fails with a hint; `libscope doctor` shows what is resolved. With `llm.provider passthrough`, `ask` prints the retrieved context instead of an answer.
 
 ## `libscope docs`
 
-| Command                                                                                      | Description                                                                            |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `docs list [filters] [--offset <n>]`                                                         | List documents, newest first                                                           |
-| `docs show <documentId> [--offset <n>] [--max-length <n>]`                                   | Show a document with its tags, links and rating summary                                |
-| `docs update <documentId> [options]`                                                         | Change title, content, metadata or tags                                                |
-| `docs delete <documentId> [-y]`                                                              | Delete a document with its chunks, links and ratings                                   |
-| `docs history <documentId>`                                                                  | List saved versions                                                                    |
-| `docs rollback <documentId> <version>`                                                       | Restore a saved version (the current state is saved first)                             |
-| `docs rate <documentId> <1-5> [--feedback <text>] [--correction <text>] [--chunk <chunkId>]` | Rate a document or one chunk                                                           |
-| `docs link <documentId> <targetDocumentId> --type <type> [--label <text>]`                   | Link two documents (`see_also`, `prerequisite`, `supersedes`, `related`, `references`) |
-| `docs unlink <linkId>`                                                                       | Delete a link                                                                          |
-| `docs links [documentId] [--type <type>]`                                                    | Links of one document (both directions), or every link                                 |
-| `docs prereqs <documentId>`                                                                  | Documents to read first, following prerequisite links                                  |
-| `docs tag <documentId> <tags...>`                                                            | Add tags (space- or comma-separated)                                                   |
-| `docs untag <documentId> <tags...>`                                                          | Remove tags                                                                            |
-| `docs suggest-tags <documentId> [-n <n>]`                                                    | Suggest tags from the content                                                          |
+<!-- generated:start cli:docs -->
+### `libscope docs list`
 
-`docs update` options: `--title`, `--content <text>`, `--content-file <path>`, `--library`, `--lib-version`, `--url`, `--topic <topic>` and `--tags <a,b>` (replaces all tags). Changing the content re-chunks and re-embeds the document.
+List documents, newest first.
+
+| Option                    | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `--topic <topic>`         | Only this topic (ID or name)                                    |
+| `--library <name>`        | Only this library                                               |
+| `--lib-version <version>` | Only this library version                                       |
+| `--source-type <type>`    | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`           | Only documents with all these tags (comma-separated)            |
+| `-n, --limit <n>`         | Maximum results                                                 |
+| `--offset <n>`            | Documents to skip (paging)                                      |
+
+### `libscope docs show <documentId>`
+
+Show a document with its tags, links and ratings.
+
+| Option             | Description                                  |
+| ------------------ | -------------------------------------------- |
+| `--offset <n>`     | Start the content at this character          |
+| `--max-length <n>` | Show at most this many characters of content |
+
+### `libscope docs history <documentId>`
+
+List saved versions of a document.
+
+### `libscope docs update <documentId>`
+
+Change a document's title, content, metadata or tags.
+
+| Option                    | Description                                   |
+| ------------------------- | --------------------------------------------- |
+| `--title <title>`         | New title                                     |
+| `--content <text>`        | New content (re-chunked and re-embedded)      |
+| `--content-file <path>`   | Read the new content from a file              |
+| `--library <name>`        | New library name                              |
+| `--lib-version <version>` | New library version                           |
+| `--url <url>`             | New URL                                       |
+| `--topic <topic>`         | New topic (ID or name)                        |
+| `--tags <tags>`           | Replace the tags with these (comma-separated) |
+
+### `libscope docs delete <documentId>`
+
+Delete a document with its chunks, links and ratings.
+
+| Option      | Description                 |
+| ----------- | --------------------------- |
+| `-y, --yes` | Do not ask for confirmation |
+
+### `libscope docs rollback <documentId> <version>`
+
+Restore a saved version (the current state is saved first).
+
+### `libscope docs rate <documentId> <rating>`
+
+Rate a document from 1 (poor) to 5 (excellent).
+
+| Option                | Description                    |
+| --------------------- | ------------------------------ |
+| `--feedback <text>`   | What is good or wrong          |
+| `--correction <text>` | Suggested replacement text     |
+| `--chunk <chunkId>`   | Rate one chunk of the document |
+
+### `libscope docs link <documentId> <targetDocumentId>`
+
+Link one document to another.
+
+| Option           | Description                                                                   |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `--type <type>`  | Link type: see_also, prerequisite, supersedes, related, references. Required. |
+| `--label <text>` | Short description of the relationship                                         |
+
+### `libscope docs unlink <linkId>`
+
+Delete a link (link IDs are shown by `docs links`).
+
+### `libscope docs links [documentId]`
+
+List the links of a document, or every link.
+
+| Option          | Description                                                                  |
+| --------------- | ---------------------------------------------------------------------------- |
+| `--type <type>` | Only this link type: see_also, prerequisite, supersedes, related, references |
+
+### `libscope docs prereqs <documentId>`
+
+List the documents to read first (following prerequisite links).
+
+### `libscope docs tag <documentId> <tags...>`
+
+Add tags to a document (space- or comma-separated).
+
+### `libscope docs untag <documentId> <tags...>`
+
+Remove tags from a document.
+
+### `libscope docs suggest-tags <documentId>`
+
+Suggest tags from a document's content.
+
+| Option            | Description         |
+| ----------------- | ------------------- |
+| `-n, --limit <n>` | Maximum suggestions |
+<!-- generated:end cli:docs -->
+
+`docs update --tags` replaces all tags. Changing the content re-chunks and re-embeds the document.
 
 ```bash
 libscope docs update <documentId> --title "New Title" --tags guide,v2
@@ -159,23 +281,74 @@ libscope docs update <documentId> --content-file ./updated.md
 
 ## Topics and tags
 
-| Command                                                          | Description                                      |
-| ---------------------------------------------------------------- | ------------------------------------------------ |
-| `topics list [--parent <topic>]`                                 | Topics with document counts                      |
-| `topics create <name> [--description <text>] [--parent <topic>]` | Create a topic                                   |
-| `topics delete <topic> [--delete-documents] [-y]`                | Delete a topic (documents are kept unless asked) |
-| `tags list`                                                      | Tags with document counts                        |
+<!-- generated:start cli:topics,tags -->
+### `libscope topics list`
+
+List topics with their document counts.
+
+| Option             | Description                                      |
+| ------------------ | ------------------------------------------------ |
+| `--parent <topic>` | Only direct subtopics of this topic (ID or name) |
+
+### `libscope topics create <name>`
+
+Create a topic.
+
+| Option                 | Description               |
+| ---------------------- | ------------------------- |
+| `--description <text>` | What the topic covers     |
+| `--parent <topic>`     | Parent topic (ID or name) |
+
+### `libscope topics delete <topic>`
+
+Delete a topic (its documents are kept without a topic).
+
+| Option               | Description                       |
+| -------------------- | --------------------------------- |
+| `--delete-documents` | Also delete the topic's documents |
+| `-y, --yes`          | Do not ask for confirmation       |
+
+### `libscope tags list`
+
+List all tags with their document counts.
+<!-- generated:end cli:topics,tags -->
 
 `<topic>` is a topic ID or name everywhere.
 
 ## `libscope searches`
 
-| Command                                                     | Description                        |
-| ----------------------------------------------------------- | ---------------------------------- |
-| `searches save <name> <query> [filters] [--min-rating <n>]` | Save a query with its filters      |
-| `searches list [-n <n>] [--offset <n>]`                     | List saved searches                |
-| `searches run <name>`                                       | Run a saved search (name or ID)    |
-| `searches delete <name>`                                    | Delete a saved search (name or ID) |
+<!-- generated:start cli:searches -->
+### `libscope searches save <name> <query>`
+
+Save a query and its filters.
+
+| Option                    | Description                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `--topic <topic>`         | Only this topic (ID or name)                                    |
+| `--library <name>`        | Only this library                                               |
+| `--lib-version <version>` | Only this library version                                       |
+| `--source-type <type>`    | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`           | Only documents with all these tags (comma-separated)            |
+| `-n, --limit <n>`         | Maximum results                                                 |
+| `--min-rating <n>`        | Only documents rated at least this (1-5)                        |
+
+### `libscope searches list`
+
+List saved searches.
+
+| Option            | Description              |
+| ----------------- | ------------------------ |
+| `-n, --limit <n>` | Maximum results          |
+| `--offset <n>`    | Results to skip (paging) |
+
+### `libscope searches run <search>`
+
+Run a saved search (name or ID).
+
+### `libscope searches delete <search>`
+
+Delete a saved search (name or ID).
+<!-- generated:end cli:searches -->
 
 ## `libscope bulk`
 
@@ -187,27 +360,59 @@ libscope bulk retag --topic guides --add important,v2 --remove draft -y
 libscope bulk move --library react --since 2024-01-01 --to frontend -y
 ```
 
-| Option                                            | Description                                       |
-| ------------------------------------------------- | ------------------------------------------------- |
-| `--topic`, `--library`, `--source-type`, `--tags` | Filters ([document filters](#document-filters))   |
-| `--since <date>`                                  | Created on or after (ISO 8601)                    |
-| `--before <date>`                                 | Created on or before (ISO 8601)                   |
-| `--add <tags>`                                    | `retag`: tags to add (comma-separated)            |
-| `--remove <tags>`                                 | `retag`: tags to remove (comma-separated)         |
-| `--to <topic>`                                    | `move`: destination topic (required)              |
-| `--dry-run`                                       | List the matching documents without changing them |
-| `-y, --yes`                                       | Do not ask for confirmation                       |
+<!-- generated:start cli:bulk -->
+### `libscope bulk delete`
+
+Delete matching documents.
+
+| Option                 | Description                                                     |
+| ---------------------- | --------------------------------------------------------------- |
+| `--topic <topic>`      | Only this topic (ID or name)                                    |
+| `--library <name>`     | Only this library                                               |
+| `--source-type <type>` | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`        | Only documents with all these tags (comma-separated)            |
+| `--since <date>`       | Only documents created on or after (ISO 8601)                   |
+| `--before <date>`      | Only documents created on or before (ISO 8601)                  |
+| `--dry-run`            | List the matching documents without changing them               |
+| `-y, --yes`            | Do not ask for confirmation                                     |
+
+### `libscope bulk retag`
+
+Add and/or remove tags on matching documents.
+
+| Option                 | Description                                                     |
+| ---------------------- | --------------------------------------------------------------- |
+| `--topic <topic>`      | Only this topic (ID or name)                                    |
+| `--library <name>`     | Only this library                                               |
+| `--source-type <type>` | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`        | Only documents with all these tags (comma-separated)            |
+| `--since <date>`       | Only documents created on or after (ISO 8601)                   |
+| `--before <date>`      | Only documents created on or before (ISO 8601)                  |
+| `--dry-run`            | List the matching documents without changing them               |
+| `-y, --yes`            | Do not ask for confirmation                                     |
+| `--add <tags>`         | Tags to add (comma-separated)                                   |
+| `--remove <tags>`      | Tags to remove (comma-separated)                                |
+
+### `libscope bulk move`
+
+Move matching documents to another topic.
+
+| Option                 | Description                                                     |
+| ---------------------- | --------------------------------------------------------------- |
+| `--topic <topic>`      | Only this topic (ID or name)                                    |
+| `--library <name>`     | Only this library                                               |
+| `--source-type <type>` | Only this source type (library, topic, manual, model-generated) |
+| `--tags <tags>`        | Only documents with all these tags (comma-separated)            |
+| `--since <date>`       | Only documents created on or after (ISO 8601)                   |
+| `--before <date>`      | Only documents created on or before (ISO 8601)                  |
+| `--dry-run`            | List the matching documents without changing them               |
+| `-y, --yes`            | Do not ask for confirmation                                     |
+| `--to <topic>`         | Destination topic (ID or name). Required.                       |
+<!-- generated:end cli:bulk -->
 
 ## Connectors
 
 A connection is a saved connector configuration in `~/.libscope/connectors/<name>.json` (mode `0600`, credentials included).
-
-| Command                                                     | Description                                                   |
-| ----------------------------------------------------------- | ------------------------------------------------------------- |
-| `connect <type> [source] [options]`                         | Save a connection and sync it                                 |
-| `sync [name]` / `sync --all`                                | Sync one or every saved connection with its saved settings    |
-| `disconnect <name> [--keep-documents] [--type <type>] [-y]` | Delete the connection's documents and its saved settings      |
-| `connections`                                               | List connections with schedule, last sync and last run status |
 
 Connector types: `notion`, `slack`, `confluence`, `obsidian`, `onenote`, `docs` (a documentation site). `[source]` is the vault path for `obsidian` and the URL for `confluence` and `docs`.
 
@@ -223,34 +428,58 @@ libscope connect notion --name work --schedule "0 */6 * * *"  # second Notion co
 
 Running `connect` again for a saved connection changes only the settings you give and keeps the rest. For example, `libscope connect notion --schedule off --no-sync` removes the schedule.
 
-| Option                                        | Types                               | Description                                                             |
-| --------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
-| `--name <name>`                               | all                                 | Connection name (default: the type)                                     |
-| `--schedule <cron>`                           | all                                 | Sync on this schedule while `libscope serve api` runs; `off` removes it |
-| `--no-sync`                                   | all                                 | Save without syncing now                                                |
-| `--token <token>`                             | notion, slack, confluence, onenote  | API token (onenote: an access token that cannot be refreshed)           |
-| `--exclude <list>`                            | slack, notion, confluence, obsidian | Channels, page IDs, space keys or file globs to skip                    |
-| `--channels <list>`                           | slack                               | Channel names or IDs (default `all`)                                    |
-| `--thread-mode <mode>`                        | slack                               | `aggregate` (default) or `separate`                                     |
-| `--email <email>`                             | confluence                          | User email (Cloud)                                                      |
-| `--server`                                    | confluence                          | Server/Data Center instead of Cloud                                     |
-| `--spaces <keys>`                             | confluence                          | Space keys (default `all`)                                              |
-| `--topic-mapping <mode>`                      | obsidian                            | `folder` (default) or `frontmatter`                                     |
-| `--notebook <name>`                           | onenote                             | One notebook (default: all)                                             |
-| `--client-id <id>`                            | onenote                             | Azure app client ID for device-code sign-in                             |
-| `--tenant-id <id>`                            | onenote                             | Azure tenant ID (default `common`)                                      |
-| `--site-type <type>`                          | docs                                | `auto`, `sphinx`, `vitepress`, `doxygen` or `generic`                   |
-| `--library`, `--lib-version`                  | docs                                | Library name and version for the pages                                  |
-| `--max-pages`, `--max-depth`, `--path-prefix` | docs                                | Crawl limits (default 500 pages, depth 10)                              |
+<!-- generated:start cli:connect,sync,disconnect,connections -->
+### `libscope connect <type> [source]`
+
+Save a connection and sync it. Types: notion, slack, confluence, obsidian, onenote, docs. [source] is the vault path (obsidian) or the URL (confluence, docs). Running it again for a saved connection changes only the given settings.
+
+| Option                    | Description                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------------- |
+| `--name <name>`           | Connection name (default: the type)                                                 |
+| `--schedule <cron>`       | Sync on this cron schedule while `libscope serve api` runs ("off" removes it)       |
+| `--no-sync`               | Save the connection without syncing now                                             |
+| `--token <token>`         | notion, slack, confluence: API token; onenote: access token                         |
+| `--exclude <list>`        | Comma-separated: slack channels, notion page IDs, confluence spaces, obsidian globs |
+| `--channels <list>`       | slack: channel names or IDs (default all)                                           |
+| `--thread-mode <mode>`    | slack: aggregate (one document per thread) or separate                              |
+| `--email <email>`         | confluence: user email (Cloud)                                                      |
+| `--server`                | confluence: Server/Data Center instead of Cloud                                     |
+| `--spaces <keys>`         | confluence: space keys (default all)                                                |
+| `--topic-mapping <mode>`  | obsidian: topics from folder (default) or frontmatter                               |
+| `--notebook <name>`       | onenote: one notebook (default all)                                                 |
+| `--client-id <id>`        | onenote: Azure app client ID for device sign-in                                     |
+| `--tenant-id <id>`        | onenote: Azure tenant ID (default common)                                           |
+| `--site-type <type>`      | docs: auto, sphinx, vitepress, doxygen or generic                                   |
+| `--library <name>`        | docs: library name for the pages                                                    |
+| `--lib-version <version>` | docs: library version for the pages                                                 |
+| `--max-pages <n>`         | docs: page limit (default 500)                                                      |
+| `--max-depth <n>`         | docs: link depth (default 10)                                                       |
+| `--path-prefix <path>`    | docs: only pages under this path                                                    |
+
+### `libscope sync [name]`
+
+Sync a saved connection with its saved settings, or all with --all.
+
+| Option  | Description                 |
+| ------- | --------------------------- |
+| `--all` | Sync every saved connection |
+
+### `libscope disconnect <name>`
+
+Delete a connection's documents and its saved settings (including credentials).
+
+| Option             | Description                                            |
+| ------------------ | ------------------------------------------------------ |
+| `--type <type>`    | Connector type, when no saved connection has this name |
+| `--keep-documents` | Only delete the saved settings                         |
+| `-y, --yes`        | Do not ask for confirmation                            |
+
+### `libscope connections`
+
+List saved connections with their schedule and last sync.
+<!-- generated:end cli:connect,sync,disconnect,connections -->
 
 ## Knowledge packs
-
-| Command                                       | Description                                                                                   |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `pack install <pack> [--registry <name>]`     | Install `name` or `name@version` from the configured registries, or a `.json`/`.json.gz` file |
-| `pack remove <name> [-y]`                     | Remove a pack and its documents                                                               |
-| `pack list [--available] [--registry <name>]` | Installed packs, or the packs in the configured registries                                    |
-| `pack create --name <name> [options]`         | Create a pack from indexed documents, or from files and URLs (`--from`)                       |
 
 ```bash
 libscope pack install react-docs                     # latest version
@@ -261,68 +490,131 @@ libscope pack create --name team-docs --topic engineering
 libscope pack create --name react-docs --from ./react/docs --exclude "*.min.js"
 ```
 
-`pack install` options: `--registry <name>`, `--batch-size <n>`, `--concurrency <n>`, `--resume-from <n>`. Pack names are looked up in the local copies of the registries; run `libscope registry sync` to update them. When more than one registry has the pack, the command fails and names the registries: choose one with `--registry`.
+Pack names are looked up in the local copies of the registries; run `libscope registry sync` to update them. When more than one registry has the pack, the command fails and names the registries: choose one with `--registry`.
 
-`pack create` options: `--from <sources...>`, `--topic`, `--pack-version`, `--description`, `--author`, `--license`, `--output <path>` (default `<name>.json`, or `<name>.json.gz` with `--from`), `--extensions <exts>`, `--exclude <globs...>`, `--no-recursive`.
+<!-- generated:start cli:pack -->
+### `libscope pack install <pack>`
+
+Install a pack from the configured registries (name or name@version) or a local .json/.json.gz file.
+
+| Option              | Description                                           |
+| ------------------- | ----------------------------------------------------- |
+| `--registry <name>` | Look only in this registry                            |
+| `--batch-size <n>`  | Documents embedded per batch (default 10)             |
+| `--resume-from <n>` | Skip the first N documents (resume a partial install) |
+| `--concurrency <n>` | Batches embedded in parallel (default 4)              |
+
+### `libscope pack remove <name>`
+
+Remove an installed pack and its documents.
+
+| Option      | Description                 |
+| ----------- | --------------------------- |
+| `-y, --yes` | Do not ask for confirmation |
+
+### `libscope pack list`
+
+List installed packs, or the packs in the configured registries (--available).
+
+| Option              | Description                                 |
+| ------------------- | ------------------------------------------- |
+| `--available`       | List the packs in the configured registries |
+| `--registry <name>` | With --available: only this registry        |
+
+### `libscope pack create`
+
+Create a pack from indexed documents, or from files, folders and URLs (--from).
+
+| Option                     | Description                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `--name <name>`            | Pack name. Required.                                                         |
+| `--from <sources...>`      | Files, folders or URLs to build the pack from                                |
+| `--topic <topic>`          | Only this topic's documents (without --from)                                 |
+| `--pack-version <version>` | Pack version (default 1.0.0)                                                 |
+| `--description <text>`     | Pack description                                                             |
+| `--author <name>`          | Pack author                                                                  |
+| `--license <license>`      | Pack license                                                                 |
+| `--output <path>`          | Output file (default &lt;name&gt;.json, or &lt;name&gt;.json.gz with --from) |
+| `--extensions <exts>`      | With --from: file extensions to include (comma-separated)                    |
+| `--exclude <globs...>`     | With --from: globs to skip                                                   |
+| `--no-recursive`           | With --from: do not walk subdirectories                                      |
+<!-- generated:end cli:pack -->
 
 ## Pack registries
 
 A registry is a git repository of packs. `--registry <name>` always means the name of a configured registry.
 
-| Command                                                        | Description                                     |
-| -------------------------------------------------------------- | ----------------------------------------------- |
-| `libscope registry add <url> [-n <name>] [--no-sync]`          | Add a git repository as a registry and clone it |
-| `libscope registry remove <name> [-y]`                         | Remove a registry and its local clone           |
-| `libscope registry list`                                       | List the configured registries                  |
-| `libscope registry sync [<name>]`                              | Fetch the latest packs of one or all registries |
-| `libscope registry search <query> [--registry <name>]`         | Search the packs in the registries              |
-| `libscope registry create <path>`                              | Create an empty registry repository             |
-| `libscope registry publish <file> --registry <name>`           | Publish a pack file to a registry               |
-| `libscope registry unpublish <name@version> --registry <name>` | Remove one version of a pack from a registry    |
-
-### `libscope registry add`
-
 ```bash
 libscope registry add https://github.com/org/registry.git
 libscope registry add git@github.com:team/packs.git --name team
 libscope registry add file:///srv/libscope-packs.git --no-sync
-```
-
-| Option              | Description                                       |
-| ------------------- | ------------------------------------------------- |
-| `-n, --name <name>` | Registry name (default: the last part of the URL) |
-| `--no-sync`         | Do not clone the registry now                     |
-
-URLs can use `https://`, `ssh://`, `git@host:path` or `file:///`.
-
-### `libscope registry publish`
-
-```bash
 libscope registry publish ./my-pack.json --registry my-registry --pack-version 1.0.0
 libscope registry publish ./my-pack.json.gz --registry my-registry          # next patch version
 libscope registry publish ./my-pack.json --registry community --submit      # push to a feature branch
-```
-
-| Option                    | Description                                                             |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `--registry <name>`       | Target registry (required)                                              |
-| `--pack-version <semver>` | Version to publish (default: next patch version, or the pack's version) |
-| `-m, --message <msg>`     | Git commit message                                                      |
-| `--submit`                | Push to a feature branch instead of the main branch                     |
-
-### `libscope registry unpublish`
-
-```bash
 libscope registry unpublish my-pack@1.0.0 --registry my-registry
 ```
 
-| Option                | Description                |
-| --------------------- | -------------------------- |
-| `--registry <name>`   | Target registry (required) |
-| `-m, --message <msg>` | Git commit message         |
-| `-y, --yes`           | Skip confirmation prompt   |
+Registry URLs can use `https://`, `ssh://`, `git@host:path` or `file:///`. `libscope registry create ./my-registry` creates a git repository with the registry folder structure. See the [Registry Reference](/reference/registry).
 
-`libscope registry create ./my-registry` creates a git repo with the registry folder structure. See the [Registry Reference](/reference/registry).
+<!-- generated:start cli:registry -->
+### `libscope registry add <url>`
+
+Add a git repository as a pack registry and clone it.
+
+| Option              | Description                           |
+| ------------------- | ------------------------------------- |
+| `-n, --name <name>` | Registry name (default: from the URL) |
+| `--no-sync`         | Do not clone the registry now         |
+
+### `libscope registry remove <name>`
+
+Remove a registry and delete its local clone.
+
+| Option      | Description                 |
+| ----------- | --------------------------- |
+| `-y, --yes` | Do not ask for confirmation |
+
+### `libscope registry list`
+
+List the configured registries.
+
+### `libscope registry sync [name]`
+
+Fetch the latest packs of one or all registries.
+
+### `libscope registry search <query>`
+
+Search the packs in the configured registries.
+
+| Option              | Description               |
+| ------------------- | ------------------------- |
+| `--registry <name>` | Search only this registry |
+
+### `libscope registry create <path>`
+
+Create an empty registry git repository.
+
+### `libscope registry publish <file>`
+
+Publish a pack file to a registry (commit and push).
+
+| Option                    | Description                                                            |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `--registry <name>`       | Target registry. Required.                                             |
+| `--pack-version <semver>` | Version to publish (default: next patch version)                       |
+| `-m, --message <msg>`     | Git commit message                                                     |
+| `--submit`                | Push to a feature branch for a pull request instead of the main branch |
+
+### `libscope registry unpublish <pack>`
+
+Remove one version of a pack from a registry (&lt;name&gt;@&lt;version&gt;).
+
+| Option                | Description                 |
+| --------------------- | --------------------------- |
+| `--registry <name>`   | Target registry. Required.  |
+| `-m, --message <msg>` | Git commit message          |
+| `-y, --yes`           | Do not ask for confirmation |
+<!-- generated:end cli:registry -->
 
 ## `libscope serve`
 
@@ -332,58 +624,148 @@ libscope serve api                   # REST API on http://localhost:3378
 libscope serve dashboard --port 8080 # web dashboard (default port 3377)
 ```
 
-| Option          | Description                             |
-| --------------- | --------------------------------------- |
-| `--port <n>`    | Port (`api` and `dashboard`)            |
-| `--host <host>` | Host to listen on (default `localhost`) |
+<!-- generated:start cli:serve -->
+Usage: `libscope serve [mode]`
+
+Start the MCP server on stdio (mcp, default), the REST API (api, port 3378) or the web dashboard (dashboard, port 3377).
+
+| Option          | Description                           |
+| --------------- | ------------------------------------- |
+| `--port <n>`    | Port (api and dashboard)              |
+| `--host <host>` | Host to listen on (default localhost) |
+<!-- generated:end cli:serve -->
 
 Connection schedules (`connect --schedule`) run while `serve api` runs.
 
 ## `libscope config`
 
-| Command                    | Description                               |
-| -------------------------- | ----------------------------------------- |
-| `config show`              | Effective configuration (API keys masked) |
-| `config get <key>`         | One effective value (API keys masked)     |
-| `config set <key> <value>` | Set a value in `~/.libscope/config.json`  |
-| `config unset <key>`       | Remove a value from the user config file  |
-| `config path`              | Print the user config file path           |
+<!-- generated:start cli:config -->
+### `libscope config show`
 
-Keys: `embedding.provider`, `embedding.model`, `embedding.url`, `embedding.dimensions`, `llm.provider`, `llm.model`, `llm.url`, `openai.apiKey`, `anthropic.apiKey`, `database.path`, `indexing.maxDocumentSize`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`, `logging.level`. `openai.apiKey` and `anthropic.apiKey` are written to `~/.libscope/secrets.json` (mode `0600`), never to `config.json`; the `LIBSCOPE_OPENAI_API_KEY` / `OPENAI_API_KEY` and `LIBSCOPE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` environment variables take precedence. See the [configuration reference](/reference/configuration).
+Show the effective configuration (API keys are masked).
+
+### `libscope config get <key>`
+
+Print the effective value of a key (API keys are masked).
+
+### `libscope config set <key> <value>`
+
+Set a key in the user config file. Keys: embedding.provider, embedding.model, embedding.url, embedding.dimensions, llm.provider, llm.model, llm.url, openai.apiKey, anthropic.apiKey, database.path, indexing.maxDocumentSize, indexing.allowPrivateUrls, indexing.allowSelfSignedCerts, logging.level, mcp.toolsets. API keys are written to ~/.libscope/secrets.json (mode 0600), never to config.json.
+
+### `libscope config unset <key>`
+
+Remove a key from the user config file (or secrets file for API keys).
+
+### `libscope config path`
+
+Print the path of the user config file.
+<!-- generated:end cli:config -->
+
+`openai.apiKey` and `anthropic.apiKey` are written to `~/.libscope/secrets.json` (mode `0600`), never to `config.json`; the `LIBSCOPE_OPENAI_API_KEY` / `OPENAI_API_KEY` and `LIBSCOPE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` environment variables take precedence. See the [configuration reference](/reference/configuration) for every key.
 
 ## Workspaces
 
-| Command                        | Description                                |
-| ------------------------------ | ------------------------------------------ |
-| `workspace create <name>`      | Create a workspace                         |
-| `workspace list`               | List workspaces (`*` marks the active one) |
-| `workspace use <name>`         | Make a workspace the active one            |
-| `workspace delete <name> [-y]` | Delete a workspace and its database        |
+A workspace is a separate knowledge base with its own database (`~/.libscope/workspaces/<name>/libscope.db`). The global `--workspace <name>` option and the `LIBSCOPE_WORKSPACE` environment variable select one for a single command.
+
+<!-- generated:start cli:workspace -->
+### `libscope workspace create <name>`
+
+Create a workspace.
+
+### `libscope workspace list`
+
+List workspaces.
+
+### `libscope workspace use <name>`
+
+Make a workspace the active one.
+
+### `libscope workspace delete <name>`
+
+Delete a workspace and its database.
+
+| Option      | Description                 |
+| ----------- | --------------------------- |
+| `-y, --yes` | Do not ask for confirmation |
+<!-- generated:end cli:workspace -->
 
 ## `libscope webhooks`
 
-| Command                                                | Description                                |
-| ------------------------------------------------------ | ------------------------------------------ |
-| `webhooks create <url> --events <list> [--secret <s>]` | Register a webhook                         |
-| `webhooks list`                                        | List webhooks (secrets are never shown)    |
-| `webhooks delete <webhookId>`                          | Delete a webhook                           |
-| `webhooks test <webhookId>`                            | Send a test event and show the HTTP status |
+<!-- generated:start cli:webhooks -->
+### `libscope webhooks list`
+
+List webhooks (secrets are never shown).
+
+### `libscope webhooks create <url>`
+
+Register a webhook.
+
+| Option              | Description                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--events <events>` | Comma-separated: document.created, document.updated, document.deleted, document.rated, search.executed. Required. |
+| `--secret <secret>` | HMAC-SHA256 signing secret (needs LIBSCOPE_SECRET_KEY)                                                            |
+
+### `libscope webhooks delete <webhookId>`
+
+Delete a webhook.
+
+### `libscope webhooks test <webhookId>`
+
+Send a test event and show the HTTP status.
+<!-- generated:end cli:webhooks -->
 
 Events: `document.created`, `document.updated`, `document.deleted`, `document.rated`, `search.executed`. A secret signs each POST with HMAC-SHA256; storing it needs `LIBSCOPE_SECRET_KEY`.
 
 ## `libscope admin`
 
-| Command                                                               | Description                                                                 |
-| --------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `admin reindex`                                                       | Re-embed chunks with the configured embedding model                         |
-| `admin reindex --rebuild`                                             | Recreate the vector index for a new model or vector size, then re-embed all |
-| `admin dedupe [--threshold <0-1>] [--strategy exact\|semantic\|both]` | Find duplicate and near-duplicate documents                                 |
-| `admin backup <file>`                                                 | Write the whole knowledge base to a JSON file                               |
-| `admin restore <file> [-y]`                                           | Import a file written by `admin backup`                                     |
-| `admin stats [--days <n>]`                                            | Counts, index, most returned and stale documents, search analytics          |
-| `admin prune`                                                         | Delete documents whose expiry time (`add --expires`) has passed             |
+<!-- generated:start cli:admin -->
+### `libscope admin reindex`
 
-`admin reindex` also takes `--doc <documentIds...>`, `--since <date>`, `--before <date>` and `--batch-size <n>` (not with `--rebuild`).
+Re-embed chunks with the configured embedding model.
+
+| Option                   | Description                                                           |
+| ------------------------ | --------------------------------------------------------------------- |
+| `--rebuild`              | Recreate the vector index for the configured model, then re-embed all |
+| `--doc <documentIds...>` | Only these documents                                                  |
+| `--since <date>`         | Only documents created on or after (ISO 8601)                         |
+| `--before <date>`        | Only documents created on or before (ISO 8601)                        |
+| `--batch-size <n>`       | Chunks per embedding call (default 50)                                |
+
+### `libscope admin dedupe`
+
+Find duplicate and near-duplicate documents.
+
+| Option                  | Description                             |
+| ----------------------- | --------------------------------------- |
+| `--threshold <n>`       | Similarity threshold 0-1 (default 0.95) |
+| `--strategy <strategy>` | exact, semantic or both (default)       |
+
+### `libscope admin prune`
+
+Delete documents whose expiry time has passed.
+
+### `libscope admin backup <file>`
+
+Write the whole knowledge base to a JSON file.
+
+### `libscope admin restore <file>`
+
+Import a file written by `admin backup`.
+
+| Option      | Description                 |
+| ----------- | --------------------------- |
+| `-y, --yes` | Do not ask for confirmation |
+
+### `libscope admin stats`
+
+Counts, index, most returned and stale documents, and search analytics.
+
+| Option       | Description                                             |
+| ------------ | ------------------------------------------------------- |
+| `--days <n>` | Look-back days for stale documents and search analytics |
+<!-- generated:end cli:admin -->
+
+`admin reindex --rebuild` recreates the vector index for a new embedding model or vector size, then re-embeds every chunk. The other `admin reindex` filters do not apply with `--rebuild`.
 
 ## `libscope doctor`
 
@@ -391,5 +773,15 @@ Events: `document.created`, `document.updated`, `document.deleted`, `document.ra
 libscope doctor          # report only
 libscope doctor --fix    # also create the database and vector index
 ```
+
+<!-- generated:start cli:doctor -->
+Usage: `libscope doctor`
+
+Check the setup: config, workspace, database, embedding model, index and LLM.
+
+| Option  | Description                                        |
+| ------- | -------------------------------------------------- |
+| `--fix` | Create what is missing (database and vector index) |
+<!-- generated:end cli:doctor -->
 
 `doctor` shows the config and secrets files, the active workspace and database path, the configured embedding model and the model the vector index was built with, and which LLM `ask` will use. It then lists checks with a fix for each warning or error, for example `libscope admin reindex --rebuild` when the index was built with a different embedding model. It exits with code 1 when a check fails.

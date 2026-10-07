@@ -18,63 +18,35 @@ A value in a config file that fails validation is ignored with a warning, and th
 
 ## All Config Keys
 
-Every key `section.field` has the environment variable `LIBSCOPE_<SECTION>_<FIELD>` (for example `embedding.model` → `LIBSCOPE_EMBEDDING_MODEL`).
+Every key `section.field` has the environment variable `LIBSCOPE_<SECTION>_<FIELD>` (for example `embedding.model` → `LIBSCOPE_EMBEDDING_MODEL`). This table is generated from the schema (`npm run docs:gen`).
 
-### Embedding
+<!-- generated:start config:keys -->
+| Key                             | Type                                                           | Default                                                                     | Environment variables                             | Secret | Description                                                                                                                                                                                             |
+| ------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `embedding.provider`            | `local` \| `ollama` \| `openai`                                | local                                                                       | `LIBSCOPE_EMBEDDING_PROVIDER`                     |        | Embedding provider. A config file may also name a provider registered in code.                                                                                                                          |
+| `embedding.model`               | string                                                         | ollama: nomic-embed-text; openai: text-embedding-3-small                    | `LIBSCOPE_EMBEDDING_MODEL`                        |        | Embedding model. Ignored by the local provider (always Xenova/all-MiniLM-L6-v2).                                                                                                                        |
+| `embedding.url`                 | string                                                         | http://localhost:11434                                                      | `LIBSCOPE_EMBEDDING_URL`                          |        | Server URL of the embedding provider. Used by the ollama provider.                                                                                                                                      |
+| `embedding.dimensions`          | integer                                                        | size of the model                                                           | `LIBSCOPE_EMBEDDING_DIMENSIONS`                   |        | Vector size, for models whose size is not built in.                                                                                                                                                     |
+| `llm.provider`                  | `auto` \| `openai` \| `anthropic` \| `ollama` \| `passthrough` | auto                                                                        | `LIBSCOPE_LLM_PROVIDER`                           |        | LLM for "ask". "auto": passthrough under MCP, else openai if an OpenAI key is set, else anthropic if an Anthropic key is set, else ollama if llm.url is set or embedding.provider is ollama, else none. |
+| `llm.model`                     | string                                                         | openai: gpt-4o-mini; anthropic: claude-3-5-haiku-20241022; ollama: llama3.2 | `LIBSCOPE_LLM_MODEL`                              |        | LLM model.                                                                                                                                                                                              |
+| `llm.url`                       | string                                                         | embedding.url, then http://localhost:11434                                  | `LIBSCOPE_LLM_URL`                                |        | Server URL of the LLM. Used by the ollama provider.                                                                                                                                                     |
+| `openai.apiKey`                 | string                                                         | —                                                                           | `LIBSCOPE_OPENAI_API_KEY`, `OPENAI_API_KEY`       | yes    | OpenAI API key (embeddings and LLM).                                                                                                                                                                    |
+| `anthropic.apiKey`              | string                                                         | —                                                                           | `LIBSCOPE_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY` | yes    | Anthropic API key (LLM).                                                                                                                                                                                |
+| `database.path`                 | string                                                         | ~/.libscope/workspaces/&lt;workspace&gt;/libscope.db                        | `LIBSCOPE_DATABASE_PATH`                          |        | SQLite database file. A leading ~ is expanded. Unset: the workspace database.                                                                                                                           |
+| `indexing.maxDocumentSize`      | integer                                                        | 104857600                                                                   | `LIBSCOPE_INDEXING_MAX_DOCUMENT_SIZE`             |        | Largest document to index, in bytes.                                                                                                                                                                    |
+| `indexing.allowPrivateUrls`     | boolean                                                        | false                                                                       | `LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS`            |        | Allow fetching URLs on private or local networks.                                                                                                                                                       |
+| `indexing.allowSelfSignedCerts` | boolean                                                        | false                                                                       | `LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS`       |        | Accept self-signed TLS certificates when fetching.                                                                                                                                                      |
+| `logging.level`                 | `debug` \| `info` \| `warn` \| `error` \| `silent`             | info                                                                        | `LIBSCOPE_LOGGING_LEVEL`                          |        | Log level.                                                                                                                                                                                              |
+| `mcp.toolsets`                  | list of `core` \| `admin` \| `all`                             | none                                                                        | `LIBSCOPE_MCP_TOOLSETS`                           |        | Optional MCP toolsets (comma list). admin adds sync, install-pack, list-packs and reindex-documents; all enables every optional toolset. The core tools are always on.                                  |
+<!-- generated:end config:keys -->
 
-| Key                    | Type                        | Default                                                      | Env var                         | Description                                                                                                                                                                                                             |
-| ---------------------- | --------------------------- | ------------------------------------------------------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `embedding.provider`   | `local`, `ollama`, `openai` | `local`                                                      | `LIBSCOPE_EMBEDDING_PROVIDER`   | Embedding provider. A config file can also name a provider registered in code with `registerProvider()`.                                                                                                                |
-| `embedding.model`      | string                      | ollama: `nomic-embed-text`; openai: `text-embedding-3-small` | `LIBSCOPE_EMBEDDING_MODEL`      | Embedding model. The local provider always uses `Xenova/all-MiniLM-L6-v2` and ignores this key.                                                                                                                         |
-| `embedding.url`        | string                      | `http://localhost:11434`                                     | `LIBSCOPE_EMBEDDING_URL`        | Server URL of the embedding provider. Used by the `ollama` provider.                                                                                                                                                    |
-| `embedding.dimensions` | integer (1–10000)           | size of the model                                            | `LIBSCOPE_EMBEDDING_DIMENSIONS` | Vector size of the Ollama or OpenAI model. Needed only for models whose size LibScope does not know. For `text-embedding-3-*`, it also requests shorter vectors. After you change it, run `libscope reindex --rebuild`. |
+Notes:
 
-### LLM (for RAG)
-
-| Key            | Type                                                   | Default                                                                           | Env var                 | Description                                                             |
-| -------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------- |
-| `llm.provider` | `auto`, `openai`, `anthropic`, `ollama`, `passthrough` | `auto`                                                                            | `LIBSCOPE_LLM_PROVIDER` | LLM for `ask`. See [Automatic LLM selection](#automatic-llm-selection). |
-| `llm.model`    | string                                                 | openai: `gpt-4o-mini`; anthropic: `claude-3-5-haiku-20241022`; ollama: `llama3.2` | `LIBSCOPE_LLM_MODEL`    | LLM model.                                                              |
-| `llm.url`      | string                                                 | `embedding.url`, then `http://localhost:11434`                                    | `LIBSCOPE_LLM_URL`      | Server URL of the LLM. Used by the `ollama` provider.                   |
-
-### API keys (secrets)
-
-| Key                | Type   | Default | Env vars (first set wins)                         | Description                          |
-| ------------------ | ------ | ------- | ------------------------------------------------- | ------------------------------------ |
-| `openai.apiKey`    | string | —       | `LIBSCOPE_OPENAI_API_KEY`, `OPENAI_API_KEY`       | OpenAI API key (embeddings and LLM). |
-| `anthropic.apiKey` | string | —       | `LIBSCOPE_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY` | Anthropic API key (LLM).             |
-
-Each API key is read in this order: `LIBSCOPE_<PROVIDER>_API_KEY`, then `<PROVIDER>_API_KEY`, then `~/.libscope/secrets.json`. `libscope config set openai.apiKey <key>` writes the key to `secrets.json`, never to `config.json`. `libscope config show` and `libscope config get` mask keys (for example `sk-…abcd`).
-
-### Database
-
-| Key             | Type   | Default                                                  | Env var                  | Description                                                            |
-| --------------- | ------ | -------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
-| `database.path` | string | unset (`~/.libscope/workspaces/<workspace>/libscope.db`) | `LIBSCOPE_DATABASE_PATH` | SQLite file to use instead of the workspace database. `~` is expanded. |
-
-### Logging
-
-| Key             | Type                                       | Default | Env var                  | Description |
-| --------------- | ------------------------------------------ | ------- | ------------------------ | ----------- |
-| `logging.level` | `debug`, `info`, `warn`, `error`, `silent` | `info`  | `LIBSCOPE_LOGGING_LEVEL` | Log level.  |
-
-### Indexing
-
-| Key                             | Type    | Default     | Env var                                     | Description                                           |
-| ------------------------------- | ------- | ----------- | ------------------------------------------- | ----------------------------------------------------- |
-| `indexing.maxDocumentSize`      | integer | `104857600` | `LIBSCOPE_INDEXING_MAX_DOCUMENT_SIZE`       | Largest document to index, in bytes (100 MB).         |
-| `indexing.allowPrivateUrls`     | boolean | `false`     | `LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS`      | Allow fetching from private or internal IP addresses. |
-| `indexing.allowSelfSignedCerts` | boolean | `false`     | `LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS` | Accept self-signed or untrusted TLS certificates.     |
-
-Booleans accept `true`, `false`, `1`, and `0` in environment variables and in `config set`.
-
-### MCP
-
-| Key            | Type                           | Default | Env var                 | Description                                                                                                                                                           |
-| -------------- | ------------------------------ | ------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mcp.toolsets` | list of `core`, `admin`, `all` | none    | `LIBSCOPE_MCP_TOOLSETS` | Optional MCP toolsets. `admin` adds `sync`, `install-pack`, `list-packs` and `reindex-documents`. `all` enables every optional toolset. The core tools are always on. |
-
-A list key accepts a JSON array in a config file, or a comma-separated list in a config file, an environment variable, and `config set` (for example `libscope config set mcp.toolsets admin`).
+- `embedding.dimensions` is needed only for Ollama or OpenAI models whose vector size LibScope does not know. For `text-embedding-3-*`, it also requests shorter vectors. After you change the embedding provider, model or dimensions, run `libscope admin reindex --rebuild`.
+- `llm.provider`: see [Automatic LLM selection](#automatic-llm-selection).
+- Each API key is read in this order: `LIBSCOPE_<PROVIDER>_API_KEY`, then `<PROVIDER>_API_KEY`, then `~/.libscope/secrets.json`. `libscope config set openai.apiKey <key>` writes the key to `secrets.json`, never to `config.json`. `libscope config show` and `libscope config get` mask keys (for example `sk-…abcd`).
+- Booleans accept `true`, `false`, `1` and `0` in environment variables and in `config set`.
+- A list key (`mcp.toolsets`) accepts a JSON array in a config file, or a comma-separated list in a config file, an environment variable, and `config set` (for example `libscope config set mcp.toolsets admin`).
 
 ## Automatic LLM selection
 

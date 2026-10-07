@@ -72,3 +72,5 @@ jobs:
           test -f dist/mcp/server.js
           test -f dist/cli/index.js
           test -f dist/core/index.js
+      - name: Check generated docs (run `npm run docs:gen` to update)
+        run: npm run docs:check
