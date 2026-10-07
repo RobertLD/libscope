@@ -508,6 +508,14 @@ export interface IndexFileOptions {
   title?: string | undefined;
   format?: string | undefined;
   dedup?: "skip" | "warn" | "force" | undefined;
+  /** Overrides the source type derived from `library`/`topic`. */
+  sourceType?: IndexDocumentInput["sourceType"] | undefined;
+}
+
+function fileSourceType(options: IndexFileOptions): IndexDocumentInput["sourceType"] {
+  if (options.sourceType) return options.sourceType;
+  if (options.library) return "library";
+  return options.topic ? "topic" : "manual";
 }
 
 /**
@@ -545,7 +553,7 @@ export async function indexFile(
   return indexDocument(db, provider, {
     title,
     content,
-    sourceType: options.library ? "library" : options.topic ? "topic" : "manual",
+    sourceType: fileSourceType(options),
     library: options.library,
     version: options.version,
     topicId: options.topic,

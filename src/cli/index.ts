@@ -15,7 +15,7 @@ import { createLink, getDocumentLinks, deleteLink, getPrerequisiteChain } from "
 import type { LinkType } from "../core/links.js";
 import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
-import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchAndConvert } from "../core/url-fetcher.js";
@@ -64,7 +64,7 @@ import {
 
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
+import { FileWatcher, DEFAULT_WATCH_EXTENSIONS, readWatchedFile } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
 import {
   authenticateDeviceCode,
@@ -656,7 +656,7 @@ program
   .option(
     "--extensions <exts>",
     "Comma-separated file extensions to include",
-    ".md,.mdx,.txt,.pdf,.docx,.csv,.yaml,.yml,.json",
+    getSupportedExtensions().join(","),
   )
   .option("--dedup <mode>", "Dedup mode: skip, warn, or force")
   .action(
@@ -719,7 +719,13 @@ program
   .command("import-batch <directory>")
   .description("Batch import files with parallel processing")
   .option("--concurrency <n>", "Number of parallel imports", "5")
-  .option("--filter <glob>", "Glob pattern for file selection", "**/*.{md,mdx,txt}")
+  .option(
+    "--filter <glob>",
+    "Glob pattern for file selection",
+    `**/*.{${getSupportedExtensions()
+      .map((e) => e.slice(1))
+      .join(",")}}`,
+  )
   .option("--dry-run", "Preview files without importing")
   .option("--topic <topicId>", "Assign all to a topic")
   .option("--library <name>", "Mark all as library documentation")
@@ -766,19 +772,30 @@ program
           version: opts.libVersion,
           topicId: opts.topic,
           onProgress: (progress) => {
-            const done = progress.completed + progress.failed;
+            const done = progress.completed + progress.failed + progress.skipped;
             const file = progress.currentFile ?? "";
             console.log(`  [${done}/${progress.total}] ${file}`);
           },
         });
 
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\nDone: ${result.completed} indexed, ${result.failed} failed in ${elapsed}s`);
+        console.log(
+          `\nDone: ${result.completed} indexed, ${result.failed} failed, ${result.skipped} skipped in ${elapsed}s`,
+        );
+
+        if (result.skipped > 0) {
+          console.warn("\nSkipped files (unsupported format):");
+          for (const r of result.results) {
+            if (r.skipped) {
+              console.warn(`  - ${r.file}`);
+            }
+          }
+        }
 
         if (result.failed > 0) {
           console.log("\nFailed files:");
           for (const r of result.results) {
-            if (!r.success) {
+            if (!r.success && !r.skipped) {
               console.log(`  ✗ ${r.file}: ${r.error}`);
             }
           }
@@ -1655,7 +1672,12 @@ program
     let skipped = 0;
     for (const file of files) {
       try {
-        const content = readFileSync(file, "utf-8");
+        const content = await readWatchedFile(file);
+        if (content === null) {
+          console.warn(`  ⚠ Skipping ${file}: unsupported file format`);
+          skipped++;
+          continue;
+        }
         const title = basename(file).replace(/\.[^.]+$/, "");
         const result = await indexDocument(db, provider, {
           title,
@@ -1672,7 +1694,9 @@ program
         skipped++;
       }
     }
-    console.log(`Initial scan: ${indexed} indexed, ${skipped} skipped (unchanged or failed)`);
+    console.log(
+      `Initial scan: ${indexed} indexed, ${skipped} skipped (unchanged, unsupported, or failed)`,
+    );
     console.log(`\nWatching for changes (extensions: ${extensions.join(", ")})...\n`);
 
     const watcher = new FileWatcher(db, provider, {

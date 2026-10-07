@@ -1,26 +1,22 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { batchImport } from "../../src/core/batch.js";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../../src/providers/embedding.js";
 
 // Mock indexing module
 vi.mock("../../src/core/indexing.js", () => ({
-  indexDocument: vi.fn().mockResolvedValue({ id: "doc-1", chunkCount: 3 }),
-}));
-
-// Mock fs
-vi.mock("node:fs", () => ({
-  readFileSync: vi.fn().mockReturnValue("# Test content\nSome text."),
+  indexFile: vi.fn().mockResolvedValue({ id: "doc-1", chunkCount: 3 }),
 }));
 
 // Mock logger
+const mockLogger = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
 vi.mock("../../src/logger.js", () => ({
-  getLogger: (): Record<string, ReturnType<typeof vi.fn>> => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  getLogger: (): typeof mockLogger => mockLogger,
 }));
 
 function createMockDb(): Database.Database {
@@ -37,12 +33,17 @@ function createMockProvider(): EmbeddingProvider {
 }
 
 describe("batchImport", () => {
+  beforeEach(() => {
+    mockLogger.warn.mockClear();
+  });
+
   it("should return empty results for no files", async () => {
     const result = await batchImport(createMockDb(), createMockProvider(), []);
 
     expect(result.total).toBe(0);
     expect(result.completed).toBe(0);
     expect(result.failed).toBe(0);
+    expect(result.skipped).toBe(0);
     expect(result.results).toEqual([]);
   });
 
@@ -87,8 +88,8 @@ describe("batchImport", () => {
   });
 
   it("should handle failed files gracefully", async () => {
-    const { indexDocument } = await import("../../src/core/indexing.js");
-    const mockedIndex = vi.mocked(indexDocument);
+    const { indexFile } = await import("../../src/core/indexing.js");
+    const mockedIndex = vi.mocked(indexFile);
 
     mockedIndex.mockRejectedValueOnce(new Error("bad file"));
     mockedIndex.mockResolvedValueOnce({ id: "doc-2", chunkCount: 1 });
@@ -107,8 +108,8 @@ describe("batchImport", () => {
   });
 
   it("should pass library and topic options through", async () => {
-    const { indexDocument } = await import("../../src/core/indexing.js");
-    const mockedIndex = vi.mocked(indexDocument);
+    const { indexFile } = await import("../../src/core/indexing.js");
+    const mockedIndex = vi.mocked(indexFile);
     mockedIndex.mockResolvedValue({ id: "doc-3", chunkCount: 2 });
 
     await batchImport(createMockDb(), createMockProvider(), ["test.md"], {
@@ -120,12 +121,53 @@ describe("batchImport", () => {
     expect(mockedIndex).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
+      "test.md",
       expect.objectContaining({
         library: "react",
         version: "18.0",
-        topicId: "frontend",
-        sourceType: "library",
+        topic: "frontend",
       }),
+    );
+  });
+
+  it("should pass the sourceType option through", async () => {
+    const { indexFile } = await import("../../src/core/indexing.js");
+    const mockedIndex = vi.mocked(indexFile);
+    mockedIndex.mockClear();
+
+    await batchImport(createMockDb(), createMockProvider(), ["notes.md"], {
+      sourceType: "model-generated",
+    });
+
+    expect(mockedIndex).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "notes.md",
+      expect.objectContaining({ sourceType: "model-generated" }),
+    );
+  });
+
+  it("should skip unsupported file types with a warning", async () => {
+    const { indexFile } = await import("../../src/core/indexing.js");
+    const mockedIndex = vi.mocked(indexFile);
+    mockedIndex.mockClear();
+
+    const progressSkipped: number[] = [];
+    const result = await batchImport(createMockDb(), createMockProvider(), ["logo.png", "a.md"], {
+      concurrency: 1,
+      onProgress: (progress) => progressSkipped.push(progress.skipped),
+    });
+
+    expect(result.total).toBe(2);
+    expect(result.completed).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.results[0]).toMatchObject({ file: "logo.png", success: false, skipped: true });
+    expect(progressSkipped.at(-1)).toBe(1);
+    expect(mockedIndex).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      { file: "logo.png" },
+      expect.stringContaining("Unsupported file type"),
     );
   });
 

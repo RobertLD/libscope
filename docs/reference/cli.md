@@ -37,27 +37,27 @@ Recursively import files from a directory.
 libscope import ./wiki/ --topic internal --extensions .md,.mdx,.txt
 ```
 
-| Option                | Description                                      |
-| --------------------- | ------------------------------------------------ |
-| `--library <name>`    | Assign all docs to a library                     |
-| `--topic <name>`      | Assign all docs to a topic                       |
-| `--lib-version <ver>` | Library version tag                              |
-| `--extensions <exts>` | Comma-separated file extensions (default: `.md`) |
+| Option                | Description                                                      |
+| --------------------- | ---------------------------------------------------------------- |
+| `--library <name>`    | Assign all docs to a library                                     |
+| `--topic <name>`      | Assign all docs to a topic                                       |
+| `--lib-version <ver>` | Library version tag                                              |
+| `--extensions <exts>` | Comma-separated file extensions (default: all supported formats) |
 
 ### `libscope import-batch`
 
-Parallel batch import with progress tracking.
+Parallel batch import with progress tracking. Files are parsed by format (PDF, Word, EPUB, PowerPoint, HTML, and so on). Files with an unsupported extension are skipped with a warning.
 
 ```bash
 libscope import-batch ./docs/ --concurrency 10 --filter "**/*.md" --library my-lib
 ```
 
-| Option                | Description                  |
-| --------------------- | ---------------------------- |
-| `--concurrency <n>`   | Number of parallel workers   |
-| `--filter <glob>`     | Glob pattern to match files  |
-| `--library <name>`    | Assign all docs to a library |
-| `--lib-version <ver>` | Library version tag          |
+| Option                | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `--concurrency <n>`   | Number of parallel workers                                   |
+| `--filter <glob>`     | Glob pattern to match files (default: all supported formats) |
+| `--library <name>`    | Assign all docs to a library                                 |
+| `--lib-version <ver>` | Library version tag                                          |
 
 ### `libscope search`
 
@@ -355,7 +355,7 @@ Creates a git repo with the canonical registry folder structure. See the [Regist
 
 | Command                               | Description                             |
 | ------------------------------------- | --------------------------------------- |
-| `libscope watch <directory>`          | Watch for file changes and auto-reindex |
+| `libscope watch <directory>`          | Watch for file changes and auto-reindex (all supported formats, plus `.rst`) |
 | `libscope reindex`                    | Re-embed chunks with current provider   |
 | `libscope dedupe`                     | Scan for duplicate documents            |
 | `libscope export <outputPath>`        | Export knowledge base to JSON           |

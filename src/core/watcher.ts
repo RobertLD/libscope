@@ -5,9 +5,30 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "./indexing.js";
 import { deleteChunkEmbeddings } from "./documents.js";
+import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { createChildLogger } from "../logger.js";
 
-export const DEFAULT_WATCH_EXTENSIONS = [".md", ".mdx", ".txt", ".rst"];
+/** Extensions without a registered parser that the watcher indexes as plain UTF-8 text. */
+const PLAIN_TEXT_WATCH_EXTENSIONS = [".rst"];
+
+/** Every extension the parser registry supports, plus the plain-text extras. */
+export const DEFAULT_WATCH_EXTENSIONS = [
+  ...getSupportedExtensions(),
+  ...PLAIN_TEXT_WATCH_EXTENSIONS,
+];
+
+/**
+ * Read a watched file and convert it to indexable text with the parser registry.
+ * Returns null when no parser handles the file's extension.
+ */
+export async function readWatchedFile(filePath: string): Promise<string | null> {
+  const parser = getParserForFile(filePath);
+  if (parser) return parser.parse(readFileSync(filePath));
+  if (PLAIN_TEXT_WATCH_EXTENSIONS.includes(extname(filePath).toLowerCase())) {
+    return readFileSync(filePath, "utf-8");
+  }
+  return null;
+}
 
 export interface WatchOptions {
   directory: string;
@@ -96,7 +117,11 @@ export class FileWatcher {
 
       if (!stat.isFile()) return;
 
-      const content = readFileSync(fullPath, "utf-8");
+      const content = await readWatchedFile(fullPath);
+      if (content === null) {
+        this.log.warn({ path: fullPath }, "No parser for file extension, skipping");
+        return;
+      }
       const contentHash = createHash("sha256").update(content).digest("hex");
 
       const existing = this.db
