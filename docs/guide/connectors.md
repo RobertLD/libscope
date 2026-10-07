@@ -2,6 +2,38 @@
 
 Connectors pull documents from external tools into your LibScope knowledge base. Each connector handles authentication, pagination, and incremental sync so you don't have to think about it.
 
+## Saved Configs, Re-sync and Schedules
+
+Every `libscope connect <type>` command saves its settings as a named connector config in `~/.libscope/connectors/<name>.json` (file mode 0600). The default name is the connector type. Use `--name` to keep more than one config of the same type:
+
+```bash
+libscope connect slack --token xoxb-work-token --name work-slack
+```
+
+A saved config holds what a later run needs, including credentials:
+
+| Connector  | Saved fields                                                                                         |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| Notion     | `token`, `excludePages`, `lastSync`                                                                  |
+| Slack      | `token`, `channels`, `excludeChannels`, `threadMode`, `lastSync`                                     |
+| Confluence | `baseUrl`, `type` (cloud/server), `email`, `token`, `spaces`, `excludeSpaces`, `lastSync`            |
+| Obsidian   | `vaultPath`, `topicMapping`, `excludePatterns`, `lastSync`                                           |
+| OneNote    | `clientId`, `tenantId`, `accessToken`, `refreshToken`, `tokenExpiry`, `notebooks`, `excludeSections`, `lastSync` |
+
+Each file also stores `connectorType` and, after `libscope schedule set`, a `schedule`.
+
+`--sync` on any connect command re-runs the saved config (`--name` selects which one). Other options on the command line are ignored with `--sync`. After each successful sync, `lastSync` is set to the time the sync started.
+
+To sync a saved config on a schedule, set a cron expression. Schedules run while the API server is running (`libscope serve --api`):
+
+```bash
+libscope schedule set notion "0 */6 * * *"
+libscope schedule list
+libscope schedule remove notion
+```
+
+Each run, scheduled or manual, writes one entry to the connector sync history under the config name. `libscope disconnect <type>` also deletes the saved config (`--name` selects which one).
+
 ## Obsidian
 
 Sync an entire Obsidian vault. Parses frontmatter, wikilinks, embeds, and tags. Folder structure maps to topics.
@@ -13,8 +45,8 @@ libscope connect obsidian /path/to/vault
 # Map topics from frontmatter instead of folder structure
 libscope connect obsidian /path/to/vault --topic-mapping frontmatter
 
-# Incremental re-sync (only changed files)
-libscope connect obsidian /path/to/vault --sync
+# Re-sync the saved vault config (only changed files are re-indexed)
+libscope connect obsidian --sync
 
 # Exclude folders
 libscope connect obsidian /path/to/vault --exclude "templates/*" "daily/*"
@@ -34,7 +66,7 @@ libscope connect notion --token secret_abc123
 # Exclude specific pages or databases
 libscope connect notion --token $NOTION_TOKEN --exclude page-id-1 db-id-2
 
-# Re-sync (uses stored token)
+# Re-sync with the saved config (pages edited since the last sync)
 libscope connect notion --sync
 
 # Disconnect
@@ -60,6 +92,9 @@ libscope connect confluence \
   --spaces ENG,DEVOPS \
   --exclude-spaces ARCHIVE
 
+# Re-sync with the saved config
+libscope connect confluence --sync
+
 # Disconnect
 libscope disconnect confluence
 ```
@@ -82,7 +117,7 @@ libscope connect slack \
 #   aggregate — combines thread replies into one document (default)
 #   separate  — one document per reply
 
-# Re-sync
+# Re-sync with the saved config (messages since the last sync)
 libscope connect slack --sync
 
 # Disconnect
@@ -103,8 +138,11 @@ libscope connect onenote
 # Sync a specific notebook
 libscope connect onenote --notebook "Work Notes"
 
-# Re-sync with token refresh
+# Re-sync with the saved config (refreshes the access token when it has expired)
 libscope connect onenote --sync
+
+# Use an existing access token instead of signing in (it cannot be refreshed)
+libscope connect onenote --token <access-token>
 
 # Disconnect
 libscope disconnect onenote

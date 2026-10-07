@@ -16,7 +16,7 @@ import type { LinkType } from "../core/links.js";
 import { getVersionHistory, rollbackToVersion } from "../core/versioning.js";
 import { initLogger, type LogLevel } from "../logger.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, extname, basename } from "node:path";
+import { join, extname, basename, resolve as resolvePath } from "node:path";
 import { fetchAndConvert } from "../core/url-fetcher.js";
 import { spiderUrl } from "../core/spider.js";
 import type { SpiderOptions } from "../core/spider.js";
@@ -67,20 +67,30 @@ import { FileWatcher, DEFAULT_WATCH_EXTENSIONS } from "../core/watcher.js";
 import { indexRepository, parseRepoUrl } from "../core/repo.js";
 import {
   authenticateDeviceCode,
-  refreshAccessToken,
   syncOneNote,
   disconnectOneNote,
+  type OneNoteConfig,
 } from "../connectors/onenote.js";
 import {
-  loadConnectorConfig,
-  saveConnectorConfig,
   saveNamedConnectorConfig,
   loadNamedConnectorConfig,
   hasNamedConnectorConfig,
+  deleteNamedConnectorConfig,
 } from "../connectors/index.js";
+import type { ConnectorSyncOptions } from "../connectors/sync-tracker.js";
+import {
+  findSavedConnectorConfig,
+  findSavedOneNoteConfig,
+  runAndSaveConnector,
+  saveConnectorSettings,
+  resolveConnectorType,
+  type ConnectorType,
+} from "../connectors/saved-config.js";
 import { syncNotion, disconnectNotion } from "../connectors/notion.js";
 import type { NotionConfig } from "../connectors/notion.js";
 import { syncSlack, disconnectSlack, type SlackConfig } from "../connectors/slack.js";
+import { syncConfluence, type ConfluenceConfig } from "../connectors/confluence.js";
+import { syncObsidianVault, type ObsidianConfig } from "../connectors/obsidian.js";
 import {
   createSavedSearch,
   listSavedSearches,
@@ -2254,53 +2264,100 @@ packCmd
     },
   );
 
-/** Perform device-code auth for OneNote and persist credentials. */
-async function onenoteDeviceAuth(
-  onenoteConf: Record<string, unknown>,
-  connConfig: Record<string, unknown>,
-): Promise<{ token: string; conf: Record<string, unknown> }> {
-  const clientId = (onenoteConf.clientId as string | undefined) ?? process.env.ONENOTE_CLIENT_ID;
+/** Description for the `--name` option of connect/disconnect commands. */
+const CONNECTOR_NAME_HELP = "Saved connector config name (default: the connector type)";
+
+/** Return the saved config for `connect <type> --sync`, or exit with a hint. */
+function requireSavedConfig<T>(saved: T | undefined, type: ConnectorType, name: string): T {
+  if (saved === undefined) {
+    console.error(
+      `No saved ${type} connector named "${name}". Run 'libscope connect ${type}' without --sync first.`,
+    );
+    process.exit(1);
+  }
+  return saved;
+}
+
+/** Sync with `config` and save it as connector `name` (with the new lastSync). */
+function runConnector<C extends { lastSync?: string | undefined }, R>(
+  type: ConnectorType,
+  name: string,
+  config: C,
+  sync: (config: C, options: ConnectorSyncOptions) => Promise<R>,
+): Promise<R> {
+  return runAndSaveConnector(type, name, config, (c) => sync(c, { syncName: name }));
+}
+
+/** Device-code sign-in for OneNote. Returns `base` with the new client and token fields. */
+async function onenoteDeviceAuth(base: Partial<OneNoteConfig>): Promise<OneNoteConfig> {
+  const clientId = base.clientId ?? process.env.ONENOTE_CLIENT_ID;
   if (!clientId) {
     console.error("Error: No client ID. Set ONENOTE_CLIENT_ID env var or provide --token.");
     process.exit(1);
   }
-  const tenantId =
-    (onenoteConf.tenantId as string | undefined) ?? process.env.ONENOTE_TENANT_ID ?? "common";
+  const tenantId = base.tenantId ?? process.env.ONENOTE_TENANT_ID ?? "common";
 
   console.log("Starting device code authentication...");
   const auth = await authenticateDeviceCode(clientId, tenantId);
-  const updated = {
-    ...onenoteConf,
+  console.log("\u2713 Authenticated successfully");
+  return {
+    notebooks: ["all"],
+    excludeSections: [],
+    ...base,
     clientId,
     tenantId,
     accessToken: auth.accessToken,
     refreshToken: auth.refreshToken,
     tokenExpiry: auth.expiresAt,
   };
-  connConfig.onenote = updated;
-  saveConnectorConfig(connConfig);
-  console.log("\u2713 Authenticated successfully");
-  return { token: auth.accessToken, conf: updated };
 }
 
-/** Refresh an existing OneNote access token and persist credentials. */
-async function onenoteRefreshAuth(
-  onenoteConf: Record<string, unknown>,
-  connConfig: Record<string, unknown>,
-): Promise<string | undefined> {
-  const clientId = onenoteConf.clientId as string | undefined;
-  const refreshTok = onenoteConf.refreshToken as string | undefined;
-  if (!clientId || !refreshTok) {
-    return onenoteConf.accessToken as string | undefined;
+/**
+ * Delete saved connector config `name` (it may hold credentials) when it belongs to `type`
+ * and passes the optional `matches` check.
+ */
+function forgetConnector(
+  type: ConnectorType,
+  name: string,
+  matches: (saved: Record<string, unknown>) => boolean = () => true,
+): void {
+  if (!hasNamedConnectorConfig(name)) return;
+  const saved = loadNamedConnectorConfig<Record<string, unknown>>(name);
+  if (resolveConnectorType(name, saved) !== type || !matches(saved)) return;
+  deleteNamedConnectorConfig(name);
+  console.log(`  Removed saved connector config "${name}".`);
+}
+
+/** Absolute, normalised vault path (relative paths resolve against the working directory). */
+function resolveVaultPath(vaultPath: string): string {
+  return resolvePath(vaultPath);
+}
+
+/** Build the OneNote config for a first-time (non --sync) connect. */
+async function buildOneNoteConnectConfig(
+  name: string,
+  opts: { token?: string; notebook?: string },
+): Promise<OneNoteConfig> {
+  const saved: Partial<OneNoteConfig> = findSavedOneNoteConfig(name) ?? {};
+  const notebooks = opts.notebook ? [opts.notebook] : ["all"];
+  if (opts.token) {
+    // A manually supplied token cannot be refreshed; drop any stored refresh token.
+    return {
+      clientId: "",
+      tenantId: "common",
+      excludeSections: [],
+      ...saved,
+      notebooks,
+      accessToken: opts.token,
+      refreshToken: undefined,
+      tokenExpiry: undefined,
+      lastSync: undefined,
+    };
   }
-  const tenantId = (onenoteConf.tenantId as string | undefined) ?? "common";
-  const auth = await refreshAccessToken(clientId, refreshTok, tenantId);
-  onenoteConf.accessToken = auth.accessToken;
-  onenoteConf.refreshToken = auth.refreshToken;
-  onenoteConf.tokenExpiry = auth.expiresAt;
-  connConfig.onenote = onenoteConf;
-  saveConnectorConfig(connConfig);
-  return auth.accessToken;
+  const config = await onenoteDeviceAuth({ ...saved, notebooks, lastSync: undefined });
+  // Keep the credentials even if the first sync fails.
+  saveConnectorSettings("onenote", name, config);
+  return config;
 }
 
 // connect onenote
@@ -2309,10 +2366,11 @@ const connectCmd = program.command("connect").description("Connect external serv
 connectCmd
   .command("onenote")
   .description("Connect and sync OneNote notebooks via Microsoft Graph API")
-  .option("--token <accessToken>", "Use a pre-existing access token")
-  .option("--sync", "Incremental re-sync only")
+  .option("--token <accessToken>", "Use a pre-existing access token (cannot be refreshed)")
+  .option("--sync", "Re-sync using the saved configuration (refreshes the access token)")
   .option("--notebook <name>", "Sync a specific notebook")
-  .action(async (opts: { token?: string; sync?: boolean; notebook?: string }) => {
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (opts: { token?: string; sync?: boolean; notebook?: string; name?: string }) => {
     const config = loadConfig();
     setupLogging(program.opts<ProgramOpts>());
 
@@ -2329,35 +2387,14 @@ connectCmd
     createVectorTable(db, provider.dimensions);
 
     try {
-      const connConfig = loadConnectorConfig();
-      let onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
+      const name = opts.name ?? "onenote";
+      const oneNoteConfig = opts.sync
+        ? requireSavedConfig(findSavedOneNoteConfig(name), "onenote", name)
+        : await buildOneNoteConnectConfig(name, opts);
 
-      let accessToken = opts.token;
-
-      if (!accessToken && !opts.sync) {
-        const result = await onenoteDeviceAuth(onenoteConf, connConfig);
-        accessToken = result.token;
-        onenoteConf = result.conf;
-      }
-
-      if (opts.sync && !accessToken) {
-        accessToken = await onenoteRefreshAuth(onenoteConf, connConfig);
-      }
-
-      if (!accessToken) {
-        console.error("Error: No access token available. Run without --sync to authenticate.");
-        process.exit(1);
-      }
-
-      const notebooks = opts.notebook ? [opts.notebook] : ["all"];
-      const syncResult = await syncOneNote(db, provider, {
-        clientId: (onenoteConf.clientId as string) ?? "",
-        tenantId: (onenoteConf.tenantId as string) ?? "common",
-        accessToken,
-        notebooks,
-        excludeSections: (onenoteConf.excludeSections as string[]) ?? [],
-        lastSync: opts.sync ? (onenoteConf.lastSync as string | undefined) : undefined,
-      });
+      const syncResult = await runConnector("onenote", name, oneNoteConfig, (c, o) =>
+        syncOneNote(db, provider, c, o),
+      );
 
       console.log(`\n✓ OneNote sync complete:`);
       console.log(`  Notebooks: ${syncResult.notebooks}`);
@@ -2383,7 +2420,8 @@ disconnectCmd
   .command("onenote")
   .description("Disconnect OneNote and remove its data")
   .option("-y, --yes", "Skip confirmation prompt")
-  .action(async (opts: { yes?: boolean }) => {
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (opts: { yes?: boolean; name?: string }) => {
     if (
       !(await confirmOrCancel(
         "Disconnect OneNote and remove all its data? This cannot be undone.",
@@ -2408,46 +2446,54 @@ disconnectCmd
     try {
       const removed = disconnectOneNote(db);
       console.log(`✓ Disconnected OneNote. Removed ${removed} documents.`);
+      forgetConnector("onenote", opts.name ?? "onenote");
     } finally {
       db.close();
     }
   });
 
 connectCmd
-  .command("obsidian <vault-path>")
+  .command("obsidian [vault-path]")
   .description("Sync an Obsidian vault into the knowledge base")
-  .option("--sync", "Incremental re-sync (only changed files)")
+  .option("--sync", "Re-sync using the saved configuration (only changed files are re-indexed)")
   .option(
     "--topic-mapping <mode>",
     "Map topics from 'folder' or 'frontmatter' (default: folder)",
     "folder",
   )
   .option("--exclude <patterns...>", "Additional exclude patterns")
+  .option("--name <name>", CONNECTOR_NAME_HELP)
   .action(
     async (
-      vaultPath: string,
-      cmdOpts: { sync?: boolean; topicMapping?: string; exclude?: string[] },
+      vaultPath: string | undefined,
+      cmdOpts: { sync?: boolean; topicMapping?: string; exclude?: string[]; name?: string },
     ) => {
-      const { db, provider } = initializeAppWithEmbedding();
-
-      try {
-        const { syncObsidianVault } = await import("../connectors/obsidian.js");
-
-        const topicMapping: "folder" | "frontmatter" =
-          cmdOpts.topicMapping === "frontmatter" ? "frontmatter" : "folder";
-        const obsConfig = {
-          vaultPath: join(process.cwd(), vaultPath).replace(/\/+$/, ""),
-          topicMapping,
+      const name = cmdOpts.name ?? "obsidian";
+      let obsConfig: ObsidianConfig;
+      if (cmdOpts.sync) {
+        obsConfig = requireSavedConfig(
+          findSavedConnectorConfig<ObsidianConfig>("obsidian", name),
+          "obsidian",
+          name,
+        );
+      } else {
+        if (!vaultPath) {
+          console.error("Error: <vault-path> is required (or use --sync with a saved config).");
+          process.exit(1);
+        }
+        obsConfig = {
+          vaultPath: resolveVaultPath(vaultPath),
+          topicMapping: cmdOpts.topicMapping === "frontmatter" ? "frontmatter" : "folder",
           excludePatterns: cmdOpts.exclude ?? [],
         };
+      }
 
-        // Use absolute path if provided
-        if (vaultPath.startsWith("/")) {
-          obsConfig.vaultPath = vaultPath;
-        }
-
+      const { db, provider } = initializeAppWithEmbedding();
+      try {
         console.log(`Syncing Obsidian vault: ${obsConfig.vaultPath}`);
-        const result = await syncObsidianVault(db, provider, obsConfig);
+        const result = await runConnector("obsidian", name, obsConfig, (c, o) =>
+          syncObsidianVault(db, provider, c, o),
+        );
 
         console.log(`✓ Sync complete:`);
         console.log(`  Added:   ${result.added}`);
@@ -2476,7 +2522,8 @@ connectCmd
     "Thread handling: aggregate (full thread as one doc) or separate",
     "aggregate",
   )
-  .option("--sync", "Sync using saved configuration")
+  .option("--sync", "Re-sync using the saved configuration")
+  .option("--name <name>", CONNECTOR_NAME_HELP)
   .action(
     async (opts: {
       token?: string;
@@ -2484,45 +2531,35 @@ connectCmd
       exclude?: string;
       threadMode: string;
       sync?: boolean;
+      name?: string;
     }) => {
+      const name = opts.name ?? "slack";
+      let slackConfig: SlackConfig;
+      if (opts.sync) {
+        slackConfig = requireSavedConfig(
+          findSavedConnectorConfig<SlackConfig>("slack", name),
+          "slack",
+          name,
+        );
+      } else {
+        if (!opts.token) {
+          console.error("--token is required for initial Slack connection.");
+          process.exit(1);
+        }
+        slackConfig = {
+          token: opts.token,
+          channels: splitCsv(opts.channels),
+          threadMode: opts.threadMode === "separate" ? "separate" : "aggregate",
+          ...(opts.exclude ? { excludeChannels: splitCsv(opts.exclude) } : {}),
+        };
+      }
+
       const { db, provider } = initializeAppWithEmbedding();
       try {
-        let slackConfig: SlackConfig;
-
-        if (opts.sync) {
-          if (!hasNamedConnectorConfig("slack")) {
-            console.error(
-              "No Slack configuration found. Run 'libscope connect slack --token ...' first.",
-            );
-            process.exit(1);
-          }
-          slackConfig = loadNamedConnectorConfig<SlackConfig>("slack");
-        } else {
-          if (!opts.token) {
-            console.error("--token is required for initial Slack connection.");
-            process.exit(1);
-          }
-          slackConfig = {
-            token: opts.token,
-            channels: splitCsv(opts.channels),
-            threadMode: opts.threadMode === "separate" ? "separate" : "aggregate",
-          };
-          if (opts.exclude) {
-            slackConfig = {
-              ...slackConfig,
-              excludeChannels: splitCsv(opts.exclude),
-            };
-          }
-        }
-
         console.log("Syncing Slack messages...");
-        const result = await syncSlack(db, provider, slackConfig);
-
-        const updatedConfig: SlackConfig = {
-          ...slackConfig,
-          lastSync: new Date().toISOString(),
-        };
-        saveNamedConnectorConfig("slack", updatedConfig);
+        const result = await runConnector("slack", name, slackConfig, (c, o) =>
+          syncSlack(db, provider, c, o),
+        );
 
         console.log(`✓ Slack sync complete:`);
         console.log(`  Channels: ${result.channels}`);
@@ -2549,7 +2586,8 @@ connectCmd
   .option("--token <token>", "API token (Cloud) or Personal Access Token (Server/Data Center)")
   .option("--spaces <keys>", "Comma-separated space keys, or 'all'", "all")
   .option("--exclude-spaces <keys>", "Comma-separated space keys to exclude")
-  .option("--sync", "Sync using previously saved config")
+  .option("--sync", "Re-sync using the saved configuration")
+  .option("--name <name>", CONNECTOR_NAME_HELP)
   .action(
     async (opts: {
       url?: string;
@@ -2559,26 +2597,33 @@ connectCmd
       spaces?: string;
       excludeSpaces?: string;
       sync?: boolean;
+      name?: string;
     }) => {
-      const { syncConfluence } = await import("../connectors/confluence.js");
+      const name = opts.name ?? "confluence";
+      let confluenceConfig: ConfluenceConfig;
+      if (opts.sync) {
+        confluenceConfig = requireSavedConfig(
+          findSavedConnectorConfig<ConfluenceConfig>("confluence", name),
+          "confluence",
+          name,
+        );
+      } else {
+        const email = opts.email ?? process.env["CONFLUENCE_EMAIL"];
+        confluenceConfig = {
+          baseUrl: opts.url ?? process.env["CONFLUENCE_URL"] ?? "",
+          type: opts.type === "server" ? "server" : "cloud",
+          ...(email ? { email } : {}),
+          token: opts.token ?? process.env["CONFLUENCE_TOKEN"] ?? "",
+          spaces: splitCsv(opts.spaces ?? "all"),
+          excludeSpaces: opts.excludeSpaces ? splitCsv(opts.excludeSpaces) : undefined,
+        };
+      }
+
       const { db, provider } = initializeAppWithEmbedding();
       try {
-        const url = opts.url ?? process.env["CONFLUENCE_URL"] ?? "";
-        const confluenceType = opts.type === "server" ? "server" : ("cloud" as "cloud" | "server");
-        const email = opts.email ?? process.env["CONFLUENCE_EMAIL"] ?? undefined;
-        const token = opts.token ?? process.env["CONFLUENCE_TOKEN"] ?? "";
-
-        const spaces = splitCsv(opts.spaces ?? "all");
-        const excludeSpaces = opts.excludeSpaces ? splitCsv(opts.excludeSpaces) : undefined;
-
-        const result = await syncConfluence(db, provider, {
-          baseUrl: url,
-          type: confluenceType,
-          ...(email ? { email } : {}),
-          token,
-          spaces,
-          excludeSpaces,
-        });
+        const result = await runConnector("confluence", name, confluenceConfig, (c, o) =>
+          syncConfluence(db, provider, c, o),
+        );
 
         console.log(`✓ Confluence sync complete`);
         console.log(`  Spaces: ${result.spaces}`);
@@ -2600,7 +2645,8 @@ disconnectCmd
   .command("obsidian <vault-path>")
   .description("Remove all documents from an Obsidian vault")
   .option("-y, --yes", "Skip confirmation prompt")
-  .action(async (vaultPath: string, opts: { yes?: boolean }) => {
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (vaultPath: string, opts: { yes?: boolean; name?: string }) => {
     if (
       !(await confirmOrCancel(
         `Disconnect Obsidian vault "${vaultPath}" and remove its documents? This cannot be undone.`,
@@ -2613,13 +2659,14 @@ disconnectCmd
     try {
       const { disconnectVault } = await import("../connectors/obsidian.js");
 
-      let resolvedPath = vaultPath;
-      if (!vaultPath.startsWith("/")) {
-        resolvedPath = join(process.cwd(), vaultPath);
-      }
-
+      const resolvedPath = resolveVaultPath(vaultPath);
       const removed = disconnectVault(db, resolvedPath);
       console.log(`✓ Disconnected vault. Removed ${removed} documents.`);
+      forgetConnector(
+        "obsidian",
+        opts.name ?? "obsidian",
+        (saved) => saved["vaultPath"] === resolvedPath,
+      );
     } finally {
       closeDatabase();
     }
@@ -2628,41 +2675,44 @@ disconnectCmd
 connectCmd
   .command("notion")
   .description("Connect and sync Notion pages and databases")
-  .option("--token <token>", "Notion integration token (secret_...)")
-  .option("--sync", "Sync pages using a previously stored token")
+  .option("--token <token>", "Notion integration token (secret_... or ntn_...; or NOTION_TOKEN)")
+  .option("--sync", "Re-sync using the saved configuration (pages edited since the last sync)")
   .option("--exclude <ids...>", "Page/database IDs to exclude")
-  .action(async (opts: { token?: string; sync?: boolean; exclude?: string[] }) => {
-    const { db, provider } = initializeAppWithEmbedding();
-    let token = opts.token;
-
-    if (opts.sync && !token) {
-      token = process.env["NOTION_TOKEN"];
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (opts: { token?: string; sync?: boolean; exclude?: string[]; name?: string }) => {
+    const name = opts.name ?? "notion";
+    let config: NotionConfig;
+    if (opts.sync) {
+      config = requireSavedConfig(
+        findSavedConnectorConfig<NotionConfig>("notion", name),
+        "notion",
+        name,
+      );
+    } else {
+      const token = opts.token ?? process.env["NOTION_TOKEN"];
       if (!token) {
-        console.error("Error: --token is required, or set NOTION_TOKEN environment variable.");
+        console.error("Error: --token <token> is required, or set NOTION_TOKEN.");
         process.exitCode = 1;
         return;
       }
+      config = { token, ...(opts.exclude ? { excludePages: opts.exclude } : {}) };
     }
 
-    if (!token) {
-      console.error("Error: --token <token> is required.");
-      process.exitCode = 1;
-      return;
-    }
-
-    const config: NotionConfig = { token };
-    if (opts.exclude) {
-      config.excludePages = opts.exclude;
-    }
-
-    console.log("Syncing Notion...");
-    const result = await syncNotion(db, provider, config);
-    console.log(
-      `✓ Synced: ${result.pagesIndexed} pages, ${result.databasesIndexed} databases` +
-        (result.errors.length > 0 ? `, ${result.errors.length} errors` : ""),
-    );
-    for (const err of result.errors) {
-      console.log(`  ⚠ ${err.page}: ${err.error}`);
+    const { db, provider } = initializeAppWithEmbedding();
+    try {
+      console.log("Syncing Notion...");
+      const result = await runConnector("notion", name, config, (c, o) =>
+        syncNotion(db, provider, c, o),
+      );
+      console.log(
+        `✓ Synced: ${result.pagesIndexed} pages, ${result.databasesIndexed} databases` +
+          (result.errors.length > 0 ? `, ${result.errors.length} errors` : ""),
+      );
+      for (const err of result.errors) {
+        console.log(`  ⚠ ${err.page}: ${err.error}`);
+      }
+    } finally {
+      closeDatabase();
     }
   });
 
@@ -2670,7 +2720,8 @@ disconnectCmd
   .command("notion")
   .description("Remove all Notion documents")
   .option("-y, --yes", "Skip confirmation prompt")
-  .action(async (opts: { yes?: boolean }) => {
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (opts: { yes?: boolean; name?: string }) => {
     if (
       !(await confirmOrCancel(
         "Disconnect Notion and remove all its documents? This cannot be undone.",
@@ -2683,6 +2734,7 @@ disconnectCmd
     try {
       const removed = await disconnectNotion(db);
       console.log(`✓ Removed ${removed} Notion documents.`);
+      forgetConnector("notion", opts.name ?? "notion");
     } finally {
       closeDatabase();
     }
@@ -2692,7 +2744,8 @@ disconnectCmd
   .command("slack")
   .description("Remove all Slack data from the knowledge base")
   .option("-y, --yes", "Skip confirmation prompt")
-  .action(async (opts: { yes?: boolean }) => {
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (opts: { yes?: boolean; name?: string }) => {
     if (
       !(await confirmOrCancel(
         "Disconnect Slack and remove all its data? This cannot be undone.",
@@ -2705,6 +2758,7 @@ disconnectCmd
     try {
       const count = disconnectSlack(db);
       console.log(`✓ Removed ${count} Slack documents from the knowledge base.`);
+      forgetConnector("slack", opts.name ?? "slack");
     } finally {
       closeDatabase();
     }
@@ -2714,7 +2768,8 @@ disconnectCmd
   .command("confluence")
   .description("Remove all Confluence-synced content")
   .option("-y, --yes", "Skip confirmation prompt")
-  .action(async (opts: { yes?: boolean }) => {
+  .option("--name <name>", CONNECTOR_NAME_HELP)
+  .action(async (opts: { yes?: boolean; name?: string }) => {
     if (
       !(await confirmOrCancel(
         "Disconnect Confluence and remove all synced content? This cannot be undone.",
@@ -2728,6 +2783,7 @@ disconnectCmd
     try {
       const removed = disconnectConfluence(db);
       console.log(`✓ Removed ${removed} Confluence documents`);
+      forgetConnector("confluence", opts.name ?? "confluence");
     } finally {
       closeDatabase();
     }

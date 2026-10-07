@@ -5,7 +5,7 @@ import { indexDocument } from "../core/indexing.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 import { deleteDocumentRows } from "./index.js";
 
 export interface SlackConfig {
@@ -443,6 +443,17 @@ function classifyMessages(messages: SlackMessage[]): {
   return { threadParents, standaloneMessages };
 }
 
+/**
+ * Convert a lastSync value to Slack's `oldest` format (Unix seconds). Saved configs store
+ * lastSync as an ISO-8601 string; values that are already numeric are passed through.
+ */
+export function toSlackTimestamp(lastSync: string | undefined): string | undefined {
+  if (!lastSync) return undefined;
+  if (Number.isFinite(Number(lastSync))) return lastSync;
+  const ms = Date.parse(lastSync);
+  return Number.isNaN(ms) ? undefined : String(ms / 1000);
+}
+
 /** Process a single channel: fetch messages, resolve users, and index documents. */
 async function syncChannel(
   db: Database.Database,
@@ -451,7 +462,7 @@ async function syncChannel(
   channel: SlackChannel,
   result: SlackSyncResult,
 ): Promise<void> {
-  const oldest = config.lastSync ?? undefined;
+  const oldest = toSlackTimestamp(config.lastSync);
   const messages = await fetchMessages(config.token, channel.id, oldest);
 
   const { threadParents, standaloneMessages } = classifyMessages(messages);
@@ -500,6 +511,26 @@ export async function syncSlack(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: SlackConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<SlackSyncResult> {
+  return trackSync(
+    db,
+    "slack",
+    options.syncName ?? "slack",
+    () => runSlackSync(db, provider, config),
+    (result) => ({
+      added: result.messagesIndexed + result.threadsIndexed,
+      updated: 0,
+      deleted: 0,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runSlackSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: SlackConfig,
 ): Promise<SlackSyncResult> {
   const log = getLogger();
 
@@ -510,57 +541,43 @@ export async function syncSlack(
     throw new ValidationError("At least one channel must be specified");
   }
 
-  const syncId = startSync(db, "slack", "slack");
+  userCache.clear();
 
-  try {
-    userCache.clear();
+  const result: SlackSyncResult = {
+    channels: 0,
+    messagesIndexed: 0,
+    threadsIndexed: 0,
+    errors: [],
+  };
 
-    const result: SlackSyncResult = {
-      channels: 0,
-      messagesIndexed: 0,
-      threadsIndexed: 0,
-      errors: [],
-    };
+  log.info("Fetching Slack channel list");
+  const allChannels = await listChannels(config.token);
+  const channels = filterChannels(allChannels, config.channels, config.excludeChannels);
+  result.channels = channels.length;
 
-    log.info("Fetching Slack channel list");
-    const allChannels = await listChannels(config.token);
-    const channels = filterChannels(allChannels, config.channels, config.excludeChannels);
-    result.channels = channels.length;
+  log.info({ channelCount: channels.length }, "Processing Slack channels");
 
-    log.info({ channelCount: channels.length }, "Processing Slack channels");
-
-    for (const channel of channels) {
-      try {
-        log.info({ channel: channel.name }, "Syncing channel");
-        await syncChannel(db, provider, config, channel, result);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        log.error({ channel: channel.name, err }, "Error syncing Slack channel");
-        result.errors.push({ channel: channel.name, error: errMsg });
-      }
+  for (const channel of channels) {
+    try {
+      log.info({ channel: channel.name }, "Syncing channel");
+      await syncChannel(db, provider, config, channel, result);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log.error({ channel: channel.name, err }, "Error syncing Slack channel");
+      result.errors.push({ channel: channel.name, error: errMsg });
     }
-
-    log.info(
-      {
-        channels: result.channels,
-        messages: result.messagesIndexed,
-        threads: result.threadsIndexed,
-      },
-      "Slack sync complete",
-    );
-
-    completeSync(db, syncId, {
-      added: result.messagesIndexed + result.threadsIndexed,
-      updated: 0,
-      deleted: 0,
-      errored: result.errors.length,
-    });
-
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
   }
+
+  log.info(
+    {
+      channels: result.channels,
+      messages: result.messagesIndexed,
+      threads: result.threadsIndexed,
+    },
+    "Slack sync complete",
+  );
+
+  return result;
 }
 
 export function disconnectSlack(db: Database.Database): number {

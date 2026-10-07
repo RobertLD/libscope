@@ -5,7 +5,7 @@ import { ValidationError, FetchError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 const NOTION_API_BASE = "https://api.notion.com";
 const NOTION_VERSION = "2022-06-28";
@@ -505,6 +505,26 @@ export async function syncNotion(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: NotionConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<NotionSyncResult> {
+  return trackSync(
+    db,
+    "notion",
+    options.syncName ?? "notion",
+    () => runNotionSync(db, provider, config),
+    (result) => ({
+      added: result.pagesIndexed + result.databasesIndexed,
+      updated: 0,
+      deleted: 0,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runNotionSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: NotionConfig,
 ): Promise<NotionSyncResult> {
   const log = getLogger();
 
@@ -512,58 +532,44 @@ export async function syncNotion(
     throw new ValidationError("Notion token must start with 'secret_' or 'ntn_'");
   }
 
-  const syncId = startSync(db, "notion", "notion");
+  const result: NotionSyncResult = {
+    pagesIndexed: 0,
+    databasesIndexed: 0,
+    errors: [],
+  };
 
-  try {
-    const result: NotionSyncResult = {
-      pagesIndexed: 0,
-      databasesIndexed: 0,
-      errors: [],
-    };
+  const excludeSet = new Set(config.excludePages ?? []);
 
-    const excludeSet = new Set(config.excludePages ?? []);
+  log.info({ lastSync: config.lastSync }, "Starting Notion sync");
+  const searchResults = await searchNotion(config.token, config.lastSync);
+  log.info({ count: searchResults.length }, "Found Notion objects");
 
-    log.info({ lastSync: config.lastSync }, "Starting Notion sync");
-    const searchResults = await searchNotion(config.token, config.lastSync);
-    log.info({ count: searchResults.length }, "Found Notion objects");
-
-    for (const item of searchResults) {
-      if (excludeSet.has(item.id)) {
-        log.debug({ id: item.id }, "Skipping excluded page");
-        continue;
-      }
-
-      try {
-        await syncNotionItem(db, provider, config.token, item, excludeSet, result);
-      } catch (err) {
-        const title = extractTitle(item);
-        const message = err instanceof Error ? err.message : String(err);
-        result.errors.push({ page: title, error: message });
-        log.warn({ id: item.id, err }, "Failed to index Notion item");
-      }
+  for (const item of searchResults) {
+    if (excludeSet.has(item.id)) {
+      log.debug({ id: item.id }, "Skipping excluded page");
+      continue;
     }
 
-    log.info(
-      {
-        pagesIndexed: result.pagesIndexed,
-        databasesIndexed: result.databasesIndexed,
-        errors: result.errors.length,
-      },
-      "Notion sync complete",
-    );
-
-    completeSync(db, syncId, {
-      added: result.pagesIndexed + result.databasesIndexed,
-      updated: 0,
-      deleted: 0,
-      errored: result.errors.length,
-    });
-
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
+    try {
+      await syncNotionItem(db, provider, config.token, item, excludeSet, result);
+    } catch (err) {
+      const title = extractTitle(item);
+      const message = err instanceof Error ? err.message : String(err);
+      result.errors.push({ page: title, error: message });
+      log.warn({ id: item.id, err }, "Failed to index Notion item");
+    }
   }
+
+  log.info(
+    {
+      pagesIndexed: result.pagesIndexed,
+      databasesIndexed: result.databasesIndexed,
+      errors: result.errors.length,
+    },
+    "Notion sync complete",
+  );
+
+  return result;
 }
 
 /** Remove all Notion-sourced documents from the knowledge base. */

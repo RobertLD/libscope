@@ -29,6 +29,7 @@ vi.mock("../../src/connectors/index.js", async (importOriginal) => {
     ...orig,
     loadNamedConnectorConfig: vi.fn().mockReturnValue({ token: "test-token" }),
     saveNamedConnectorConfig: vi.fn(),
+    hasNamedConnectorConfig: vi.fn().mockReturnValue(false),
     startSync: vi.fn().mockReturnValue("sync-id-1"),
     completeSync: vi.fn(),
     failSync: vi.fn(),
@@ -57,7 +58,8 @@ vi.mock("../../src/connectors/onenote.js", () => ({
 
 // Import after mocks are set up
 const { ConnectorScheduler, loadScheduleEntries } = await import("../../src/core/scheduler.js");
-const { startSync, completeSync, failSync } = await import("../../src/connectors/index.js");
+const { startSync, completeSync, failSync, saveNamedConnectorConfig } =
+  await import("../../src/connectors/index.js");
 const { syncNotion } = await import("../../src/connectors/notion.js");
 const { syncSlack } = await import("../../src/connectors/slack.js");
 const { syncConfluence } = await import("../../src/connectors/confluence.js");
@@ -149,132 +151,46 @@ describe("ConnectorScheduler", () => {
   });
 
   describe("runSync via cron callback", () => {
-    it("runs a notion sync successfully", async () => {
-      const scheduler = new ConnectorScheduler(db, provider);
-      scheduler.start([
-        { connectorType: "notion", connectorName: "my-notion", cronExpression: "0 */6 * * *" },
-      ]);
+    const cases = [
+      ["notion", syncNotion],
+      ["slack", syncSlack],
+      ["confluence", syncConfluence],
+      ["obsidian", syncObsidianVault],
+      ["onenote", syncOneNote],
+    ] as const;
 
-      const callback = cronCallbacks.get("0 */6 * * *");
-      expect(callback).toBeDefined();
-      callback!();
-      // Allow async runSync to complete
-      await vi.waitFor(() => {
-        expect(completeSync).toHaveBeenCalled();
-      });
+    it.each(cases)(
+      "delegates a %s run to the connector under the configured name",
+      async (type, syncFn) => {
+        const scheduler = new ConnectorScheduler(db, provider);
+        scheduler.start([
+          { connectorType: type, connectorName: `my-${type}`, cronExpression: "0 */6 * * *" },
+        ]);
 
-      expect(startSync).toHaveBeenCalledWith(db, "notion", "my-notion");
-      expect(syncNotion).toHaveBeenCalled();
-      expect(completeSync).toHaveBeenCalledWith(db, "sync-id-1", {
-        added: 5,
-        updated: 0,
-        deleted: 0,
-        errored: 0,
-      });
+        cronCallbacks.get("0 */6 * * *")!();
+        await vi.waitFor(() => {
+          expect(scheduler.getStatus().jobs[0]!.lastRun).toBeDefined();
+        });
 
-      const status = scheduler.getStatus();
-      expect(status.jobs[0]!.lastRun).toBeDefined();
-      expect(status.jobs[0]!.running).toBe(false);
-      await scheduler.stop();
-    });
+        expect(syncFn).toHaveBeenCalledWith(
+          db,
+          provider,
+          expect.objectContaining({ token: "test-token" }),
+          { syncName: `my-${type}` },
+        );
+        // The connector records the run; the scheduler must not add a second row.
+        expect(startSync).not.toHaveBeenCalled();
+        expect(completeSync).not.toHaveBeenCalled();
+        const [savedName, savedConfig] = vi.mocked(saveNamedConnectorConfig).mock.calls[0]!;
+        expect(savedName).toBe(`my-${type}`);
+        expect(savedConfig).toMatchObject({ connectorType: type });
+        expect(typeof (savedConfig as { lastSync?: unknown }).lastSync).toBe("string");
+        expect(scheduler.getStatus().jobs[0]!.running).toBe(false);
+        await scheduler.stop();
+      },
+    );
 
-    it("runs a slack sync successfully", async () => {
-      const scheduler = new ConnectorScheduler(db, provider);
-      scheduler.start([
-        { connectorType: "slack", connectorName: "my-slack", cronExpression: "0 0 * * *" },
-      ]);
-
-      cronCallbacks.get("0 0 * * *")!();
-      await vi.waitFor(() => {
-        expect(completeSync).toHaveBeenCalled();
-      });
-
-      expect(syncSlack).toHaveBeenCalled();
-      expect(completeSync).toHaveBeenCalledWith(db, "sync-id-1", {
-        added: 12,
-        updated: 0,
-        deleted: 0,
-        errored: 0,
-      });
-      await scheduler.stop();
-    });
-
-    it("runs a confluence sync successfully", async () => {
-      const scheduler = new ConnectorScheduler(db, provider);
-      scheduler.start([
-        {
-          connectorType: "confluence",
-          connectorName: "my-confluence",
-          cronExpression: "0 */6 * * *",
-        },
-      ]);
-
-      cronCallbacks.get("0 */6 * * *")!();
-      await vi.waitFor(() => {
-        expect(completeSync).toHaveBeenCalled();
-      });
-
-      expect(syncConfluence).toHaveBeenCalled();
-      expect(completeSync).toHaveBeenCalledWith(db, "sync-id-1", {
-        added: 3,
-        updated: 1,
-        deleted: 0,
-        errored: 0,
-      });
-      await scheduler.stop();
-    });
-
-    it("runs an obsidian sync successfully", async () => {
-      const scheduler = new ConnectorScheduler(db, provider);
-      scheduler.start([
-        {
-          connectorType: "obsidian",
-          connectorName: "my-obsidian",
-          cronExpression: "0 */6 * * *",
-        },
-      ]);
-
-      cronCallbacks.get("0 */6 * * *")!();
-      await vi.waitFor(() => {
-        expect(completeSync).toHaveBeenCalled();
-      });
-
-      expect(syncObsidianVault).toHaveBeenCalled();
-      expect(completeSync).toHaveBeenCalledWith(db, "sync-id-1", {
-        added: 4,
-        updated: 2,
-        deleted: 1,
-        errored: 0,
-      });
-      await scheduler.stop();
-    });
-
-    it("runs a onenote sync successfully", async () => {
-      const scheduler = new ConnectorScheduler(db, provider);
-      scheduler.start([
-        {
-          connectorType: "onenote",
-          connectorName: "my-onenote",
-          cronExpression: "0 */6 * * *",
-        },
-      ]);
-
-      cronCallbacks.get("0 */6 * * *")!();
-      await vi.waitFor(() => {
-        expect(completeSync).toHaveBeenCalled();
-      });
-
-      expect(syncOneNote).toHaveBeenCalled();
-      expect(completeSync).toHaveBeenCalledWith(db, "sync-id-1", {
-        added: 6,
-        updated: 0,
-        deleted: 0,
-        errored: 0,
-      });
-      await scheduler.stop();
-    });
-
-    it("handles sync failure and calls failSync", async () => {
+    it("does not save lastSync or write a sync row when the connector fails", async () => {
       vi.mocked(syncNotion).mockRejectedValueOnce(new Error("Network error"));
 
       const scheduler = new ConnectorScheduler(db, provider);
@@ -284,17 +200,17 @@ describe("ConnectorScheduler", () => {
 
       cronCallbacks.get("*/5 * * * *")!();
       await vi.waitFor(() => {
-        expect(failSync).toHaveBeenCalled();
+        expect(scheduler.getStatus().jobs[0]!.lastRun).toBeDefined();
       });
 
-      expect(failSync).toHaveBeenCalledWith(db, "sync-id-1", "Network error");
-      const status = scheduler.getStatus();
-      expect(status.jobs[0]!.running).toBe(false);
-      expect(status.jobs[0]!.lastRun).toBeDefined();
+      expect(saveNamedConnectorConfig).not.toHaveBeenCalled();
+      expect(startSync).not.toHaveBeenCalled();
+      expect(failSync).not.toHaveBeenCalled();
+      expect(scheduler.getStatus().jobs[0]!.running).toBe(false);
       await scheduler.stop();
     });
 
-    it("handles unknown connector type", async () => {
+    it("records one failed row for an unknown connector type", async () => {
       const scheduler = new ConnectorScheduler(db, provider);
       scheduler.start([
         {
@@ -306,14 +222,22 @@ describe("ConnectorScheduler", () => {
 
       cronCallbacks.get("0 */6 * * *")!();
       await vi.waitFor(() => {
-        expect(failSync).toHaveBeenCalled();
+        expect(scheduler.getStatus().jobs[0]!.lastRun).toBeDefined();
       });
 
-      expect(failSync).toHaveBeenCalledWith(
-        db,
-        "sync-id-1",
-        "Unknown connector type: unknown-type",
-      );
+      const rows = db.prepare("SELECT * FROM connector_syncs").all() as Array<{
+        connector_type: string;
+        connector_name: string;
+        status: string;
+        error_message: string;
+      }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        connector_type: "unknown-type",
+        connector_name: "my-unknown",
+        status: "failed",
+        error_message: "Unknown connector type: unknown-type",
+      });
       await scheduler.stop();
     });
 
@@ -323,7 +247,7 @@ describe("ConnectorScheduler", () => {
       vi.mocked(syncNotion).mockImplementationOnce(
         () =>
           new Promise((resolve) => {
-            resolveSync = () => resolve({ pagesIndexed: 1, errors: [] });
+            resolveSync = () => resolve({ pagesIndexed: 1, databasesIndexed: 0, errors: [] });
           }),
       );
 
@@ -352,23 +276,6 @@ describe("ConnectorScheduler", () => {
 
       // syncNotion should only have been called once (second was skipped)
       expect(syncNotion).toHaveBeenCalledTimes(1);
-      await scheduler.stop();
-    });
-
-    it("handles non-Error thrown values in sync", async () => {
-      vi.mocked(syncNotion).mockRejectedValueOnce("string error");
-
-      const scheduler = new ConnectorScheduler(db, provider);
-      scheduler.start([
-        { connectorType: "notion", connectorName: "str-err", cronExpression: "0 */6 * * *" },
-      ]);
-
-      cronCallbacks.get("0 */6 * * *")!();
-      await vi.waitFor(() => {
-        expect(failSync).toHaveBeenCalled();
-      });
-
-      expect(failSync).toHaveBeenCalledWith(db, "sync-id-1", "string error");
       await scheduler.stop();
     });
   });

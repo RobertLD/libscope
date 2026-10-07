@@ -4,6 +4,7 @@ import {
   syncSlack,
   disconnectSlack,
   _setRateLimitDelay,
+  toSlackTimestamp,
   _clearUserCache,
 } from "../../src/connectors/slack.js";
 import type { SlackConfig } from "../../src/connectors/slack.js";
@@ -230,7 +231,7 @@ describe("syncSlack", () => {
     expect(result.messagesIndexed).toBe(2);
   });
 
-  it("uses oldest param for incremental sync", async () => {
+  it("sends lastSync to Slack as Unix seconds in the oldest param", async () => {
     const syncTime = "2024-01-01T00:00:00.000Z";
     setupChannelList([{ id: "C001", name: "general" }]);
     setupMessages([]);
@@ -242,7 +243,14 @@ describe("syncSlack", () => {
       (call: unknown[]) => typeof call[0] === "string" && call[0].includes("conversations.history"),
     );
     expect(historyCall).toBeDefined();
-    expect(String(historyCall?.[0])).toContain("oldest=" + encodeURIComponent(syncTime));
+    expect(new URL(String(historyCall?.[0])).searchParams.get("oldest")).toBe("1704067200");
+  });
+
+  it("toSlackTimestamp passes numeric values through and drops invalid ones", () => {
+    expect(toSlackTimestamp("1704067200.5")).toBe("1704067200.5");
+    expect(toSlackTimestamp("2024-01-01T00:00:01.500Z")).toBe("1704067201.5");
+    expect(toSlackTimestamp("not a date")).toBeUndefined();
+    expect(toSlackTimestamp(undefined)).toBeUndefined();
   });
 
   it("resolves user mentions in message text", async () => {

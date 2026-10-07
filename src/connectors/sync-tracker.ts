@@ -116,3 +116,34 @@ export function getSyncHistory(
     .prepare(`SELECT * FROM connector_syncs ORDER BY started_at DESC, id DESC LIMIT ?`)
     .all(limit) as ConnectorSyncRow[];
 }
+
+/** Optional per-call settings accepted by every connector sync function. */
+export interface ConnectorSyncOptions {
+  /**
+   * Name recorded in connector_syncs for this run (the saved connector config name).
+   * Defaults to the connector's historical name when omitted.
+   */
+  syncName?: string | undefined;
+}
+
+/**
+ * Run `run` and record exactly one connector_syncs row for it: "completed" with the
+ * stats from `toStats`, or "failed" with the error message (the error is rethrown).
+ */
+export async function trackSync<R>(
+  db: Database.Database,
+  connectorType: string,
+  connectorName: string,
+  run: () => Promise<R>,
+  toStats: (result: R) => SyncStats,
+): Promise<R> {
+  const syncId = startSync(db, connectorType, connectorName);
+  try {
+    const result = await run();
+    completeSync(db, syncId, toStats(result));
+    return result;
+  } catch (err) {
+    failSync(db, syncId, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}

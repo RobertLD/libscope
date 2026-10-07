@@ -13,7 +13,7 @@ import { fetchRaw } from "../core/url-fetcher.js";
 import type { FetchOptions } from "../core/url-fetcher.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 
 // Source type used to tag all docs-connector documents.
@@ -632,6 +632,26 @@ export async function syncDocSite(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: DocSiteConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<DocSiteSyncResult> {
+  return trackSync(
+    db,
+    CONNECTOR_TYPE,
+    options.syncName ?? config.url,
+    () => runDocSiteSync(db, provider, config),
+    (result) => ({
+      added: result.pagesIndexed,
+      updated: result.pagesUpdated,
+      deleted: 0,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runDocSiteSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: DocSiteConfig,
 ): Promise<DocSiteSyncResult> {
   const log = getLogger();
 
@@ -660,116 +680,99 @@ export async function syncDocSite(
     errors: [],
   };
 
-  const syncId = startSync(db, CONNECTOR_TYPE, config.url);
+  // --- Fetch root page ---
+  log.info({ url: config.url }, "Fetching documentation root page");
 
+  let rootHtml: string;
   try {
-    // --- Fetch root page ---
-    log.info({ url: config.url }, "Fetching documentation root page");
-
-    let rootHtml: string;
-    try {
-      const raw = await fetchRaw(config.url, fetchOptions);
-      rootHtml = raw.body;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to fetch root page: ${msg}`);
-    }
-
-    // --- Detect site type ---
-    result.detectedType =
-      config.type !== undefined && config.type !== "auto"
-        ? config.type
-        : detectDocSiteType(rootHtml);
-
-    log.info({ type: result.detectedType, url: config.url }, "Documentation site type");
-
-    // --- URL discovery ---
-    const visited = new Set<string>();
-    const queue: Array<{ url: string; depth: number }> = [];
-    const rootNormalised = normalizeUrl(config.url);
-    visited.add(rootNormalised);
-
-    await discoverUrls(config, baseUrl, rootHtml, pathPrefix, fetchOptions, visited, queue);
-
-    // --- Build existing-URL index for update tracking ---
-    const existingUrls = loadExistingDocUrls(db, config.library);
-
-    const ctx: PageContext = {
-      siteType: result.detectedType,
-      db,
-      provider,
-      config,
-      existingUrls,
-      result,
-    };
-
-    // --- Process the root page first ---
-    await processPage(rootNormalised, rootHtml, ctx);
-
-    // --- BFS crawl ---
-    while (queue.length > 0 && visited.size <= maxPages) {
-      const batch = queue.splice(0, concurrency);
-
-      await Promise.allSettled(
-        batch.map(async ({ url, depth }) => {
-          if (visited.size > maxPages) return;
-
-          let html: string;
-          let contentType: string;
-          try {
-            const raw = await fetchRaw(url, fetchOptions);
-            html = raw.body;
-            contentType = raw.contentType;
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            log.warn({ url, error: msg }, "Failed to fetch documentation page");
-            result.errors.push({ url, error: msg });
-            return;
-          }
-
-          // Only process HTML pages (skip binary/asset responses that slipped through)
-          if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
-            return;
-          }
-
-          await processPage(url, html, ctx);
-
-          // Continue link discovery if within depth budget
-          if (depth < maxDepth) {
-            for (const link of extractDocLinks(html, url, pathPrefix)) {
-              if (!visited.has(link)) {
-                visited.add(link);
-                queue.push({ url: link, depth: depth + 1 });
-              }
-            }
-          }
-        }),
-      );
-    }
-
-    completeSync(db, syncId, {
-      added: result.pagesIndexed,
-      updated: result.pagesUpdated,
-      deleted: 0,
-      errored: result.errors.length,
-    });
-
-    log.info(
-      {
-        pagesIndexed: result.pagesIndexed,
-        pagesUpdated: result.pagesUpdated,
-        pagesSkipped: result.pagesSkipped,
-        errors: result.errors.length,
-      },
-      "Documentation site sync complete",
-    );
-
-    return result;
+    const raw = await fetchRaw(config.url, fetchOptions);
+    rootHtml = raw.body;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    failSync(db, syncId, msg);
-    throw err;
+    throw new Error(`Failed to fetch root page: ${msg}`);
   }
+
+  // --- Detect site type ---
+  result.detectedType =
+    config.type !== undefined && config.type !== "auto" ? config.type : detectDocSiteType(rootHtml);
+
+  log.info({ type: result.detectedType, url: config.url }, "Documentation site type");
+
+  // --- URL discovery ---
+  const visited = new Set<string>();
+  const queue: Array<{ url: string; depth: number }> = [];
+  const rootNormalised = normalizeUrl(config.url);
+  visited.add(rootNormalised);
+
+  await discoverUrls(config, baseUrl, rootHtml, pathPrefix, fetchOptions, visited, queue);
+
+  // --- Build existing-URL index for update tracking ---
+  const existingUrls = loadExistingDocUrls(db, config.library);
+
+  const ctx: PageContext = {
+    siteType: result.detectedType,
+    db,
+    provider,
+    config,
+    existingUrls,
+    result,
+  };
+
+  // --- Process the root page first ---
+  await processPage(rootNormalised, rootHtml, ctx);
+
+  // --- BFS crawl ---
+  while (queue.length > 0 && visited.size <= maxPages) {
+    const batch = queue.splice(0, concurrency);
+
+    await Promise.allSettled(
+      batch.map(async ({ url, depth }) => {
+        if (visited.size > maxPages) return;
+
+        let html: string;
+        let contentType: string;
+        try {
+          const raw = await fetchRaw(url, fetchOptions);
+          html = raw.body;
+          contentType = raw.contentType;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn({ url, error: msg }, "Failed to fetch documentation page");
+          result.errors.push({ url, error: msg });
+          return;
+        }
+
+        // Only process HTML pages (skip binary/asset responses that slipped through)
+        if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+          return;
+        }
+
+        await processPage(url, html, ctx);
+
+        // Continue link discovery if within depth budget
+        if (depth < maxDepth) {
+          for (const link of extractDocLinks(html, url, pathPrefix)) {
+            if (!visited.has(link)) {
+              visited.add(link);
+              queue.push({ url: link, depth: depth + 1 });
+            }
+          }
+        }
+      }),
+    );
+  }
+
+  log.info(
+    {
+      pagesIndexed: result.pagesIndexed,
+      pagesUpdated: result.pagesUpdated,
+      pagesSkipped: result.pagesSkipped,
+      errors: result.errors.length,
+    },
+    "Documentation site sync complete",
+  );
+
+  return result;
 }
 
 /**
