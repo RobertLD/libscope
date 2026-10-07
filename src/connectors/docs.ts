@@ -495,8 +495,8 @@ interface PageContext {
   db: Database.Database;
   provider: EmbeddingProvider;
   config: DocSiteConfig;
-  /** Map of normalised URL → existing document ID for update detection. */
-  existingUrlMap: Map<string, string>;
+  /** Normalised URLs of existing documents, for update detection. */
+  existingUrls: Set<string>;
   result: DocSiteSyncResult;
 }
 
@@ -520,7 +520,7 @@ async function processPage(url: string, html: string, ctx: PageContext): Promise
   }
 
   const normalised = normalizeUrl(url);
-  const isKnown = ctx.existingUrlMap.has(normalised);
+  const isKnown = ctx.existingUrls.has(normalised);
 
   const indexed = await indexDocument(ctx.db, ctx.provider, {
     title,
@@ -678,10 +678,10 @@ export async function syncDocSite(
 
     // --- Build existing-URL index for update tracking ---
     const existingDocs = listDocuments(db, { sourceType: SOURCE_TYPE, library: config.library });
-    const existingUrlMap = new Map<string, string>(
+    const existingUrls = new Set<string>(
       existingDocs
         .filter((d): d is typeof d & { url: string } => d.url !== null)
-        .map((d) => [normalizeUrl(d.url), d.id]),
+        .map((d) => normalizeUrl(d.url)),
     );
 
     const ctx: PageContext = {
@@ -689,7 +689,7 @@ export async function syncDocSite(
       db,
       provider,
       config,
-      existingUrlMap,
+      existingUrls,
       result,
     };
 

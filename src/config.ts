@@ -74,6 +74,18 @@ function loadJsonFile(path: string): Partial<LibScopeConfig> {
   }
 }
 
+const LLM_PROVIDERS = ["openai", "ollama", "anthropic", "passthrough"] as const;
+type LlmProviderName = (typeof LLM_PROVIDERS)[number];
+
+function isLlmProvider(value: string | undefined): value is LlmProviderName {
+  return value !== undefined && (LLM_PROVIDERS as readonly string[]).includes(value);
+}
+
+/** Env-var flag parsing: only "true" and "1" enable a flag. */
+function truthy(value: string | undefined): boolean {
+  return value === "true" || value === "1";
+}
+
 function getEnvOverrides(): Partial<LibScopeConfig> {
   const overrides: Partial<LibScopeConfig> = {};
   const provider = process.env["LIBSCOPE_EMBEDDING_PROVIDER"];
@@ -95,39 +107,22 @@ function getEnvOverrides(): Partial<LibScopeConfig> {
 
   const llmProvider = process.env["LIBSCOPE_LLM_PROVIDER"];
   const llmModel = process.env["LIBSCOPE_LLM_MODEL"];
-  const allowPrivate = process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"];
-  const allowSelfSigned = process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"];
+  const allowPrivate = truthy(process.env["LIBSCOPE_ALLOW_PRIVATE_URLS"]);
+  const allowSelfSigned = truthy(process.env["LIBSCOPE_ALLOW_SELF_SIGNED_CERTS"]);
 
-  if (
-    allowPrivate === "true" ||
-    allowPrivate === "1" ||
-    allowSelfSigned === "true" ||
-    allowSelfSigned === "1"
-  ) {
+  if (allowPrivate || allowSelfSigned) {
     overrides.indexing = {
       ...DEFAULT_CONFIG.indexing,
-      ...(allowPrivate === "true" || allowPrivate === "1" ? { allowPrivateUrls: true } : {}),
-      ...(allowSelfSigned === "true" || allowSelfSigned === "1"
-        ? { allowSelfSignedCerts: true }
-        : {}),
+      ...(allowPrivate ? { allowPrivateUrls: true } : {}),
+      ...(allowSelfSigned ? { allowSelfSignedCerts: true } : {}),
     };
   }
 
-  if (
-    llmProvider === "openai" ||
-    llmProvider === "ollama" ||
-    llmProvider === "anthropic" ||
-    llmProvider === "passthrough" ||
-    llmModel
-  ) {
+  const validLlmProvider = isLlmProvider(llmProvider);
+  if (validLlmProvider || llmModel) {
     const anthropicKey = process.env["LIBSCOPE_ANTHROPIC_API_KEY"];
     overrides.llm = {
-      ...(llmProvider === "openai" ||
-      llmProvider === "ollama" ||
-      llmProvider === "anthropic" ||
-      llmProvider === "passthrough"
-        ? { provider: llmProvider }
-        : {}),
+      ...(validLlmProvider ? { provider: llmProvider } : {}),
       ...(llmModel ? { model: llmModel } : {}),
       ...(anthropicKey ? { anthropicApiKey: anthropicKey } : {}),
     };

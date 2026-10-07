@@ -100,6 +100,21 @@ export function createLlmProvider(config: LibScopeConfig): LlmProvider {
   );
 }
 
+/** Retrieve the top-K search results for a RAG question (default K = 5). */
+async function retrieveResults(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  options: RagOptions,
+): Promise<SearchResult[]> {
+  const { results } = await searchDocuments(db, embeddingProvider, {
+    query: options.question,
+    topic: options.topic,
+    library: options.library,
+    limit: options.topK ?? 5,
+  });
+  return results;
+}
+
 export interface PassthroughResult {
   contextPrompt: string;
   sources: RagSource[];
@@ -114,14 +129,7 @@ export async function getContextForQuestion(
   embeddingProvider: EmbeddingProvider,
   options: RagOptions,
 ): Promise<PassthroughResult> {
-  const topK = options.topK ?? 5;
-
-  const { results } = await searchDocuments(db, embeddingProvider, {
-    query: options.question,
-    topic: options.topic,
-    library: options.library,
-    limit: topK,
-  });
+  const results = await retrieveResults(db, embeddingProvider, options);
 
   return {
     contextPrompt: buildContextPrompt(options.question, results),
@@ -328,14 +336,7 @@ export async function* askQuestionStream(
   llmProvider: LlmProvider,
   options: RagOptions,
 ): AsyncGenerator<RagStreamEvent> {
-  const topK = options.topK ?? 5;
-
-  const { results } = await searchDocuments(db, embeddingProvider, {
-    query: options.question,
-    topic: options.topic,
-    library: options.library,
-    limit: topK,
-  });
+  const results = await retrieveResults(db, embeddingProvider, options);
 
   const contextPrompt = buildContextPrompt(options.question, results);
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
@@ -364,14 +365,7 @@ export async function askQuestion(
   llmProvider: LlmProvider,
   options: RagOptions,
 ): Promise<RagResult> {
-  const topK = options.topK ?? 5;
-
-  const { results } = await searchDocuments(db, embeddingProvider, {
-    query: options.question,
-    topic: options.topic,
-    library: options.library,
-    limit: topK,
-  });
+  const results = await retrieveResults(db, embeddingProvider, options);
 
   const contextPrompt = buildContextPrompt(options.question, results);
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;

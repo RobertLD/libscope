@@ -187,17 +187,17 @@ function buildTagNodesAndEdges(
   docIds: Set<string>,
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const tags = db.prepare("SELECT id, name FROM tags ORDER BY name").all() as TagRow[];
-  const tagIdMap = new Map<string, string>();
+  const tagIds = new Set<string>();
   const nodes: GraphNode[] = [];
   for (const tag of tags) {
-    tagIdMap.set(tag.id, tag.name);
+    tagIds.add(tag.id);
     nodes.push({ id: `tag:${tag.id}`, label: tag.name, type: "tag", metadata: {} });
   }
 
   const docTags = db.prepare("SELECT document_id, tag_id FROM document_tags").all() as DocTagRow[];
   const edges: GraphEdge[] = [];
   for (const dt of docTags) {
-    if (docIds.has(dt.document_id) && tagIdMap.has(dt.tag_id)) {
+    if (docIds.has(dt.document_id) && tagIds.has(dt.tag_id)) {
       edges.push({
         source: dt.document_id,
         target: `tag:${dt.tag_id}`,

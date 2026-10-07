@@ -42,55 +42,43 @@ function extToLang(ext: string): string {
   return map[ext.slice(1)] ?? ext.slice(1);
 }
 
+/** Shared path for file and buffer inputs: tree-sitter for code, else the registered parser. */
+async function normalizeBuffer(
+  buf: Buffer,
+  filename: string,
+  explicitTitle: string | undefined,
+): Promise<NormalizedInput> {
+  const ext = extname(filename).toLowerCase();
+  const title = explicitTitle ?? basename(filename, ext);
+
+  if (CODE_EXTENSIONS.has(ext)) {
+    const chunker = await getTreeSitterChunker();
+    const lang = extToLang(ext);
+    if (chunker?.supports(lang)) {
+      const codeChunks = await chunker.chunk(buf.toString("utf-8"), lang);
+      return {
+        title,
+        content: codeChunks[0]?.content ?? "",
+        chunks: codeChunks.map((c) => c.content),
+      };
+    }
+  }
+
+  const parser = getParserForFile(filename);
+  const content = parser ? await parser.parse(buf) : buf.toString("utf-8");
+  return { title, content };
+}
+
 export async function normalizeRawInput(input: RawInput): Promise<NormalizedInput> {
   switch (input.type) {
     case "text":
       return { title: input.title, content: input.content };
 
-    case "file": {
-      const ext = extname(input.path).toLowerCase();
-      const buf = readFileSync(input.path);
-      const title = input.title ?? basename(input.path, ext);
+    case "file":
+      return normalizeBuffer(readFileSync(input.path), input.path, input.title);
 
-      if (CODE_EXTENSIONS.has(ext)) {
-        const chunker = await getTreeSitterChunker();
-        const lang = extToLang(ext);
-        if (chunker?.supports(lang)) {
-          const codeChunks = await chunker.chunk(buf.toString("utf-8"), lang);
-          return {
-            title,
-            content: codeChunks[0]?.content ?? "",
-            chunks: codeChunks.map((c) => c.content),
-          };
-        }
-      }
-
-      const parser = getParserForFile(input.path);
-      const content = parser ? await parser.parse(buf) : buf.toString("utf-8");
-      return { title, content };
-    }
-
-    case "buffer": {
-      const ext = extname(input.filename).toLowerCase();
-      const title = input.title ?? basename(input.filename, ext);
-
-      if (CODE_EXTENSIONS.has(ext)) {
-        const chunker = await getTreeSitterChunker();
-        const lang = extToLang(ext);
-        if (chunker?.supports(lang)) {
-          const codeChunks = await chunker.chunk(input.buffer.toString("utf-8"), lang);
-          return {
-            title,
-            content: codeChunks[0]?.content ?? "",
-            chunks: codeChunks.map((c) => c.content),
-          };
-        }
-      }
-
-      const parser = getParserForFile(input.filename);
-      const content = parser ? await parser.parse(input.buffer) : input.buffer.toString("utf-8");
-      return { title, content };
-    }
+    case "buffer":
+      return normalizeBuffer(input.buffer, input.filename, input.title);
 
     case "url": {
       const fetched = await fetchAndConvert(input.url);

@@ -1,11 +1,12 @@
 import type Database from "better-sqlite3";
+import { setTimeout as sleep } from "node:timers/promises";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError } from "../errors.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
-import { createTopic, listTopics } from "../core/topics.js";
+import { createTopic } from "../core/topics.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
 import { startSync, completeSync, failSync } from "./sync-tracker.js";
 
@@ -76,7 +77,7 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
   if (requestTimestamps.length >= MAX_REQUESTS_PER_MINUTE) {
     const waitMs = 60_000 - (now - (requestTimestamps[0] ?? now));
     log.debug({ waitMs }, "Rate limit reached, waiting");
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    await sleep(waitMs);
   }
   unlock!();
 
@@ -97,7 +98,7 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
         `Rate limited by Graph API (attempt ${attempt + 1})`,
         "ONENOTE_RATE_LIMITED",
       );
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await sleep(delayMs);
       continue;
     }
 
@@ -289,7 +290,7 @@ export async function authenticateDeviceCode(
   const deadline = Date.now() + dcData.expires_in * 1000;
 
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    await sleep(interval);
 
     const tokenRes = await fetch(tokenUrl, {
       method: "POST",
@@ -321,7 +322,7 @@ export async function authenticateDeviceCode(
       continue;
     }
     if (errData.error === "slow_down") {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await sleep(5000);
       continue;
     }
     throw new LibScopeError(`Authentication failed: ${errData.error}`, "ONENOTE_AUTH_ERROR");
@@ -380,13 +381,9 @@ export async function refreshAccessToken(
 // Sync
 // ---------------------------------------------------------------------------
 
+/** createTopic returns the existing topic when the name is already taken (ON CONFLICT). */
 function ensureOrCreateTopic(db: Database.Database, name: string, parentId?: string): string {
-  const existing = listTopics(db, parentId).find((t) => t.name === name);
-  if (existing) {
-    return existing.id;
-  }
-  const topic = createTopic(db, { name, parentId });
-  return topic.id;
+  return createTopic(db, { name, parentId }).id;
 }
 
 function buildSourceUrl(notebook: string, section: string, pageTitle: string): string {

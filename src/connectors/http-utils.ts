@@ -1,14 +1,8 @@
-import { Agent } from "undici";
+import type { Agent } from "undici";
 import { getLogger } from "../logger.js";
 import { FetchError } from "../errors.js";
 import { loadConfig } from "../config.js";
-
-/** Lazy singleton undici Agent that skips TLS certificate verification. */
-let _insecureAgent: Agent | undefined;
-function getInsecureAgent(): Agent {
-  _insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } });
-  return _insecureAgent;
-}
+import { getInsecureAgent } from "../core/url-fetcher.js";
 
 export interface RetryConfig {
   maxRetries?: number;

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { setTimeout as delay } from "node:timers/promises";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "../core/indexing.js";
 import { getLogger } from "../logger.js";
@@ -67,10 +68,6 @@ const userCache = new Map<string, string>();
 /** Clear the user resolution cache (for testing). */
 export function _clearUserCache(): void {
   userCache.clear();
-}
-
-async function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function slackApi(
