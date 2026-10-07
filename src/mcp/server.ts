@@ -11,7 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { loadConfig } from "../config.js";
+import { loadConfig, type McpToolsetSetting } from "../config.js";
 import { bootstrap, type BootstrapOptions, type Bootstrapped } from "../core/bootstrap.js";
 import {
   addOperation,
@@ -39,18 +39,15 @@ import {
   type OperationAnnotations,
   type OperationContext,
 } from "../core/operations/index.js";
-import { getLogger, initLogger, type LogLevel } from "../logger.js";
+import { initLogger, type LogLevel } from "../logger.js";
 import { textResult, withErrorHandling } from "./errors.js";
 import * as fmt from "./format.js";
 
 export { errorResponse, textResult, withErrorHandling, type ToolResult } from "./errors.js";
 
-/** Optional toolsets, enabled with LIBSCOPE_MCP_TOOLSETS (comma list, or "all"). */
+/** Optional toolsets, enabled with the `mcp.toolsets` config key. */
 export const MCP_TOOLSETS = ["admin"] as const;
 export type McpToolset = (typeof MCP_TOOLSETS)[number];
-
-/** Environment variable that enables optional toolsets. */
-export const TOOLSETS_ENV = "LIBSCOPE_MCP_TOOLSETS";
 
 /** Formats an operation result as tool output text. */
 type Formatter<O> = (result: O) => string;
@@ -178,20 +175,14 @@ export function registerActionTool(
   return tool.name;
 }
 
-/** Toolsets named in `value` (comma list; "all" enables every optional toolset). */
-export function parseToolsets(value: string | undefined): Set<McpToolset> {
+/** Optional toolsets enabled by `settings` ("all" enables every one; "core" is always on). */
+export function resolveToolsets(settings: readonly McpToolsetSetting[]): Set<McpToolset> {
   const enabled = new Set<McpToolset>();
-  for (const raw of (value ?? "").split(",")) {
-    const name = raw.trim().toLowerCase();
-    if (name === "" || name === "core") continue;
+  for (const name of settings) {
     if (name === "all") {
       for (const t of MCP_TOOLSETS) enabled.add(t);
-    } else if ((MCP_TOOLSETS as readonly string[]).includes(name)) {
-      enabled.add(name as McpToolset);
-    } else {
-      getLogger().warn(
-        `Unknown MCP toolset "${name}" in ${TOOLSETS_ENV} (known: ${MCP_TOOLSETS.join(", ")}, all)`,
-      );
+    } else if (name !== "core") {
+      enabled.add(name);
     }
   }
   return enabled;
@@ -245,8 +236,8 @@ function packageVersion(): string {
 export interface CreateMcpServerOptions extends BootstrapOptions {
   /** Use this operation context instead of bootstrapping one. The caller owns its database. */
   ctx?: OperationContext | undefined;
-  /** Optional toolsets to enable (default: from LIBSCOPE_MCP_TOOLSETS). */
-  toolsets?: readonly string[] | undefined;
+  /** Optional toolsets to enable (default: the `mcp.toolsets` config key). */
+  toolsets?: readonly McpToolsetSetting[] | undefined;
 }
 
 export interface LibScopeMcpServer {
@@ -323,7 +314,7 @@ export function createMcpServer(options: CreateMcpServerOptions = {}): LibScopeM
     });
   }
   const opCtx = ctx;
-  const enabled = parseToolsets(toolsets ? toolsets.join(",") : process.env[TOOLSETS_ENV]);
+  const enabled = resolveToolsets(toolsets ?? opCtx.config.mcp?.toolsets ?? []);
   const withAsk = askAvailable(opCtx);
   const admin = enabled.has("admin");
 

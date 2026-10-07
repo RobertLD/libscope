@@ -109,6 +109,7 @@ describe("config keys", () => {
         "llm.provider",
         "llm.url",
         "logging.level",
+        "mcp.toolsets",
         "openai.apiKey",
       ].sort(),
     );
@@ -133,6 +134,11 @@ describe("config keys", () => {
     expect(table.find((r) => r.key === "indexing.maxDocumentSize")).toMatchObject({
       type: "integer",
       default: String(100 * 1024 * 1024),
+    });
+    expect(table.find((r) => r.key === "mcp.toolsets")).toMatchObject({
+      type: "list of core | admin | all",
+      default: "none",
+      env: ["LIBSCOPE_MCP_TOOLSETS"],
     });
     expect(table.find((r) => r.key === "openai.apiKey")).toMatchObject({
       env: ["LIBSCOPE_OPENAI_API_KEY", "OPENAI_API_KEY"],
@@ -165,6 +171,12 @@ describe("setUserConfigValue", () => {
     const sectionObj = readSavedRaw()[section] as Record<string, unknown>;
     expect(sectionObj[field]).toBe(expected);
     expect(existsSync(secretsPath())).toBe(false);
+  });
+
+  it("stores a list key as an array", () => {
+    expect(setUserConfigValue("mcp.toolsets", "admin, core")).toEqual(["admin", "core"]);
+    expect(readSavedRaw()["mcp"]).toEqual({ toolsets: ["admin", "core"] });
+    expect(() => setUserConfigValue("mcp.toolsets", "admin,bogus")).toThrow(/mcp\.toolsets/);
   });
 
   it("rejects unknown and old keys and lists valid keys", () => {

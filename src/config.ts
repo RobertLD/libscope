@@ -20,6 +20,7 @@ import {
   type EMBEDDING_PROVIDERS,
   type LLM_PROVIDERS,
   type LOG_LEVELS,
+  type MCP_TOOLSET_SETTINGS,
 } from "./config-schema.js";
 
 export {
@@ -70,7 +71,14 @@ export interface LibScopeConfig {
   logging: {
     level: (typeof LOG_LEVELS)[number];
   };
+  mcp?: {
+    /** Optional MCP toolsets to enable. Unset: none (core tools only). */
+    toolsets?: McpToolsetSetting[] | undefined;
+  };
 }
+
+/** Value of one `mcp.toolsets` item. */
+export type McpToolsetSetting = (typeof MCP_TOOLSET_SETTINGS)[number];
 
 /** Expand a leading `~` (or `~/`) to the user's home directory. */
 export function expandHomeDir(path: string): string {
@@ -98,7 +106,7 @@ function getProjectConfigPath(): string {
 }
 
 type RawConfig = Record<string, unknown>;
-type ConfigValue = string | number | boolean;
+type ConfigValue = string | number | boolean | string[];
 /** A config layer flattened to `section.field` keys. */
 type FlatLayer = Record<string, unknown>;
 
@@ -214,6 +222,13 @@ export function coerceConfigValue(key: ConfigKey, raw: string): ConfigValue {
     if (raw.trim() === "") throw new ValidationError(`${key} must not be empty`);
     return validateWithSchema(spec, raw);
   }
+  if (type === "list") {
+    const items = raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item !== "");
+    return validateWithSchema(spec, items);
+  }
   if (!type.includes(raw)) {
     throw new ValidationError(`${key} must be one of: ${type.join(", ")} (got "${raw}")`);
   }
@@ -227,12 +242,16 @@ function warnIgnored(what: string, err: unknown): void {
 
 /**
  * Validate a value read from a config file. Invalid values are logged and ignored, so one bad
- * key does not stop libscope from starting. Strings are accepted for booleans and integers.
+ * key does not stop libscope from starting. Strings are accepted for booleans, integers and
+ * lists (comma-separated).
  */
 function readFileValue(spec: ConfigKeySpec, value: unknown, source: string): unknown {
   if (spec.openEnum && typeof value === "string" && value.trim() !== "") return value;
   try {
-    if (typeof value === "string" && (spec.type === "boolean" || spec.type === "integer")) {
+    if (
+      typeof value === "string" &&
+      (spec.type === "boolean" || spec.type === "integer" || spec.type === "list")
+    ) {
       return coerceConfigValue(spec.key, value);
     }
     return validateWithSchema(spec, value);

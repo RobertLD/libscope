@@ -68,6 +68,14 @@ Each API key is read in this order: `LIBSCOPE_<PROVIDER>_API_KEY`, then `<PROVID
 
 Booleans accept `true`, `false`, `1`, and `0` in environment variables and in `config set`.
 
+### MCP
+
+| Key            | Type                           | Default | Env var                 | Description                                                                                                                                                           |
+| -------------- | ------------------------------ | ------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mcp.toolsets` | list of `core`, `admin`, `all` | none    | `LIBSCOPE_MCP_TOOLSETS` | Optional MCP toolsets. `admin` adds `sync`, `install-pack`, `list-packs` and `reindex-documents`. `all` enables every optional toolset. The core tools are always on. |
+
+A list key accepts a JSON array in a config file, or a comma-separated list in a config file, an environment variable, and `config set` (for example `libscope config set mcp.toolsets admin`).
+
 ## Automatic LLM selection
 
 When `llm.provider` is `auto` (the default), LibScope selects the LLM when `ask` runs. It does not make network calls to decide:
@@ -128,6 +136,9 @@ libscope config set indexing.allowSelfSignedCerts true
 
 # Size limit (bytes)
 libscope config set indexing.maxDocumentSize 52428800
+
+# MCP server: enable the admin toolset
+libscope config set mcp.toolsets admin
 
 # Read, remove, and locate
 libscope config get embedding.provider             # effective value (API keys masked)

@@ -38,7 +38,7 @@ Tasks are kept in memory for one hour after they finish. They are lost when the 
 
 ## Admin toolset
 
-Set `LIBSCOPE_MCP_TOOLSETS` in the server's environment to enable optional toolsets. The value is a comma-separated list. `admin` enables `sync`, `install-pack`, `list-packs` and `reindex-documents`. `all` enables every optional toolset.
+The `mcp.toolsets` config key enables optional toolsets (`libscope config set mcp.toolsets admin`, or the environment variable `LIBSCOPE_MCP_TOOLSETS` as a comma-separated list). `admin` enables `sync`, `install-pack`, `list-packs` and `reindex-documents`. `all` enables every optional toolset. `core` (the default tools) is always on.
 
 ```json
 {
@@ -229,7 +229,7 @@ Annotations: not destructive, idempotent.
 
 ## Admin tools
 
-These tools are registered only when `LIBSCOPE_MCP_TOOLSETS` contains `admin` or `all`.
+These tools are registered only when `mcp.toolsets` contains `admin` or `all`.
 
 ### sync
 
