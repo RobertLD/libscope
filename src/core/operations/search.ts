@@ -58,6 +58,12 @@ export const searchOperation = defineOperation({
       .max(2)
       .default(0)
       .describe("Neighbouring chunks to include before and after each result"),
+    diversity: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe("Query search: MMR reranking, 0 = relevance only (default), 1 = most diverse"),
   }),
   annotations: { readOnly: true },
   http: { method: "GET", path: "/search" },
@@ -94,6 +100,7 @@ export const searchOperation = defineOperation({
       offset: input.offset,
       maxChunksPerDocument: input.maxChunksPerDocument,
       contextChunks: input.contextChunks,
+      diversity: input.diversity,
     });
     return { items: results, total: totalCount, limit: input.limit, offset: input.offset };
   },
@@ -104,6 +111,12 @@ const askInput = z.object({
   ...s.documentFilters,
   minRating,
   topK: z.number().int().min(1).max(20).default(5).describe("Chunks to retrieve as context"),
+  systemPrompt: z
+    .string()
+    .min(1)
+    .max(10_000)
+    .optional()
+    .describe("System prompt for the LLM (default: answer from the context and cite titles)"),
 });
 
 /** RAG options for a parsed `ask` input (topic names resolved). Shared with streaming ask. */
@@ -117,6 +130,7 @@ export function toRagOptions(ctx: OperationContext, input: z.output<typeof askIn
     sourceType: input.sourceType,
     tags: input.tags,
     minRating: input.minRating,
+    systemPrompt: input.systemPrompt,
   };
 }
 

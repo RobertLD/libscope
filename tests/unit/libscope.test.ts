@@ -96,7 +96,7 @@ describe("LibScope", () => {
     expect(added.documents[0]!.title).toBe("Vitest");
 
     const byString = await scope.search("unit tests");
-    const byObject = await scope.search({ query: "unit tests", limit: 5 });
+    const byObject = await scope.search({ query: "unit tests", limit: 5, diversity: 0.5 });
     expect(byString.items.length).toBeGreaterThan(0);
     expect(byObject).toMatchObject({ limit: 5, offset: 0 });
     expect(byObject.total).toBeGreaterThan(0);
@@ -236,9 +236,14 @@ describe("LibScope ask", () => {
     const scope = create({ llmProvider: llm });
     try {
       await addDoc(scope, "Ask Doc");
-      const result = await scope.ask({ question: "What is tested?", topK: 2 });
+      const result = await scope.ask({
+        question: "What is tested?",
+        topK: 2,
+        systemPrompt: "Be brief.",
+      });
       expect(result).toMatchObject({ mode: "answer", answer: "Mocked answer", model: "mock-llm" });
       expect(complete).toHaveBeenCalledOnce();
+      expect(complete.mock.calls[0]?.[1]).toBe("Be brief.");
     } finally {
       scope.close();
     }
