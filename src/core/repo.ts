@@ -16,12 +16,44 @@ export interface RepoOptions {
   paths?: string[] | undefined;
   extensions?: string[] | undefined;
   token?: string | undefined;
+  /** Library name for indexed files (default: "<owner>/<repo>"). */
+  library?: string | undefined;
+  /** Library version for indexed files. */
+  version?: string | undefined;
+  /** Topic ID for indexed files. */
+  topicId?: string | undefined;
+  /** Source type for indexed files (default: "library"). */
+  sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
+  /** Stops indexing between files; the promise then rejects with the signal's reason. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface RepoResult {
   indexed: number;
   skipped: number;
   errors: string[];
+  /** Documents indexed by this run. */
+  documents: Array<{ documentId: string; title: string; chunkCount: number; path: string }>;
+}
+
+/**
+ * True when `url` names a GitHub or GitLab repository (or a tree inside one) rather than a
+ * single page: `https://github.com/owner/repo[.git]`, `.../tree/<branch>[/path]`,
+ * `https://gitlab.com/owner/repo`, `.../-/tree/<branch>[/path]`.
+ */
+export function isRepoUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== "github.com" && host !== "gitlab.com") return false;
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments.length === 2) return true;
+  if (host === "github.com") return segments[2] === "tree" && segments.length >= 4;
+  return segments[2] === "-" && segments[3] === "tree";
 }
 
 export interface ParsedRepoUrl {
@@ -378,14 +410,15 @@ export async function indexRepository(
   const log = getLogger();
   const { owner, repo, branch: urlBranch } = parseRepoUrl(options.url);
   const branch = options.branch ?? urlBranch ?? "main";
-  const library = `${owner}/${repo}`;
+  const library = options.library ?? `${owner}/${repo}`;
 
   log.info({ library, branch }, "Indexing repository");
 
   const files = await fetchRepoContents(options, onProgress);
-  const result: RepoResult = { indexed: 0, skipped: 0, errors: [] };
+  const result: RepoResult = { indexed: 0, skipped: 0, errors: [], documents: [] };
 
   for (let i = 0; i < files.length; i++) {
+    options.signal?.throwIfAborted();
     const file = files[i]!;
     onProgress?.(`Indexing [${i + 1}/${files.length}] ${file.path}`);
 
@@ -408,16 +441,24 @@ export async function indexRepository(
           .pop()
           ?.replace(/\.[^.]+$/, "") ?? file.path;
 
-      await indexDocument(db, provider, {
+      const doc = await indexDocument(db, provider, {
         title,
         content: file.content,
-        sourceType: "library",
+        sourceType: options.sourceType ?? "library",
         library,
+        version: options.version,
+        topicId: options.topicId,
         url: fileUrl,
         submittedBy: "crawler",
       });
 
       result.indexed++;
+      result.documents.push({
+        documentId: doc.id,
+        title,
+        chunkCount: doc.chunkCount,
+        path: file.path,
+      });
     } catch (err) {
       const message = `${file.path}: ${err instanceof Error ? err.message : String(err)}`;
       result.errors.push(message);
