@@ -22,3 +22,18 @@ export async function confirmAction(
     rl.close();
   }
 }
+
+/**
+ * Like {@link confirmAction}, but prints "Cancelled." when the user declines.
+ * Returns true when the caller should proceed.
+ */
+export async function confirmOrCancel(
+  message: string,
+  yes: boolean | undefined,
+  /** Overridable for testing */
+  createInterface?: () => readline.Interface,
+): Promise<boolean> {
+  if (await confirmAction(message, !!yes, createInterface)) return true;
+  console.log("Cancelled.");
+  return false;
+}

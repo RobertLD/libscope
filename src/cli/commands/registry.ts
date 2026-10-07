@@ -23,7 +23,7 @@ import { getRegistryCacheDir } from "../../registry/types.js";
 import { syncRegistryByName, syncAllRegistries } from "../../registry/sync.js";
 import { searchRegistries } from "../../registry/search.js";
 import { publishPack, publishPackToBranch, unpublishPack } from "../../registry/publish.js";
-import { confirmAction } from "../confirm.js";
+import { confirmOrCancel } from "../confirm.js";
 
 /** Derive a short name from a git URL (e.g. "github.com/org/repo" → "repo"). */
 function deriveNameFromUrl(url: string): string {
@@ -215,12 +215,11 @@ export function registerRegistryCommands(program: Command): void {
     .option("-y, --yes", "Skip confirmation prompt")
     .action(async (name: string, opts: { yes?: boolean }) => {
       if (
-        !(await confirmAction(
+        !(await confirmOrCancel(
           `Remove registry "${name}" and its local cache? This cannot be undone.`,
-          !!opts.yes,
+          opts.yes,
         ))
       ) {
-        console.log("Cancelled.");
         return;
       }
 
@@ -408,12 +407,11 @@ export function registerRegistryCommands(program: Command): void {
         await requireGit();
 
         if (
-          !(await confirmAction(
+          !(await confirmOrCancel(
             `Unpublish "${packName}@${opts.version}" from "${opts.registry}"? This cannot be undone.`,
-            !!opts.yes,
+            opts.yes,
           ))
         ) {
-          console.log("Cancelled.");
           return;
         }
 
