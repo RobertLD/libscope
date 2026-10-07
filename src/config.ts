@@ -1,7 +1,15 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, accessSync, constants } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  accessSync,
+  chmodSync,
+  constants,
+} from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { ConfigError } from "./errors.js";
+import { ConfigError, ValidationError } from "./errors.js";
 import { getLogger } from "./logger.js";
 
 export interface LibScopeConfig {
@@ -56,7 +64,8 @@ function getConfigDir(): string {
   return join(homedir(), ".libscope");
 }
 
-function getUserConfigPath(): string {
+/** Path to the user config file (~/.libscope/config.json). */
+export function getUserConfigPath(): string {
   return join(getConfigDir(), "config.json");
 }
 
@@ -73,14 +82,49 @@ export interface ConfigLayer {
   logging?: Partial<LibScopeConfig["logging"]>;
 }
 
-function loadJsonFile(path: string): ConfigLayer {
+type RawConfig = Record<string, unknown>;
+
+function isPlainObject(value: unknown): value is RawConfig {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readJsonObject(path: string): RawConfig {
   try {
     if (!existsSync(path)) return {};
-    const content = readFileSync(path, "utf-8");
-    return JSON.parse(content) as ConfigLayer;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (!isPlainObject(parsed)) throw new Error("top-level value must be a JSON object");
+    return parsed;
   } catch (err) {
     throw new ConfigError(`Failed to read config file: ${path}`, err);
   }
+}
+
+function loadJsonFile(path: string): ConfigLayer {
+  return readJsonObject(path) as ConfigLayer;
+}
+
+/**
+ * Read ~/.libscope/config.json as raw JSON, including keys this module does not model
+ * (e.g. `registries`). This and writeRawUserConfig are the only reader/writer of that file.
+ */
+export function readRawUserConfig(): RawConfig {
+  return readJsonObject(getUserConfigPath());
+}
+
+/** Write ~/.libscope/config.json (directory 0700, file 0600). */
+export function writeRawUserConfig(config: RawConfig): void {
+  const dir = getConfigDir();
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  const configPath = getUserConfigPath();
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  // writeFileSync's mode only applies when the file is created; tighten existing files too.
+  chmodSync(configPath, 0o600);
+  invalidateConfigCache();
 }
 
 const EMBEDDING_PROVIDERS = ["local", "ollama", "openai"] as const;
@@ -150,12 +194,136 @@ function getEnvOverrides(): ConfigLayer {
   };
 }
 
-/** Config keys that hold secrets: masked by `config show`/`config get`, never written by `config set`. */
-export const SECRET_CONFIG_KEYS = [
-  "embedding.openaiApiKey",
-  "llm.openaiApiKey",
-  "llm.anthropicApiKey",
-] as const;
+/** Every settable key, as `section.field`, derived from the LibScopeConfig shape. */
+export type ConfigKey = {
+  [S in keyof LibScopeConfig]-?: `${S}.${keyof NonNullable<LibScopeConfig[S]> & string}`;
+}[keyof LibScopeConfig];
+
+type ConfigValue = string | number | boolean;
+
+interface ConfigKeySpec {
+  /** "string", "boolean", "positiveInt", or the list of allowed values. */
+  type: "string" | "boolean" | "positiveInt" | readonly string[];
+  /** For secrets: the env var to use instead of storing the value in a config file. */
+  secretEnv?: string;
+}
+
+const CONFIG_KEYS: Record<ConfigKey, ConfigKeySpec> = {
+  "embedding.provider": { type: EMBEDDING_PROVIDERS },
+  "embedding.ollamaUrl": { type: "string" },
+  "embedding.ollamaModel": { type: "string" },
+  "embedding.openaiApiKey": { type: "string", secretEnv: "LIBSCOPE_OPENAI_API_KEY" },
+  "embedding.openaiModel": { type: "string" },
+  "llm.provider": { type: LLM_PROVIDERS },
+  "llm.model": { type: "string" },
+  "llm.ollamaUrl": { type: "string" },
+  "llm.openaiApiKey": { type: "string", secretEnv: "LIBSCOPE_OPENAI_API_KEY" },
+  "llm.anthropicApiKey": { type: "string", secretEnv: "LIBSCOPE_ANTHROPIC_API_KEY" },
+  "database.path": { type: "string" },
+  "indexing.maxDocumentSize": { type: "positiveInt" },
+  "indexing.allowPrivateUrls": { type: "boolean" },
+  "indexing.allowSelfSignedCerts": { type: "boolean" },
+  "logging.level": { type: ["debug", "info", "warn", "error", "silent"] },
+};
+
+/** All settable config keys. */
+export const CONFIG_KEY_NAMES = Object.keys(CONFIG_KEYS) as ConfigKey[];
+
+function isConfigKey(key: string): key is ConfigKey {
+  return Object.hasOwn(CONFIG_KEYS, key);
+}
+
+/** Validate a dotted key name; throws ValidationError listing the valid keys. */
+export function parseConfigKey(key: string): ConfigKey {
+  if (!isConfigKey(key)) {
+    throw new ValidationError(
+      `Unknown config key: ${key}. Valid keys: ${CONFIG_KEY_NAMES.join(", ")}`,
+    );
+  }
+  return key;
+}
+
+/** Convert a CLI string to the key's type (booleans, positive integers, enums). */
+export function coerceConfigValue(key: ConfigKey, raw: string): ConfigValue {
+  const { type } = CONFIG_KEYS[key];
+  if (type === "boolean") {
+    const lower = raw.trim().toLowerCase();
+    if (lower === "true" || lower === "1") return true;
+    if (lower === "false" || lower === "0") return false;
+    throw new ValidationError(`${key} must be true or false (got "${raw}")`);
+  }
+  if (type === "positiveInt") {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new ValidationError(`${key} must be a positive integer (got "${raw}")`);
+    }
+    return n;
+  }
+  if (type === "string") {
+    if (raw.trim() === "") throw new ValidationError(`${key} must not be empty`);
+    return raw;
+  }
+  if (!type.includes(raw)) {
+    throw new ValidationError(`${key} must be one of: ${type.join(", ")} (got "${raw}")`);
+  }
+  return raw;
+}
+
+function splitKey(key: ConfigKey): [section: string, field: string] {
+  const [section = "", field = ""] = key.split(".");
+  return [section, field];
+}
+
+function rawSection(raw: RawConfig, section: string): RawConfig {
+  const existing = raw[section];
+  if (isPlainObject(existing)) return existing;
+  const created: RawConfig = {};
+  raw[section] = created;
+  return created;
+}
+
+/**
+ * Set one key in ~/.libscope/config.json. Validates and coerces the value and keeps every
+ * other key in the file (including `registries`). API keys are refused: use env vars.
+ */
+export function setUserConfigValue(key: string, rawValue: string): ConfigValue {
+  const configKey = parseConfigKey(key);
+  const { secretEnv } = CONFIG_KEYS[configKey];
+  if (secretEnv) {
+    throw new ValidationError(
+      `${configKey} is a secret and is not written to config files. Set the ${secretEnv} environment variable instead.`,
+    );
+  }
+  const value = coerceConfigValue(configKey, rawValue);
+  const raw = readRawUserConfig();
+  const [section, field] = splitKey(configKey);
+  rawSection(raw, section)[field] = value;
+  writeRawUserConfig(raw);
+  return value;
+}
+
+/** Remove one key from ~/.libscope/config.json. Returns false if the file did not set it. */
+export function unsetUserConfigValue(key: string): boolean {
+  const configKey = parseConfigKey(key);
+  const raw = readRawUserConfig();
+  const [section, field] = splitKey(configKey);
+  const sectionObj = raw[section];
+  if (!isPlainObject(sectionObj) || !Object.hasOwn(sectionObj, field)) return false;
+  delete sectionObj[field];
+  if (Object.keys(sectionObj).length === 0) delete raw[section];
+  writeRawUserConfig(raw);
+  return true;
+}
+
+/** Read the effective value of a key from a loaded config. Secrets are masked. */
+export function getConfigValue(config: LibScopeConfig, key: string): ConfigValue | undefined {
+  const configKey = parseConfigKey(key);
+  const [section, field] = splitKey(configKey);
+  const sections = config as unknown as Record<string, RawConfig | undefined>;
+  const value = sections[section]?.[field] as ConfigValue | undefined;
+  if (typeof value === "string" && CONFIG_KEYS[configKey].secretEnv) return maskSecret(value);
+  return value;
+}
 
 function hasApiKey(layer: ConfigLayer): boolean {
   return Boolean(
@@ -309,48 +477,20 @@ export function validateConfig(config: LibScopeConfig): string[] {
   return warnings;
 }
 
-/** Save a config value to the user config file. */
-export function saveUserConfig(config: Partial<LibScopeConfig>): void {
-  const configDir = getConfigDir();
-  if (!existsSync(configDir)) {
-    mkdirSync(configDir, { recursive: true });
+/**
+ * Merge values into ~/.libscope/config.json. Only the keys passed in are written; every
+ * other key in the file (including `registries` and values added by hand) is kept.
+ * Security: API keys passed in are never written — use environment variables instead.
+ */
+export function saveUserConfig(config: ConfigLayer): void {
+  const raw = readRawUserConfig();
+  for (const [section, values] of Object.entries(config)) {
+    if (!isPlainObject(values)) continue;
+    for (const [field, value] of Object.entries(values)) {
+      const key = `${section}.${field}`;
+      if (value === undefined || !isConfigKey(key) || CONFIG_KEYS[key].secretEnv) continue;
+      rawSection(raw, section)[field] = value;
+    }
   }
-  const existing = loadJsonFile(getUserConfigPath());
-  const merged: LibScopeConfig = {
-    embedding: {
-      ...DEFAULT_CONFIG.embedding,
-      ...existing.embedding,
-      ...config.embedding,
-    },
-    llm: {
-      ...existing.llm,
-      ...config.llm,
-    },
-    database: {
-      ...DEFAULT_CONFIG.database,
-      ...existing.database,
-      ...config.database,
-    },
-    indexing: {
-      ...DEFAULT_CONFIG.indexing,
-      ...existing.indexing,
-      ...config.indexing,
-    },
-    logging: {
-      ...DEFAULT_CONFIG.logging,
-      ...existing.logging,
-      ...config.logging,
-    },
-  };
-
-  // Security: never persist API keys to disk — use environment variables instead.
-  // Keys are read from env vars (OPENAI_API_KEY, ANTHROPIC_API_KEY) at runtime.
-  delete merged.embedding.openaiApiKey;
-  if (merged.llm) {
-    delete merged.llm.openaiApiKey;
-    delete merged.llm.anthropicApiKey;
-  }
-
-  writeFileSync(getUserConfigPath(), JSON.stringify(merged, null, 2), "utf-8");
-  invalidateConfigCache();
+  writeRawUserConfig(raw);
 }

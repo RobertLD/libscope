@@ -573,8 +573,11 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 | `libscope stats`                  | Usage overview               |
 | `libscope pack install <name>`    | Install a knowledge pack     |
 | `libscope pack create`            | Create a knowledge pack      |
-| `libscope config set <key> <val>` | Set config                   |
-| `libscope config show`            | Show config                  |
+| `libscope config set <key> <val>` | Set any config key (not API keys) |
+| `libscope config get <key>`       | Print one effective value    |
+| `libscope config unset <key>`     | Remove a key from the user config file |
+| `libscope config path`            | Print the user config file path |
+| `libscope config show`            | Show config (API keys masked) |
 
 **Global flags:** `--verbose`, `--log-level <level>`, `--workspace <name>`
 

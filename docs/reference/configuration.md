@@ -49,6 +49,7 @@ Complete reference for all configuration options.
 
 | Key                             | Type    | Default | Description                                       |
 | ------------------------------- | ------- | ------- | ------------------------------------------------- |
+| `indexing.maxDocumentSize`      | number  | `104857600` | Maximum document size in bytes (100 MB)       |
 | `indexing.allowPrivateUrls`     | boolean | `false` | Allow fetching from private/internal IP addresses |
 | `indexing.allowSelfSignedCerts` | boolean | `false` | Accept self-signed or untrusted TLS certificates  |
 
@@ -100,7 +101,7 @@ libscope config set embedding.ollamaModel nomic-embed-text
 libscope config set embedding.openaiModel text-embedding-3-small
 
 # LLM (for RAG)
-libscope config set llm.provider openai            # openai | ollama | passthrough
+libscope config set llm.provider openai            # openai | ollama | anthropic | passthrough
 libscope config set llm.model gpt-4o-mini
 
 # Database
@@ -113,9 +114,21 @@ libscope config set logging.level debug            # debug | info | warn | error
 libscope config set indexing.allowPrivateUrls true
 libscope config set indexing.allowSelfSignedCerts true
 
-# View current config
+# Size limit (bytes)
+libscope config set indexing.maxDocumentSize 52428800
+
+# Read, remove, and locate
+libscope config get embedding.provider             # effective value (API keys masked)
+libscope config unset llm.model                    # remove from the user config file
+libscope config path                               # print the user config file path
+
+# View current config (API keys masked)
 libscope config show
 ```
+
+`config set` accepts every key listed in [All Config Keys](#all-config-keys) except API keys. It checks the value type (booleans accept `true`/`false`/`1`/`0`, numbers must be positive integers, and enum keys must use a listed value). It writes only the key you set to `~/.libscope/config.json` and keeps all other content of that file, including `registries`. The file is written with mode `0600`.
+
+API keys (`embedding.openaiApiKey`, `llm.openaiApiKey`, `llm.anthropicApiKey`) are not written by `config set`. Use the environment variables in [API keys](#api-keys).
 
 ## Corporate / Internal Networks
 

@@ -9,12 +9,21 @@ LibScope uses a 3-tier config system. Higher tiers override lower ones:
 You can set options via the CLI or by editing the config file directly.
 
 ```bash
-# Set a value
+# Set a value (any key from the configuration reference, except API keys)
 libscope config set embedding.provider ollama
 
-# View current config
+# Read or remove one value
+libscope config get embedding.provider
+libscope config unset embedding.provider
+
+# Show where the user config file is
+libscope config path
+
+# View current config (API keys masked)
 libscope config show
 ```
+
+`config set` validates the key and value, and changes only that key in `~/.libscope/config.json`. Other content of the file, such as `registries`, is kept.
 
 Example `~/.libscope/config.json`:
 

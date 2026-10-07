@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { loadConfig, saveUserConfig, maskConfigSecrets } from "../config.js";
+import {
+  loadConfig,
+  maskConfigSecrets,
+  getUserConfigPath,
+  CONFIG_KEY_NAMES,
+  setUserConfigValue,
+  unsetUserConfigValue,
+  getConfigValue,
+} from "../config.js";
 import { getDatabase, runMigrations, createVectorTable, closeDatabase } from "../db/index.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../providers/index.js";
 import { indexDocument, indexFile } from "../core/indexing.js";
@@ -1518,41 +1526,67 @@ program
   });
 
 // config
-const configCmd = program.command("config").description("Manage configuration");
+const configCmd = program
+  .command("config")
+  .description(`Manage configuration (user file: ${getUserConfigPath()})`);
+
+/** Run a config subcommand: set up logging, print errors without a stack trace. */
+function runConfigAction(fn: () => void): void {
+  setupLogging(program.opts<ProgramOpts>());
+  try {
+    fn();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
 
 configCmd
   .command("set <key> <value>")
-  .description("Set a configuration value (e.g., embedding.provider local)")
+  .description(
+    `Set a value in the user config file. Keys: ${CONFIG_KEY_NAMES.join(", ")}. API keys must be set with environment variables.`,
+  )
   .action((key: string, value: string) => {
-    setupLogging(program.opts<ProgramOpts>());
-    if (key === "embedding.provider") {
-      if (value !== "local" && value !== "ollama" && value !== "openai") {
-        console.error("Invalid provider. Must be: local, ollama, or openai");
-        process.exit(1);
-      }
-      saveUserConfig({ embedding: { provider: value } });
-      console.log(`✓ Embedding provider set to: ${value}`);
-    } else if (key === "indexing.allowPrivateUrls") {
-      const bool = value === "true";
-      saveUserConfig({ indexing: { ...loadConfig().indexing, allowPrivateUrls: bool } });
-      console.log(`✓ indexing.allowPrivateUrls set to: ${bool}`);
-    } else if (key === "indexing.allowSelfSignedCerts") {
-      const bool = value === "true";
-      saveUserConfig({ indexing: { ...loadConfig().indexing, allowSelfSignedCerts: bool } });
-      console.log(`✓ indexing.allowSelfSignedCerts set to: ${bool}`);
-    } else {
-      console.error(`Unknown config key: ${key}`);
-      process.exit(1);
-    }
+    runConfigAction(() => {
+      const stored = setUserConfigValue(key, value);
+      console.log(`✓ ${key} set to: ${String(stored)}`);
+    });
+  });
+
+configCmd
+  .command("get <key>")
+  .description("Print the effective value of a config key (API keys are masked)")
+  .action((key: string) => {
+    runConfigAction(() => {
+      const value = getConfigValue(loadConfig(), key);
+      console.log(value === undefined ? "" : String(value));
+    });
+  });
+
+configCmd
+  .command("unset <key>")
+  .description("Remove a key from the user config file (the default or other layers apply)")
+  .action((key: string) => {
+    runConfigAction(() => {
+      const removed = unsetUserConfigValue(key);
+      console.log(removed ? `✓ ${key} removed` : `${key} is not set in ${getUserConfigPath()}`);
+    });
+  });
+
+configCmd
+  .command("path")
+  .description("Print the path of the user config file")
+  .action(() => {
+    console.log(getUserConfigPath());
   });
 
 configCmd
   .command("show")
-  .description("Show current configuration")
+  .description("Show the effective configuration (API keys are masked)")
   .action(() => {
-    setupLogging(program.opts<ProgramOpts>());
-    const config = loadConfig();
-    console.log(JSON.stringify(maskConfigSecrets(config), null, 2));
+    runConfigAction(() => {
+      console.log(JSON.stringify(maskConfigSecrets(loadConfig()), null, 2));
+    });
   });
 
 interface ProgramOpts {
