@@ -45,6 +45,8 @@ export interface SpiderOptions {
     FetchOptions,
     "allowPrivateUrls" | "allowSelfSignedCerts" | "timeout" | "maxBodySize"
   >;
+  /** Abort the crawl between pages; the generator then throws the signal's reason. */
+  signal?: AbortSignal;
 }
 
 export interface SpiderResult {
@@ -486,6 +488,7 @@ export async function* spiderUrl(
   const deadline = Date.now() + HARD_TOTAL_TIMEOUT_MS;
 
   while (queue.length > 0 && stats.pagesFetched < config.maxPages) {
+    options.signal?.throwIfAborted();
     if (checkDeadline(deadline, stats, log)) break;
 
     const { url, depth } = queue.shift()!;
@@ -495,6 +498,7 @@ export async function* spiderUrl(
     if (depth > 0 && (await shouldSkipNonSeedUrl(url, config, robotsCache, stats, log))) continue;
 
     const raw = await fetchSpiderPage(url, config, stats, log);
+    options.signal?.throwIfAborted();
     if (!raw) continue;
 
     const result = convertPage(raw, url, depth);

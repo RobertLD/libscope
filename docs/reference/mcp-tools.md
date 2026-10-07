@@ -16,6 +16,8 @@ Semantic search across your knowledge base.
 | `limit`     | number |          | Max results (default: 10)    |
 | `offset`    | number |          | Pagination offset            |
 
+Each result shows a `**Document ID:** … | **Chunk ID:** …` line. Pass these IDs to `get-document`, `rate-document`, `get-related`, and `link-documents`.
+
 **Search results** include a `scoreExplanation` object on each result:
 
 ```typescript
@@ -71,7 +73,7 @@ Index a new document. You can provide content directly, or a URL to fetch automa
 
 ## update-document
 
-Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding.
+Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding. Changing the title, library, or version re-embeds the existing chunks, because these fields are part of the embedded text.
 
 | Parameter    | Type   | Required | Description                             |
 | ------------ | ------ | -------- | --------------------------------------- |
@@ -236,12 +238,14 @@ Create a typed cross-reference relationship between two documents.
 | ---------- | ------ | -------- | -------------------------------------------------------------------- |
 | `sourceId` | string | ✅       | The source document ID                                               |
 | `targetId` | string | ✅       | The target document ID                                               |
-| `linkType` | string | ✅       | Relationship type: `see_also`, `prerequisite`, `supersedes`, `related` |
+| `linkType` | string | ✅       | Relationship type: `see_also`, `prerequisite`, `supersedes`, `related`, `references` |
 | `label`    | string |          | Optional human-readable description of the relationship              |
+
+The output includes a `Link ID:` line. Pass this ID to `delete-link`.
 
 ## get-document-links
 
-Get all cross-reference links for a document, both outgoing and incoming.
+Get all cross-reference links for a document, both outgoing and incoming. Each line ends with `[link ID: …]`, which you can pass to `delete-link`.
 
 | Parameter    | Type   | Required | Description     |
 | ------------ | ------ | -------- | --------------- |
@@ -292,3 +296,27 @@ Delete a saved search by name or ID.
 | Parameter  | Type   | Required | Description                                  |
 | ---------- | ------ | -------- | -------------------------------------------- |
 | `nameOrId` | string | ✅       | The name or ID of the saved search to delete |
+
+## get-task
+
+Get the status, progress, and result of a background task. Tools called with `async: true` return a task ID.
+
+| Parameter | Type   | Required | Description                              |
+| --------- | ------ | -------- | ---------------------------------------- |
+| `taskId`  | string | ✅       | Task ID returned by an async tool call   |
+
+The task `type` is one of `index_document`, `reindex_documents`, `sync_connector`, or `install_pack`.
+
+## cancel-task
+
+Request cancellation of a pending or running background task.
+
+| Parameter | Type   | Required | Description        |
+| --------- | ------ | -------- | ------------------ |
+| `taskId`  | string | ✅       | Task ID to cancel  |
+
+`submit-document` (including spider mode), `reindex-documents`, and `install-pack` stop at the next page or batch. A cancelled `install-pack` removes the documents it already inserted. The final status is:
+
+- `cancelled` — the task stopped because of the cancellation.
+- `completed` — the task finished before it could stop. The result is kept.
+- `failed` — the task stopped because of a different error.

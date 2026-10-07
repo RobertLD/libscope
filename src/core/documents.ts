@@ -1,8 +1,15 @@
 import type Database from "better-sqlite3";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DocumentNotFoundError, ValidationError } from "../errors.js";
-import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import {
+  createChunkWriter,
+  embedChunks,
+  embeddingMetaChanged,
+  splitIntoChunks,
+  storeDocumentLinks,
+  type EmbeddingMeta,
+} from "./indexing.js";
 import { getLogger } from "../logger.js";
 import { saveVersion } from "./versioning.js";
 
@@ -203,12 +210,14 @@ export async function updateDocument(
   // SQLite's datetime('now') uses the OS clock and cannot be mocked in unit tests.
   const updatedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
 
+  const newMeta = { title: newTitle, library: newLibrary, version: newVersion };
+
   if (contentChanged) {
     log.info({ docId: documentId }, "Content changed, re-chunking and re-indexing embeddings");
 
-    const useStreaming = newContent.length > STREAMING_THRESHOLD;
-    const chunks = useStreaming ? chunkContentStreaming(newContent) : chunkContent(newContent);
-    const embeddings = await provider.embedBatch(chunks);
+    const chunks = splitIntoChunks(newContent);
+    const embeddings = await embedChunks(provider, chunks, newMeta);
+    const writer = createChunkWriter(db, provider);
 
     const transaction = db.transaction(() => {
       saveVersion(db, documentId);
@@ -236,39 +245,56 @@ export async function updateDocument(
         documentId,
       );
 
-      const insertChunk = db.prepare(
-        "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",
-      );
-      const insertEmbedding = db.prepare(
-        "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)",
-      );
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkId = randomUUID();
-        insertChunk.run(chunkId, documentId, chunks[i] ?? "", i);
-
-        try {
-          const vecBuffer = Buffer.from(new Float32Array(embeddings[i] ?? []).buffer);
-          insertEmbedding.run(chunkId, vecBuffer);
-        } catch (err: unknown) {
-          // chunk_embeddings table may not exist
-          log.debug({ err, chunkId }, "Skipped embedding insertion during update");
-        }
-      }
+      writer.insertChunks(documentId, chunks, embeddings);
     });
 
     transaction();
+    storeDocumentLinks(db, documentId, newContent);
   } else {
+    // Title/library/version are part of the embedding text, so re-embed existing chunks
+    // (keeping their IDs) when they change.
+    const reembed = embeddingMetaChanged(existing, newMeta)
+      ? await embedExistingChunks(db, provider, documentId, newMeta)
+      : null;
+
     const transaction = db.transaction(() => {
       saveVersion(db, documentId);
 
       db.prepare(
         `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = ? WHERE id = ?`,
       ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, updatedAt, documentId);
+
+      reembed?.write();
     });
 
     transaction();
   }
 
   return getDocument(db, documentId);
+}
+
+/**
+ * Embed a document's existing chunks with new metadata. Returns a `write()` step that
+ * replaces the stored vectors; call it inside the caller's transaction.
+ */
+async function embedExistingChunks(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  documentId: string,
+  meta: EmbeddingMeta,
+): Promise<{ write: () => void }> {
+  const rows = db
+    .prepare("SELECT id, content FROM chunks WHERE document_id = ? ORDER BY chunk_index")
+    .all(documentId) as Array<{ id: string; content: string }>;
+  const embeddings = await embedChunks(
+    provider,
+    rows.map((r) => r.content),
+    meta,
+  );
+  const writer = createChunkWriter(db, provider);
+  return {
+    write: (): void => {
+      rows.forEach((row, i) => writer.replaceEmbedding(row.id, embeddings[i] ?? []));
+    },
+  };
 }

@@ -14,7 +14,12 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
-import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import {
+  buildEmbeddingText,
+  createChunkWriter,
+  splitIntoChunks,
+  type ChunkWriter,
+} from "./indexing.js";
 import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { suggestTagsFromText } from "./tags.js";
@@ -72,6 +77,11 @@ export interface InstallOptions {
   concurrency?: number | undefined;
   /** Called after each batch of documents is processed. */
   onProgress?: ((current: number, total: number, docTitle: string) => void) | undefined;
+  /**
+   * Abort between batches. The install is then rolled back (pack row and inserted documents
+   * removed) and the returned promise rejects with the signal's reason.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 export interface CreatePackOptions {
@@ -336,27 +346,28 @@ type DocChunkInfo = {
 };
 type ResolvedBatch = {
   docInfos: DocChunkInfo[];
-  allChunks: string[];
+  /** Text to embed for every chunk in the batch, in docInfos/chunk order. */
+  embeddingTexts: string[];
 };
 
 /** Chunk a batch's documents on demand, right before embedding. */
 function resolveBatch(batchDocs: PackDocument[]): ResolvedBatch {
   const docInfos: DocChunkInfo[] = [];
-  const allChunks: string[] = [];
+  const embeddingTexts: string[] = [];
   for (const doc of batchDocs) {
     const contentHash = createHash("sha256").update(doc.content).digest("hex");
-    const useStreaming = doc.content.length > STREAMING_THRESHOLD;
-    const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
+    const chunks = splitIntoChunks(doc.content);
     docInfos.push({
       doc,
       docId: randomUUID(),
       contentHash,
       chunks,
-      chunkOffset: allChunks.length,
+      chunkOffset: embeddingTexts.length,
     });
-    allChunks.push(...chunks);
+    // Pack documents are stored with a title only (no library/version).
+    embeddingTexts.push(...chunks.map((c) => buildEmbeddingText(c, { title: doc.title })));
   }
-  return { docInfos, allChunks };
+  return { docInfos, embeddingTexts };
 }
 
 /** Insert a single resolved batch into the database. Returns number of documents installed. */
@@ -366,10 +377,8 @@ function insertBatchIntoDb(
   embeddings: number[][],
   packName: string,
   insertDoc: Database.Statement,
-  insertChunk: Database.Statement,
-  insertEmbedding: Database.Statement,
+  writer: ChunkWriter,
 ): number {
-  const log = getLogger();
   const doInsert = db.transaction(() => {
     for (const info of batch.docInfos) {
       insertDoc.run(
@@ -382,25 +391,76 @@ function insertBatchIntoDb(
         info.contentHash,
         packName,
       );
-      for (let j = 0; j < info.chunks.length; j++) {
-        const chunkId = randomUUID();
-        const chunkText = info.chunks[j] ?? "";
-        const embedding = embeddings[info.chunkOffset + j] ?? [];
-        insertChunk.run(chunkId, info.docId, chunkText, j);
-        try {
-          const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-          insertEmbedding.run(chunkId, vecBuffer);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (!message.includes("no such table")) {
-            log.warn({ chunkId, err }, "Failed to insert vector embedding");
-          }
-        }
-      }
+      writer.insertChunks(
+        info.docId,
+        info.chunks,
+        embeddings.slice(info.chunkOffset, info.chunkOffset + info.chunks.length),
+      );
     }
   });
   doInsert();
   return batch.docInfos.length;
+}
+
+/**
+ * Run `start(i)` for each batch index with at most `concurrency` in flight, calling
+ * `afterEach()` each time one settles. Stops scheduling and rejects when `start` rejects,
+ * `afterEach` throws, or `signal` is aborted (with the signal's reason).
+ */
+function runBatchesConcurrently(
+  batchCount: number,
+  concurrency: number,
+  start: (i: number) => Promise<void>,
+  afterEach: () => void,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let activeCount = 0;
+    let scheduleIdx = 0;
+    let settled = false;
+
+    const fail = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const onBatchSettled = (): void => {
+      activeCount--;
+      if (settled) return;
+      try {
+        signal?.throwIfAborted();
+        afterEach();
+        if (scheduleIdx < batchCount) {
+          scheduleNext();
+        } else if (activeCount === 0) {
+          settled = true;
+          resolve();
+        }
+      } catch (err) {
+        fail(err);
+      }
+    };
+
+    const onBatchFailed = (err: unknown): void => {
+      activeCount--;
+      fail(err);
+    };
+
+    function scheduleNext(): void {
+      while (activeCount < concurrency && scheduleIdx < batchCount) {
+        const i = scheduleIdx++;
+        activeCount++;
+        start(i).then(onBatchSettled, onBatchFailed);
+      }
+    }
+
+    if (batchCount === 0) {
+      resolve();
+      return;
+    }
+    scheduleNext();
+  });
 }
 
 /** Install a pack from a local JSON file path or registry name. */
@@ -431,6 +491,7 @@ export async function installPack(
   const { batchSize, concurrency, resumeFrom } = validateInstallOptions(options, total);
   const onProgress = options?.onProgress;
   const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
+  options?.signal?.throwIfAborted();
 
   log.info(
     { pack: pack.name, docCount: total, batchSize, concurrency, resumeFrom },
@@ -447,14 +508,7 @@ export async function installPack(
     INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertChunk = db.prepare(`
-    INSERT INTO chunks (id, document_id, content, chunk_index)
-    VALUES (?, ?, ?, ?)
-  `);
-  const insertEmbedding = db.prepare(`
-    INSERT INTO chunk_embeddings (chunk_id, embedding)
-    VALUES (?, ?)
-  `);
+  const writer = createChunkWriter(db, provider);
 
   type BatchData = { batchDocs: PackDocument[] };
   const batches: BatchData[] = [];
@@ -482,15 +536,7 @@ export async function installPack(
         errors += batch.docInfos.length;
       } else {
         try {
-          installed += insertBatchIntoDb(
-            db,
-            batch,
-            embeddings,
-            pack.name,
-            insertDoc,
-            insertChunk,
-            insertEmbedding,
-          );
+          installed += insertBatchIntoDb(db, batch, embeddings, pack.name, insertDoc, writer);
         } catch (err) {
           log.warn(
             { err, pack: pack.name, batchIndex: i },
@@ -509,58 +555,37 @@ export async function installPack(
     }
   }
 
-  // Semaphore-based concurrent embedding
-  await new Promise<void>((resolve) => {
-    if (batches.length === 0) {
-      resolve();
-      return;
+  /** Chunk and embed batch `i`; embedding failures are recorded, not thrown. */
+  async function embedBatchAt(i: number): Promise<void> {
+    const resolved = resolveBatch(batches[i]!.batchDocs);
+    try {
+      const embeddings =
+        resolved.embeddingTexts.length > 0
+          ? await provider.embedBatch(resolved.embeddingTexts)
+          : [];
+      embedResults[i] = { resolved, embeddings, success: true };
+    } catch (err) {
+      log.warn(
+        { err, pack: pack.name, batchIndex: i },
+        "Failed to embed batch, skipping these documents",
+      );
+      embedResults[i] = { resolved, embeddings: [], success: false };
     }
+  }
 
-    let activeCount = 0;
-    let scheduleIdx = 0;
-
-    function scheduleNext(): void {
-      while (activeCount < concurrency && scheduleIdx < batches.length) {
-        const i = scheduleIdx++;
-        const resolved = resolveBatch(batches[i]!.batchDocs);
-        activeCount++;
-
-        let embedPromise: Promise<number[][]>;
-        if (resolved.allChunks.length > 0) {
-          try {
-            embedPromise = provider.embedBatch(resolved.allChunks);
-          } catch (err) {
-            embedPromise = Promise.reject(err instanceof Error ? err : new Error(String(err)));
-          }
-        } else {
-          embedPromise = Promise.resolve([] as number[][]);
-        }
-
-        embedPromise
-          .then((embeddings) => {
-            embedResults[i] = { resolved, embeddings, success: true };
-          })
-          .catch((err) => {
-            log.warn(
-              { err, pack: pack.name, batchIndex: i },
-              "Failed to embed batch, skipping these documents",
-            );
-            embedResults[i] = { resolved, embeddings: [], success: false };
-          })
-          .finally(() => {
-            activeCount--;
-            flushInserts();
-            if (scheduleIdx < batches.length) {
-              scheduleNext();
-            } else if (activeCount === 0) {
-              resolve();
-            }
-          });
-      }
-    }
-
-    scheduleNext();
-  });
+  try {
+    await runBatchesConcurrently(
+      batches.length,
+      concurrency,
+      embedBatchAt,
+      flushInserts,
+      options?.signal,
+    );
+  } catch (err) {
+    log.warn({ err, pack: pack.name }, "Pack install stopped, rolling back");
+    removePack(db, pack.name);
+    throw err;
+  }
 
   db.prepare("UPDATE packs SET doc_count = ? WHERE name = ?").run(installed, pack.name);
 

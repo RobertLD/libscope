@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
-export type TaskType = "index_document" | "reindex_library" | "sync_connector" | "install_pack";
+export type TaskType = "index_document" | "reindex_documents" | "sync_connector" | "install_pack";
 
 export interface TaskProgress {
   current: number;
@@ -19,6 +19,18 @@ export interface Task {
   createdAt: Date;
   startedAt?: Date | undefined;
   completedAt?: Date | undefined;
+}
+
+/** Background work for a task: receives the task's abort signal and a progress reporter. */
+export type TaskWork = (
+  signal: AbortSignal,
+  onProgress: (current: number, total: number) => void,
+) => Promise<string>;
+
+/** True when `err` is the rejection produced by aborting `signal`. */
+export function isAbortRejection(err: unknown, signal: AbortSignal): boolean {
+  if (!signal.aborted) return false;
+  return err === signal.reason || (err instanceof Error && err.name === "AbortError");
 }
 
 /** TTL for completed/failed/cancelled tasks before they are pruned (1 hour). */
@@ -41,6 +53,40 @@ export class TaskRegistry {
     this.tasks.set(id, task);
     this.controllers.set(id, controller);
     return { task, signal: controller.signal };
+  }
+
+  /**
+   * Create a task and run `work` in the background.
+   * Final status: "completed" if `work` resolves (even when cancellation was requested too late
+   * to stop it), "cancelled" if it rejects because the task signal was aborted, else "failed".
+   * `done` settles after the final status is recorded; it never rejects.
+   */
+  run(type: TaskType, work: TaskWork): { task: Task; done: Promise<void> } {
+    const { task, signal } = this.create(type);
+    this.update(task.id, { status: "running", startedAt: new Date() });
+    const onProgress = (current: number, total: number): void => {
+      this.update(task.id, { progress: { current, total } });
+    };
+    const done = new Promise<string>((resolve) => {
+      resolve(work(signal, onProgress));
+    }).then(
+      (result) => {
+        this.update(task.id, { status: "completed", completedAt: new Date(), result });
+      },
+      (err: unknown) => {
+        this.update(
+          task.id,
+          isAbortRejection(err, signal)
+            ? { status: "cancelled", completedAt: new Date() }
+            : {
+                status: "failed",
+                completedAt: new Date(),
+                error: err instanceof Error ? err.message : String(err),
+              },
+        );
+      },
+    );
+    return { task, done };
   }
 
   /** Retrieve a task by ID. Returns undefined if not found or expired. */

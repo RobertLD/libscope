@@ -125,6 +125,94 @@ describe("knowledge packs", () => {
     });
   });
 
+  describe("installPack — cancellation", () => {
+    function writeManyDocPack(count: number): string {
+      const documents = Array.from({ length: count }, (_, i) => ({
+        title: `Doc ${i}`,
+        content: `# Doc ${i}\n\nBody of document ${i}.`,
+        source: "",
+      }));
+      const packPath = join(tempDir, "many.json");
+      writeFileSync(packPath, JSON.stringify(makeSamplePack({ documents })), "utf-8");
+      return packPath;
+    }
+
+    function countRows(table: "documents" | "packs" | "chunks"): number {
+      return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    }
+
+    it.each([1, 4])(
+      "rejects with the abort reason and rolls back when aborted mid-install (concurrency=%i)",
+      async (concurrency) => {
+        const packPath = writeManyDocPack(6);
+        const controller = new AbortController();
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown): void => {
+          unhandled.push(reason);
+        };
+        process.on("unhandledRejection", onUnhandled);
+        try {
+          const promise = installPack(db, provider, packPath, {
+            batchSize: 1,
+            concurrency,
+            signal: controller.signal,
+            onProgress: () => controller.abort(),
+          });
+          await expect(promise).rejects.toHaveProperty("name", "AbortError");
+          await new Promise((r) => setTimeout(r, 20));
+        } finally {
+          process.off("unhandledRejection", onUnhandled);
+        }
+        expect(unhandled).toEqual([]);
+        expect(countRows("packs")).toBe(0);
+        expect(countRows("documents")).toBe(0);
+        expect(countRows("chunks")).toBe(0);
+      },
+    );
+
+    it("rejects instead of hanging when onProgress throws", async () => {
+      const packPath = writeManyDocPack(4);
+      const promise = installPack(db, provider, packPath, {
+        batchSize: 1,
+        onProgress: () => {
+          throw new Error("progress sink failed");
+        },
+      });
+      await expect(promise).rejects.toThrow("progress sink failed");
+      expect(countRows("packs")).toBe(0);
+      expect(countRows("documents")).toBe(0);
+    });
+
+    it("does not create the pack when the signal is already aborted", async () => {
+      const packPath = writeManyDocPack(2);
+      const controller = new AbortController();
+      controller.abort();
+      const embedSpy = vi.spyOn(provider, "embedBatch");
+      await expect(installPack(db, provider, packPath, { signal: controller.signal })).rejects.toBe(
+        controller.signal.reason,
+      );
+      expect(embedSpy).not.toHaveBeenCalled();
+      expect(countRows("packs")).toBe(0);
+    });
+
+    it("can be installed again after a cancelled install", async () => {
+      const packPath = writeManyDocPack(3);
+      const controller = new AbortController();
+      await expect(
+        installPack(db, provider, packPath, {
+          batchSize: 1,
+          concurrency: 1,
+          signal: controller.signal,
+          onProgress: () => controller.abort(),
+        }),
+      ).rejects.toHaveProperty("name", "AbortError");
+
+      const result = await installPack(db, provider, packPath);
+      expect(result.alreadyInstalled).toBe(false);
+      expect(result.documentsInstalled).toBe(3);
+    });
+  });
+
   describe("removePack", () => {
     it("should remove a pack and its associated documents", async () => {
       const pack = makeSamplePack();

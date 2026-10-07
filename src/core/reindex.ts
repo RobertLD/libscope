@@ -3,6 +3,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { createVectorTable } from "../db/schema.js";
+import { buildEmbeddingText, createChunkWriter } from "./indexing.js";
 
 export interface ReindexOptions {
   /** Only reindex chunks belonging to these document IDs. */
@@ -15,6 +16,8 @@ export interface ReindexOptions {
   batchSize?: number | undefined;
   /** Called after each batch completes. */
   onProgress?: ((progress: ReindexProgress) => void) | undefined;
+  /** Abort between batches; the returned promise rejects with the signal's reason. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface ReindexProgress {
@@ -34,6 +37,10 @@ export interface ReindexResult {
 interface ChunkRow {
   id: string;
   content: string;
+  /** Owning document's metadata, used in the embedding text (see buildEmbeddingText). */
+  title?: string | null;
+  library?: string | null;
+  version?: string | null;
 }
 
 /**
@@ -68,16 +75,16 @@ export async function reindex(
     log.warn("Could not ensure vector table — continuing anyway");
   }
 
-  const deleteStmt = db.prepare("DELETE FROM chunk_embeddings WHERE chunk_id = ?");
-  const insertStmt = db.prepare("INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)");
+  const writer = createChunkWriter(db, provider);
 
   let completed = 0;
   let failed = 0;
   const failedChunkIds: string[] = [];
 
   for (let i = 0; i < total; i += batchSize) {
+    options.signal?.throwIfAborted();
     const batch = chunks.slice(i, i + batchSize);
-    const texts = batch.map((c) => c.content);
+    const texts = batch.map((c) => buildEmbeddingText(c.content, c));
     const ids = batch.map((c) => c.id);
 
     try {
@@ -95,9 +102,7 @@ export async function reindex(
             continue;
           }
           try {
-            deleteStmt.run(chunkId);
-            const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-            insertStmt.run(chunkId, vecBuffer);
+            writer.replaceEmbedding(chunkId, embedding);
             batchSucceeded++;
           } catch (err) {
             log.warn({ chunkId, err }, "Failed to update embedding for chunk");
@@ -153,7 +158,7 @@ function queryChunks(db: Database.Database, options: ReindexOptions): ChunkRow[]
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const sql = `
-    SELECT c.id, c.content
+    SELECT c.id, c.content, d.title, d.library, d.version
     FROM chunks c
     JOIN documents d ON c.document_id = d.id
     ${where}
