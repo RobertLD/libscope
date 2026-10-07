@@ -15,8 +15,6 @@ import type {
   RegistryEntry,
   PackSummary,
   PackManifest,
-  RegistryConfigBlock,
-  ConflictResolution,
   RegistrySyncStatus,
 } from "../../../src/registry/types.js";
 
@@ -73,12 +71,9 @@ describe("registry types — type shape validation", () => {
     const entry: RegistryEntry = {
       name: "official",
       url: "https://github.com/org/registry.git",
-      syncInterval: 3600,
-      priority: 1,
       lastSyncedAt: null,
     };
     expect(entry.name).toBe("official");
-    expect(entry.syncInterval).toBe(3600);
     expect(entry.lastSyncedAt).toBeNull();
   });
 
@@ -116,25 +111,9 @@ describe("registry types — type shape validation", () => {
     expect(manifest.versions[0]!.docCount).toBe(5);
   });
 
-  it("RegistryConfigBlock should wrap registries array", () => {
-    const block: RegistryConfigBlock = {
-      registries: [],
-    };
-    expect(block.registries).toEqual([]);
-  });
-
-  it("ConflictResolution should support 'priority', 'interactive', and 'explicit' strategies", () => {
-    const byPriority: ConflictResolution = { strategy: "priority" };
-    const interactive: ConflictResolution = { strategy: "interactive" };
-    const explicit: ConflictResolution = { strategy: "explicit", registryName: "official" };
-    expect(byPriority.strategy).toBe("priority");
-    expect(interactive.strategy).toBe("interactive");
-    expect(explicit.strategy).toBe("explicit");
-  });
-
   it("RegistrySyncStatus should support all status values", () => {
-    const statuses: RegistrySyncStatus["status"][] = ["syncing", "success", "error", "offline"];
-    expect(statuses).toHaveLength(4);
+    const statuses: RegistrySyncStatus["status"][] = ["success", "error", "offline"];
+    expect(statuses).toHaveLength(3);
   });
 });
 

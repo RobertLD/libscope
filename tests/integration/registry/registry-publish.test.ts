@@ -34,7 +34,7 @@ const { verifyChecksum } = await import("../../../src/registry/checksum.js");
 const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
 
 function makeEntry(name: string, url: string): RegistryEntry {
-  return { name, url, syncInterval: 3600, priority: 1, lastSyncedAt: null };
+  return { name, url, lastSyncedAt: null };
 }
 
 function addTestRegistry(entry: RegistryEntry): void {

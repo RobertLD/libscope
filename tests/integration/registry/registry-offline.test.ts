@@ -28,12 +28,12 @@ vi.mock("node:os", async (importOriginal) => {
 
 const { loadRegistries, saveRegistries, getRegistry } =
   await import("../../../src/registry/config.js");
-const { syncRegistry, getRegistryIndex } = await import("../../../src/registry/sync.js");
-const { searchRegistries } = await import("../../../src/registry/search.js");
+const { syncRegistry } = await import("../../../src/registry/sync.js");
+const { searchRegistries, listRegistryPacks } = await import("../../../src/registry/search.js");
 const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
 
 function makeEntry(name: string, url: string): RegistryEntry {
-  return { name, url, syncInterval: 3600, priority: 1, lastSyncedAt: null };
+  return { name, url, lastSyncedAt: null };
 }
 
 function addTestRegistry(entry: RegistryEntry): void {
@@ -120,7 +120,7 @@ describe("integration: registry offline / unreachable remote", () => {
     const entry = getRegistry("named-error")!;
     const status = await syncRegistry(entry);
 
-    expect(status.registryName).toBe("named-error");
+    expect(status.registry).toBe("named-error");
     expect(status.status).toBe("error");
   });
 
@@ -147,7 +147,7 @@ describe("integration: registry offline / unreachable remote", () => {
     // Search should still return results from cache
     const { results } = searchRegistries("stale");
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0]!.pack.name).toBe("stale-searchable");
+    expect(results[0]!.name).toBe("stale-searchable");
   });
 
   it("should fail clearly when no cache exists and remote is unreachable", async () => {
@@ -162,13 +162,12 @@ describe("integration: registry offline / unreachable remote", () => {
     expect(existsSync(getRegistryCacheDir("no-cache"))).toBe(false);
   });
 
-  it("should return error with getRegistryIndex when never synced and unreachable", async () => {
+  it("warns about a registry that was never synced when listing packs", () => {
     addTestRegistry(makeEntry("never-synced", join(tempDir, "ghost.git")));
 
-    const entry = getRegistry("never-synced")!;
-    const { packs, warning } = await getRegistryIndex(entry);
+    const { packs, warnings } = listRegistryPacks();
 
     expect(packs).toEqual([]);
-    expect(warning).toBeTruthy();
+    expect(warnings[0]).toContain("never been synced");
   });
 });

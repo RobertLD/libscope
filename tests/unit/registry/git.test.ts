@@ -16,12 +16,13 @@ const gitEnv = {
 import {
   readIndex,
   createRegistryRepo,
-  checkGitAvailable,
+  git,
   cloneRegistry,
   fetchRegistry,
   commitAndPush,
   clearIndexCache,
 } from "../../../src/registry/git.js";
+import { ConfigError } from "../../../src/errors.js";
 
 describe("registry git helpers", () => {
   let tempDir: string;
@@ -35,10 +36,15 @@ describe("registry git helpers", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe("checkGitAvailable", () => {
-    it("should return true when git is available", async () => {
-      const result = await checkGitAvailable();
-      expect(result).toBe(true);
+  describe("git", () => {
+    it("reports a missing git binary as a ConfigError", async () => {
+      const savedPath = process.env["PATH"];
+      process.env["PATH"] = tempDir;
+      try {
+        await expect(git(["--version"])).rejects.toBeInstanceOf(ConfigError);
+      } finally {
+        process.env["PATH"] = savedPath;
+      }
     });
   });
 

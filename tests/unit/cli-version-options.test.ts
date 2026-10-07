@@ -1,21 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll } from "vitest";
 import { Command, CommanderError } from "commander";
 import { readFileSync } from "node:fs";
 
-vi.mock("../../src/registry/git.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../../src/registry/git.js")>();
-  return { ...original, checkGitAvailable: vi.fn().mockResolvedValue(true) };
-});
-
-vi.mock("../../src/registry/publish.js", () => ({
-  publishPack: vi.fn(),
-  publishPackToBranch: vi.fn(),
-  unpublishPack: vi.fn().mockResolvedValue(undefined),
-}));
-
 import { program } from "../../src/cli/index.js";
-import { register as registerRegistryCommands } from "../../src/cli/commands/registry.js";
-import { unpublishPack } from "../../src/registry/publish.js";
 
 const pkgVersion = (
   JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf-8")) as {
@@ -82,78 +69,16 @@ describe("CLI subcommand version flags", () => {
   });
 
   it.each([
-    [["pack", "install"], ["react-docs"]],
     [
       ["pack", "create"],
       ["--name", "react-docs"],
     ],
     [
       ["registry", "publish"],
-      ["pack.json", "-r", "main"],
-    ],
-    [
-      ["registry", "unpublish"],
-      ["react-docs", "-r", "main"],
+      ["pack.json", "--registry", "main"],
     ],
   ])("%j accepts --pack-version", async (path, rest) => {
     const opts = await parseWithStubbedAction(path, [...rest, "--pack-version", "3.0.0"]);
     expect(opts.packVersion).toBe("3.0.0");
-  });
-});
-
-describe("registry unpublish version resolution", () => {
-  function buildProgram(): Command {
-    const root = new Command();
-    root.exitOverride();
-    registerRegistryCommands(root);
-    return root;
-  }
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.mocked(unpublishPack).mockClear();
-  });
-
-  function stubExit(): void {
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(process, "exit").mockImplementation((code) => {
-      throw new Error(`process.exit(${String(code)})`);
-    });
-  }
-
-  it("accepts name@version", async () => {
-    stubExit();
-    await buildProgram().parseAsync(
-      ["registry", "unpublish", "react-docs@1.2.0", "-r", "main", "-y"],
-      {
-        from: "user",
-      },
-    );
-    expect(unpublishPack).toHaveBeenCalledWith(
-      expect.objectContaining({ registryName: "main", packName: "react-docs", version: "1.2.0" }),
-    );
-  });
-
-  it("prefers --pack-version over the name@version suffix", async () => {
-    stubExit();
-    await buildProgram().parseAsync(
-      ["registry", "unpublish", "react-docs@1.2.0", "-r", "main", "-y", "--pack-version", "1.3.0"],
-      { from: "user" },
-    );
-    expect(unpublishPack).toHaveBeenCalledWith(
-      expect.objectContaining({ packName: "react-docs", version: "1.3.0" }),
-    );
-  });
-
-  it("exits with an error when no version is given", async () => {
-    stubExit();
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(
-      buildProgram().parseAsync(["registry", "unpublish", "react-docs", "-r", "main", "-y"], {
-        from: "user",
-      }),
-    ).rejects.toThrow("process.exit(1)");
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("--pack-version"));
-    expect(unpublishPack).not.toHaveBeenCalled();
   });
 });

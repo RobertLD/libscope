@@ -1,22 +1,17 @@
 /**
- * Registry pack resolution: find and resolve a pack from configured registries.
+ * Registry pack resolution: turn "name" or "name@version" into a pack file in the local copy
+ * of one configured registry. No network access; run `libscope registry sync` to update.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { getLogger } from "../logger.js";
-import { ValidationError } from "../errors.js";
-import type {
-  RegistryEntry,
-  PackSummary,
-  PackManifest,
-  RegistryConflict,
-  ConflictResolution,
-} from "./types.js";
-import { getRegistryCacheDir, getPackManifestPath, getPackDataPath } from "./types.js";
+import { NotFoundError, ValidationError } from "../errors.js";
+import type { PackManifest } from "./types.js";
+import { getPackManifestPath, getPackDataPath } from "./types.js";
 import { loadRegistries } from "./config.js";
-import { readIndex } from "./git.js";
 import { verifyChecksum } from "./checksum.js";
 import { validatePathSegment } from "./publish.js";
+import { listRegistryPacks } from "./search.js";
 
 /** Parse a pack specifier like "name@1.2.0" into name and optional version. */
 export function parsePackSpecifier(specifier: string): { name: string; version?: string } {
@@ -30,62 +25,77 @@ export function parsePackSpecifier(specifier: string): { name: string; version?:
   return { name: specifier };
 }
 
-/** Result of resolving a pack from registries. */
+/** A pack found in a registry. */
 export interface ResolvedPack {
-  registryName: string;
-  registryUrl: string;
-  packName: string;
+  registry: string;
+  name: string;
   version: string;
-  /** Path to the pack data file in the local cache. */
+  /** Path to the pack data file in the local copy of the registry. */
   dataPath: string;
 }
 
 /**
- * Find all registries that have a pack with the given name.
+ * Find "name" or "name@version" in the configured registries (only `registryName` when given).
+ * Without a version, the registry's latest version is used.
+ *
+ * @throws NotFoundError when no registry (or version) has the pack.
+ * @throws ValidationError when several registries have it and no registry was named.
  */
-export function findPackInRegistries(packName: string): {
-  matches: Array<{ entry: RegistryEntry; pack: PackSummary }>;
-  warnings: string[];
-} {
-  const warnings: string[] = [];
-  const matches: Array<{ entry: RegistryEntry; pack: PackSummary }> = [];
+export function findRegistryPack(specifier: string, registryName?: string): ResolvedPack {
+  const { name, version } = parsePackSpecifier(specifier);
+  validatePathSegment(name, "pack name");
+  if (version !== undefined) validatePathSegment(version, "version");
 
-  const registries = loadRegistries();
-  for (const entry of registries) {
-    const cacheDir = getRegistryCacheDir(entry.name);
-    if (!existsSync(cacheDir)) {
-      warnings.push(
-        `Registry "${entry.name}" has never been synced — skipping. Run: libscope registry sync ${entry.name}`,
-      );
-      continue;
-    }
-
-    try {
-      const index = readIndex(cacheDir);
-      const found = index.find((p) => p.name === packName);
-      if (found) {
-        matches.push({ entry, pack: found });
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      warnings.push(`Failed to read index for "${entry.name}": ${msg}`);
-    }
+  if (registryName === undefined && loadRegistries().length === 0) {
+    throw new NotFoundError(
+      `Pack "${name}" not found: no pack registries are configured. Add one with: libscope registry add <url>`,
+    );
+  }
+  const { packs, warnings } = listRegistryPacks(registryName);
+  const matches = packs.filter((p) => p.name === name);
+  const [match] = matches;
+  if (!match) {
+    const where = registryName === undefined ? "any registry" : `registry "${registryName}"`;
+    throw new NotFoundError([`Pack "${name}" not found in ${where}.`, ...warnings].join(" "));
+  }
+  if (matches.length > 1) {
+    throw new ValidationError(
+      `Pack "${name}" is in several registries (${matches.map((m) => m.registry).join(", ")}). ` +
+        "Choose one with the registry option (CLI: --registry <name>).",
+    );
   }
 
-  return { matches, warnings };
+  const chosen = version ?? match.latestVersion;
+  // latestVersion comes from the registry's index.json: validate it like user input.
+  validatePathSegment(chosen, "version");
+  const dataPath = getPackDataPath(match.registry, name, chosen);
+  if (!existsSync(dataPath)) {
+    throw new NotFoundError(
+      `Pack "${name}@${chosen}" not found in registry "${match.registry}". ` +
+        `Run: libscope registry sync ${match.registry}`,
+    );
+  }
+  return { registry: match.registry, name, version: chosen, dataPath };
 }
 
-/**
- * Read a pack manifest from the local cache.
- */
+/** Find a pack in the registries and verify its checksum (see findRegistryPack). */
+export async function resolveRegistryPack(
+  specifier: string,
+  registryName?: string,
+): Promise<ResolvedPack> {
+  const resolved = findRegistryPack(specifier, registryName);
+  await verifyResolvedPackChecksum(resolved);
+  return resolved;
+}
+
+/** Read a pack manifest from the local cache. */
 export function readPackManifest(registryName: string, packName: string): PackManifest | null {
   const manifestPath = getPackManifestPath(registryName, packName);
   if (!existsSync(manifestPath)) return null;
   try {
     return JSON.parse(readFileSync(manifestPath, "utf-8")) as PackManifest;
   } catch (err) {
-    const log = getLogger();
-    log.warn(
+    getLogger().warn(
       { registryName, packName, err: err instanceof Error ? err.message : String(err) },
       "Failed to parse pack manifest",
     );
@@ -94,147 +104,33 @@ export function readPackManifest(registryName: string, packName: string): PackMa
 }
 
 /**
- * Resolve a pack from registries, handling version selection and conflicts.
- *
- * @param packName - Pack name (no version suffix)
- * @param options - Resolution options
- * @returns Resolved pack info, or null if not found
- */
-export function resolvePackFromRegistries(
-  packName: string,
-  options?: {
-    version?: string | undefined;
-    registryName?: string | undefined;
-    conflictResolution?: ConflictResolution | undefined;
-  },
-): { resolved: ResolvedPack | null; conflict?: RegistryConflict; warnings: string[] } {
-  const log = getLogger();
-
-  // Validate pack name and version to prevent path traversal via malicious index.json
-  validatePathSegment(packName, "pack name");
-  if (options?.version) {
-    validatePathSegment(options.version, "version");
-  }
-
-  const { matches, warnings } = findPackInRegistries(packName);
-
-  if (matches.length === 0) {
-    return { resolved: null, warnings };
-  }
-
-  // Filter to specific registry if requested
-  let candidates = matches;
-  if (options?.registryName) {
-    candidates = matches.filter((m) => m.entry.name === options.registryName);
-    if (candidates.length === 0) {
-      warnings.push(`Pack "${packName}" not found in registry "${options.registryName}".`);
-      return { resolved: null, warnings };
-    }
-  }
-
-  // Handle conflict: multiple registries have this pack
-  if (candidates.length > 1) {
-    const conflict: RegistryConflict = {
-      packName,
-      sources: candidates.map((c) => ({
-        registryName: c.entry.name,
-        registryUrl: c.entry.url,
-        version: c.pack.latestVersion,
-        priority: c.entry.priority,
-      })),
-    };
-
-    const resolution = options?.conflictResolution ?? { strategy: "priority" };
-
-    if (resolution.strategy === "priority") {
-      // Sort by priority (lower wins), pick first
-      candidates.sort((a, b) => a.entry.priority - b.entry.priority);
-      candidates = [candidates[0]!];
-      log.info(
-        { packName, registry: candidates[0]!.entry.name },
-        "Resolved pack conflict by priority",
-      );
-    } else if (resolution.strategy === "explicit") {
-      const explicit = candidates.find((c) => c.entry.name === resolution.registryName);
-      if (!explicit) {
-        return { resolved: null, conflict, warnings };
-      }
-      candidates = [explicit];
-    } else {
-      // interactive — caller must handle the conflict
-      return { resolved: null, conflict, warnings };
-    }
-  }
-
-  const match = candidates[0]!;
-  const version = options?.version ?? match.pack.latestVersion;
-
-  // Try to find the pack data file
-  const dataPath = getPackDataPath(match.entry.name, packName, version);
-  if (!existsSync(dataPath)) {
-    warnings.push(
-      `Pack "${packName}@${version}" not found in local cache for registry "${match.entry.name}". ` +
-        "Try syncing first: libscope registry sync",
-    );
-    return { resolved: null, warnings };
-  }
-
-  return {
-    resolved: {
-      registryName: match.entry.name,
-      registryUrl: match.entry.url,
-      packName,
-      version,
-      dataPath,
-    },
-    warnings,
-  };
-}
-
-/**
- * Verify the checksum of a resolved pack's data file against the expected value
- * stored in the pack manifest. Throws a ValidationError if the checksum does not
- * match, indicating the file may have been tampered with or corrupted.
- *
- * Call this immediately before installing a registry-resolved pack.
+ * Verify the checksum of a resolved pack's data file against the value in the pack manifest.
+ * Throws a ValidationError if the checksum does not match (tampered or corrupted file) or the
+ * manifest has no checksum for the version.
  */
 export async function verifyResolvedPackChecksum(resolved: ResolvedPack): Promise<void> {
   const log = getLogger();
-  const manifest = readPackManifest(resolved.registryName, resolved.packName);
-
+  const where = { registry: resolved.registry, pack: resolved.name, version: resolved.version };
+  const manifest = readPackManifest(resolved.registry, resolved.name);
   if (!manifest) {
-    log.warn(
-      { registryName: resolved.registryName, packName: resolved.packName },
-      "No pack manifest found — skipping checksum verification",
-    );
+    log.warn(where, "No pack manifest found — skipping checksum verification");
     return;
   }
 
   const versionEntry = manifest.versions.find((v) => v.version === resolved.version);
   if (!versionEntry) {
-    log.warn(
-      {
-        registryName: resolved.registryName,
-        packName: resolved.packName,
-        version: resolved.version,
-      },
-      "Version entry not found in manifest — skipping checksum verification",
-    );
+    log.warn(where, "Version entry not found in manifest — skipping checksum verification");
     return;
   }
 
   if (!versionEntry.checksum) {
     throw new ValidationError(
-      `Pack "${resolved.packName}@${resolved.version}" in registry "${resolved.registryName}" ` +
+      `Pack "${resolved.name}@${resolved.version}" in registry "${resolved.registry}" ` +
         "has no checksum recorded. The registry may be corrupted or from an older format.",
     );
   }
 
   // verifyChecksum throws ValidationError on mismatch
   await verifyChecksum(resolved.dataPath, versionEntry.checksum);
-
-  log.info(
-    { registryName: resolved.registryName, packName: resolved.packName, version: resolved.version },
-    "Pack checksum verified before installation",
-  );
+  log.info(where, "Pack checksum verified before installation");
 }

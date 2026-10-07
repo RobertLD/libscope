@@ -11,7 +11,6 @@ import {
   removePack,
   listInstalledPacks,
   createPack,
-  listAvailablePacks,
   createPackFromSource,
 } from "../../src/core/packs.js";
 import type { KnowledgePack } from "../../src/core/packs.js";
@@ -494,42 +493,6 @@ describe("knowledge packs", () => {
     it("should reject relative path traversal", async () => {
       await expect(installPack(db, provider, "../../etc/passwd.json")).rejects.toThrow(
         /must be within the current working directory/,
-      );
-    });
-
-    it("should reject http registry URLs", async () => {
-      await expect(
-        installPack(db, provider, "some-pack", {
-          registryUrl: "http://evil.com/registry.json",
-        }),
-      ).rejects.toThrow(/must use https/);
-    });
-
-    it("should reject private IP registry URLs", async () => {
-      await expect(
-        installPack(db, provider, "some-pack", {
-          registryUrl: "https://127.0.0.1/registry.json",
-        }),
-      ).rejects.toThrow(/private/);
-    });
-
-    it("should reject localhost registry URLs", async () => {
-      await expect(
-        installPack(db, provider, "some-pack", {
-          registryUrl: "https://localhost/registry.json",
-        }),
-      ).rejects.toThrow(/private/);
-    });
-
-    it("should reject http registry URL in listAvailablePacks", async () => {
-      await expect(listAvailablePacks("http://evil.com/registry.json")).rejects.toThrow(
-        /must use https/,
-      );
-    });
-
-    it("should reject private IP in listAvailablePacks", async () => {
-      await expect(listAvailablePacks("https://192.168.1.1/registry.json")).rejects.toThrow(
-        /private/,
       );
     });
   });

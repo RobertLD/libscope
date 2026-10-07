@@ -4,7 +4,7 @@
  */
 
 import { readRawUserConfig, writeRawUserConfig } from "../config.js";
-import { ValidationError } from "../errors.js";
+import { NotFoundError, ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import type { RegistryEntry } from "./types.js";
 
@@ -33,7 +33,10 @@ export function validateRegistryName(name: string): void {
   }
 }
 
-/** Validate a git URL (https, ssh://, or SCP-style). Returns the normalized (trimmed, no trailing slash) URL. */
+/**
+ * Validate a git URL: https://, ssh://, SCP-style git@host:path, or file:/// for a repository on
+ * a local or shared disk. Returns the normalized (trimmed, no trailing slash) URL.
+ */
 export function validateGitUrl(url: string): string {
   // Trim whitespace and trailing slashes
   const normalized = url.trim().replace(/\/+$/, "");
@@ -46,17 +49,32 @@ export function validateGitUrl(url: string): string {
     );
   }
 
-  // Accept https:// URLs, ssh:// URLs, and SCP-style git@host:path URLs
   const isHttps = normalized.startsWith("https://");
   const isSshProtocol = normalized.startsWith("ssh://");
   const isScp = /^git@[\w.-]+:/.test(normalized);
-  if (!isHttps && !isSshProtocol && !isScp) {
+  const isFile = normalized.startsWith("file:///");
+  if (!isHttps && !isSshProtocol && !isScp && !isFile) {
     throw new ValidationError(
-      "Registry URL must use https://, ssh://, or SSH (git@host:path) format",
+      "Registry URL must use https://, ssh://, SSH (git@host:path) or file:/// format",
     );
   }
 
   return normalized;
+}
+
+/** Derive a registry name from a git URL ("https://github.com/org/packs.git" -> "packs"). */
+export function deriveRegistryName(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, "");
+  const last = trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf(":")) + 1);
+  const name = last.endsWith(".git") ? last.slice(0, -4) : last;
+  try {
+    validateRegistryName(name);
+  } catch {
+    throw new ValidationError(
+      `Could not derive a registry name from "${url}" (got "${name}"). Give a name.`,
+    );
+  }
+  return name;
 }
 
 /** Load all registry entries from config. */
@@ -79,13 +97,23 @@ export function getRegistry(name: string): RegistryEntry | undefined {
   return loadRegistries().find((r) => r.name === name);
 }
 
-/** Add a new registry entry. Throws if name already exists. */
-export function addRegistry(entry: RegistryEntry): void {
+/** The registry called `name`; NotFoundError when none is configured. */
+export function requireRegistry(name: string): RegistryEntry {
+  const entry = getRegistry(name);
+  if (!entry) {
+    throw new NotFoundError(
+      `Registry "${name}" not found. Add it with: libscope registry add <url> --name ${name}`,
+    );
+  }
+  return entry;
+}
+
+/** Add a new registry entry. Throws if the name already exists. Returns the stored entry. */
+export function addRegistry(entry: RegistryEntry): RegistryEntry {
   const log = getLogger();
   validateRegistryName(entry.name);
   // Normalize and validate URL; use the normalized form going forward
-  const normalizedUrl = validateGitUrl(entry.url);
-  const normalizedEntry = { ...entry, url: normalizedUrl };
+  const normalizedEntry = { ...entry, url: validateGitUrl(entry.url) };
 
   const registries = loadRegistries();
   if (registries.some((r) => r.name === normalizedEntry.name)) {
@@ -98,19 +126,14 @@ export function addRegistry(entry: RegistryEntry): void {
     { registry: normalizedEntry.name, url: sanitizeUrl(normalizedEntry.url) },
     "Registry added to config",
   );
+  return normalizedEntry;
 }
 
-/** Remove a registry entry by name. Throws if not found. */
+/** Remove a registry entry by name. NotFoundError when it is not configured. */
 export function removeRegistry(name: string): void {
-  const log = getLogger();
-  const registries = loadRegistries();
-  const index = registries.findIndex((r) => r.name === name);
-  if (index === -1) {
-    throw new ValidationError(`Registry "${name}" not found`);
-  }
-  registries.splice(index, 1);
-  saveRegistries(registries);
-  log.info({ registry: name }, "Registry removed from config");
+  requireRegistry(name);
+  saveRegistries(loadRegistries().filter((r) => r.name !== name));
+  getLogger().info({ registry: name }, "Registry removed from config");
 }
 
 /** Update the lastSyncedAt timestamp for a registry. */

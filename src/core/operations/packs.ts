@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { ValidationError } from "../../errors.js";
+import { resolveRegistryPack } from "../../registry/resolve.js";
+import { listRegistryPacks } from "../../registry/search.js";
 import {
   createPack,
   createPackFromSource,
   installPack,
-  listAvailablePacks,
   listInstalledPacks,
   removePack,
   type KnowledgePack,
@@ -14,26 +15,34 @@ import * as s from "./schemas.js";
 import { defineOperation, type OperationContext } from "./types.js";
 
 const pack = z.string().min(1).describe("Pack name");
-const registryUrl = z.url().optional().describe("Registry URL (default: the public pack registry)");
+/** A configured pack registry (`libscope registry add`). */
+export const registryName = z.string().min(1).describe("Registry name");
 
 function isPackFile(nameOrPath: string): boolean {
   return nameOrPath.endsWith(".json") || nameOrPath.endsWith(".json.gz");
 }
 
-/** REST callers must not read or write files on the server's disk. */
-function assertLocalFilesAllowed(ctx: OperationContext, what: string): void {
-  if (ctx.surface === "api") {
-    throw new ValidationError(`${what} is not available over the REST API`);
+/** Files on the server's disk are read or written only from the CLI and the Node.js API. */
+export function assertLocalFilesAllowed(ctx: OperationContext, what: string): void {
+  if (ctx.surface === "api" || ctx.surface === "mcp") {
+    throw new ValidationError(`${what} is only available from the CLI and the Node.js API`);
   }
 }
 
 export const installPackOperation = defineOperation({
   name: "install-pack",
   group: "packs",
-  summary: "Install a knowledge pack from the registry or a local .json/.json.gz file",
+  summary: "Install a knowledge pack from a registry (name or name@version) or a local file",
+  description:
+    "Packs are looked up in the local copies of the configured registries (run sync-registries to update them). Local .json/.json.gz files are accepted from the CLI and the Node.js API only.",
   input: z.object({
-    pack: z.string().min(1).describe("Pack name from the registry, or a local .json/.json.gz file"),
-    registryUrl,
+    pack: z
+      .string()
+      .min(1)
+      .describe("Pack name or name@version from a registry, or a local .json/.json.gz file"),
+    registry: registryName
+      .optional()
+      .describe("Look only in this registry (needed when several registries have the pack)"),
     batchSize: z
       .number()
       .int()
@@ -57,10 +66,17 @@ export const installPackOperation = defineOperation({
   }),
   annotations: { longRunning: true, idempotent: true },
   http: { method: "POST", path: "/packs" },
-  handler(ctx, input) {
-    if (isPackFile(input.pack)) assertLocalFilesAllowed(ctx, "Installing a pack from a file");
-    return installPack(ctx.db, ctx.provider, input.pack, {
-      registryUrl: input.registryUrl,
+  async handler(ctx, input) {
+    let file = input.pack;
+    if (isPackFile(input.pack)) {
+      assertLocalFilesAllowed(ctx, "Installing a pack from a file");
+      if (input.registry !== undefined) {
+        throw new ValidationError("registry applies to pack names, not to pack files");
+      }
+    } else {
+      file = (await resolveRegistryPack(input.pack, input.registry)).dataPath;
+    }
+    return installPack(ctx.db, ctx.provider, file, {
       batchSize: input.batchSize,
       concurrency: input.concurrency,
       resumeFrom: input.resumeFrom,
@@ -86,15 +102,24 @@ export const removePackOperation = defineOperation({
 export const listPacksOperation = defineOperation({
   name: "list-packs",
   group: "packs",
-  summary: "List installed packs, or packs available in the registry",
+  summary: "List installed packs, or the packs available in the configured registries",
   input: z.object({
-    available: z.boolean().default(false).describe("List registry packs instead of installed ones"),
-    registryUrl,
+    available: z
+      .boolean()
+      .default(false)
+      .describe("List the packs in the configured registries instead of installed ones"),
+    registry: registryName.optional().describe("With available: only this registry"),
   }),
   annotations: { readOnly: true },
   http: { method: "GET", path: "/packs" },
-  async handler(ctx, input) {
-    if (input.available) return { items: await listAvailablePacks(input.registryUrl) };
+  handler(ctx, input) {
+    if (input.available) {
+      const { packs, warnings } = listRegistryPacks(input.registry);
+      return { items: packs, warnings };
+    }
+    if (input.registry !== undefined) {
+      throw new ValidationError("registry applies only with available: true");
+    }
     return { items: listInstalledPacks(ctx.db) };
   },
 });

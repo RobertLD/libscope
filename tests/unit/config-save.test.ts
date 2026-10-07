@@ -68,8 +68,6 @@ function writeExisting(data: unknown, path = configPath()): void {
 const REGISTRY = {
   name: "team",
   url: "https://example.com/registry.git",
-  syncInterval: 3600,
-  priority: 1,
   lastSyncedAt: null,
 };
 

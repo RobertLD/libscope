@@ -55,6 +55,16 @@ import {
   listPacksOperation,
   removePackOperation,
 } from "./core/operations/packs.js";
+import {
+  addRegistryOperation,
+  createRegistryOperation,
+  listRegistriesOperation,
+  publishPackOperation,
+  removeRegistryOperation,
+  searchRegistriesOperation,
+  syncRegistriesOperation,
+  unpublishPackOperation,
+} from "./core/operations/registries.js";
 import { askOperation, searchOperation, toRagOptions } from "./core/operations/search.js";
 import {
   deleteSavedSearchOperation,
@@ -181,6 +191,16 @@ const NAMESPACES = {
     list: listPacksOperation,
     create: createPackOperation,
   },
+  registries: {
+    list: listRegistriesOperation,
+    add: addRegistryOperation,
+    remove: removeRegistryOperation,
+    sync: syncRegistriesOperation,
+    search: searchRegistriesOperation,
+    create: createRegistryOperation,
+    publish: publishPackOperation,
+    unpublish: unpublishPackOperation,
+  },
   connectors: {
     list: lazy(
       "list-connections",
@@ -284,6 +304,7 @@ export class LibScope {
   readonly links = this.bind(NAMESPACES.links);
   readonly searches = this.bind(NAMESPACES.searches);
   readonly packs = this.bind(NAMESPACES.packs);
+  readonly registries = this.bind(NAMESPACES.registries);
   readonly connectors = this.bind(NAMESPACES.connectors);
   readonly tasks = this.bind(NAMESPACES.tasks);
   readonly admin = this.bind(NAMESPACES.admin);

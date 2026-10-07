@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLogger } from "../logger.js";
-import { FetchError, ValidationError } from "../errors.js";
+import { ConfigError, FetchError, ValidationError } from "../errors.js";
 import type { PackSummary } from "./types.js";
 import { INDEX_FILE, PACKS_DIR } from "./types.js";
 
@@ -35,6 +35,10 @@ export async function git(
     const { stdout } = await execFile("git", args, { cwd, timeout });
     return stdout.trim();
   } catch (err) {
+    // ENOENT with an existing (or no) working directory: the git binary itself is missing.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT" && (!cwd || existsSync(cwd))) {
+      throw new ConfigError("git is not installed or not in PATH", err);
+    }
     const message = err instanceof Error ? err.message : String(err);
     log.error({ args, cwd, err: message }, "Git command failed");
 
@@ -222,16 +226,6 @@ export async function createRegistryRepo(path: string): Promise<void> {
   );
 
   log.info({ path }, "Registry repo initialized");
-}
-
-/** Check if git is available on the system. */
-export async function checkGitAvailable(): Promise<boolean> {
-  try {
-    await execFile("git", ["--version"]);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Add, commit, and push changes in a registry repo. */

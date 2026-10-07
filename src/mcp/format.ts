@@ -7,7 +7,8 @@ import type { DocumentLinks } from "../core/links.js";
 import type { DocumentView } from "../core/document-view.js";
 import type { DocumentSummary, ListResult } from "../core/operations/index.js";
 import type { Overview } from "../core/overview.js";
-import type { InstallResult, InstalledPack, PackInfo } from "../core/packs.js";
+import type { InstallResult, InstalledPack } from "../core/packs.js";
+import type { RegistryPack } from "../registry/types.js";
 import type { AnswerResult, RagSource } from "../core/rag.js";
 import type { ReindexResult } from "../core/reindex.js";
 import type { Rating } from "../core/ratings.js";
@@ -342,15 +343,18 @@ export function formatInstallPack(result: InstallResult): string {
 }
 
 /** Output of `list-packs`. */
-export function formatPackList(result: { items: Array<InstalledPack | PackInfo> }): string {
-  if (result.items.length === 0) return "No packs found.";
-  return result.items
-    .map((p) =>
-      "installedAt" in p
-        ? formatInstalledPack(p)
-        : `- ${p.name} v${p.version} (${p.docCount} docs): ${p.description}`,
-    )
-    .join("\n");
+export function formatPackList(result: {
+  items: Array<InstalledPack | RegistryPack>;
+  warnings?: string[] | undefined;
+}): string {
+  const lines = result.items.map((p) =>
+    "installedAt" in p
+      ? formatInstalledPack(p)
+      : `- ${p.name} v${p.latestVersion} (registry ${p.registry}): ${p.description}`,
+  );
+  if (lines.length === 0) lines.push("No packs found.");
+  for (const warning of result.warnings ?? []) lines.push(`Warning: ${warning}`);
+  return lines.join("\n");
 }
 
 /** Output of `reindex-documents`. */
