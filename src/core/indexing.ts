@@ -572,7 +572,20 @@ export interface IndexFileOptions {
   sourceType?: IndexDocumentInput["sourceType"] | undefined;
   /** ISO 8601 expiry timestamp (see IndexDocumentInput.expiresAt). */
   expiresAt?: string | undefined;
+  /** Custom chunker; see {@link Chunker}. */
+  chunker?: Chunker | undefined;
 }
+
+/**
+ * Splits a document into chunks instead of the built-in markdown chunker. `source` is the
+ * file path or URL the content came from ("" for inline content). Return undefined to use
+ * the built-in chunker for this document.
+ */
+export type Chunker = (doc: {
+  content: string;
+  title: string;
+  source: string;
+}) => Promise<string[] | undefined> | string[] | undefined;
 
 /** Document source types. */
 export const SOURCE_TYPES = ["library", "topic", "manual", "model-generated"] as const;
@@ -628,6 +641,7 @@ export async function indexFile(
   const content = await parser.parse(buffer);
 
   const title = options.title ?? basename(filePath).replace(/\.[^.]+$/, "");
+  const preChunked = await options.chunker?.({ content, title, source: filePath });
 
   return indexDocument(db, provider, {
     title,
@@ -638,5 +652,6 @@ export async function indexFile(
     topicId: options.topic,
     dedup: options.dedup,
     expiresAt: options.expiresAt,
+    preChunked,
   });
 }

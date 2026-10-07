@@ -8,12 +8,14 @@
     "libscope": "./dist/cli/index.js"
   },
   "exports": {
-    ".": "./dist/core/index.js",
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
     "./mcp": "./dist/mcp/server.js",
     "./lite": {
-      "import": "./dist/lite/index.js",
-      "require": "./dist/lite/index.js",
-      "types": "./dist/lite/index.d.ts"
+      "types": "./dist/lite/index.d.ts",
+      "default": "./dist/lite/index.js"
     }
   },
   "files": [

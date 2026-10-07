@@ -1,214 +1,62 @@
-import Database from "better-sqlite3";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { extname } from "node:path";
+import type Database from "better-sqlite3";
+import { ValidationError } from "../errors.js";
+import { LibScope } from "../LibScope.js";
+import type { ConfigOverrides } from "../core/bootstrap.js";
+import type { Chunker } from "../core/indexing.js";
+import type { LlmProvider } from "../core/rag.js";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { LocalEmbeddingProvider } from "../providers/local.js";
-import { createDatabase } from "../db/connection.js";
-import { runMigrations, createVectorTable } from "../db/schema.js";
-import { ConfigError } from "../errors.js";
-import { indexDocument } from "../core/indexing.js";
-import { searchDocuments } from "../core/search.js";
-import { bulkDelete } from "../core/bulk.js";
-import { rateDocument } from "../core/ratings.js";
-import { askQuestion, getContextForQuestion, type LlmProvider } from "../core/rag.js";
-import { normalizeRawInput } from "./normalize.js";
 import { TreeSitterChunker } from "./chunker-treesitter.js";
-import type {
-  LiteOptions,
-  LiteDoc,
-  RawInput,
-  LiteSearchOptions,
-  LiteSearchResult,
-  LiteContextOptions,
-  LiteAskOptions,
-} from "./types.js";
 
-export class LibScopeLite {
-  private readonly db: Database.Database;
-  private readonly provider: EmbeddingProvider;
-  private readonly llmProvider: LlmProvider | null;
-  private _chunker: TreeSitterChunker | undefined;
-  private get chunker(): TreeSitterChunker {
-    this._chunker ??= new TreeSitterChunker();
-    return this._chunker;
+export interface LiteOptions {
+  /** SQLite database file (":memory:" for an in-memory database). */
+  dbPath?: string | undefined;
+  /** Use an already-open database instead of `dbPath`. `close()` leaves it open. */
+  db?: Database.Database | undefined;
+  /** Embedding provider. Default: the local provider (Xenova/all-MiniLM-L6-v2). */
+  provider?: EmbeddingProvider | undefined;
+  /** LLM for ask/askStream. Without one, ask throws a ConfigError. */
+  llmProvider?: LlmProvider | undefined;
+  /** Custom chunker, e.g. createCodeChunker(). */
+  chunker?: Chunker | undefined;
+  /** Config values over the defaults (config files and environment are not read). */
+  config?: ConfigOverrides | undefined;
+}
+
+/**
+ * LibScope for embedding in an application: the same object and results as
+ * `LibScope.create`, but config files and LIBSCOPE_* variables are ignored and the database
+ * is the one you name.
+ */
+export function createLite(options: LiteOptions): LibScope {
+  if (options.dbPath === undefined && options.db === undefined) {
+    throw new ValidationError("createLite needs dbPath or db");
   }
+  return LibScope.create({ ...options, useConfigFile: false });
+}
 
-  constructor(opts: LiteOptions = {}) {
-    this.provider = opts.provider ?? new LocalEmbeddingProvider();
-    this.llmProvider = opts.llmProvider ?? null;
+function languageOf(name: string): string | undefined {
+  const ext = extname(name).slice(1).toLowerCase();
+  return ext === "" ? undefined : ext;
+}
 
-    if (opts.db === undefined) {
-      const dbPath = opts.dbPath ?? join(homedir(), ".libscope", "lite.db");
-      // createDatabase handles directory creation, WAL mode, pragmas, and sqlite-vec loading.
-      this.db = createDatabase(dbPath);
-      runMigrations(this.db);
-      // Create vector table best-effort (requires sqlite-vec to be loaded).
-      try {
-        createVectorTable(this.db, this.provider);
-      } catch (err) {
-        // A model/index mismatch must surface; anything else means sqlite-vec is
-        // unavailable and FTS5 search still works.
-        if (err instanceof ConfigError) throw err;
-      }
-    } else {
-      // Caller-provided DB: skip all setup (migrations, extension loading, vector table).
-      this.db = opts.db;
+/**
+ * A Chunker that splits source code at function and class boundaries with tree-sitter (an
+ * optional peer dependency). The language is `language` if given, else the extension of the
+ * file path, URL or title. Other documents, and code when tree-sitter is not installed, use
+ * the built-in chunker.
+ */
+export function createCodeChunker(options: { language?: string | undefined } = {}): Chunker {
+  const chunker = new TreeSitterChunker();
+  return async ({ content, title, source }) => {
+    const language = options.language ?? languageOf(source) ?? languageOf(title);
+    if (language === undefined || !chunker.supports(language)) return undefined;
+    try {
+      const chunks = await chunker.chunk(content, language);
+      return chunks.map((c) => c.content);
+    } catch {
+      // tree-sitter not installed or the parse failed: use the built-in chunker
+      return undefined;
     }
-  }
-
-  async index(docs: LiteDoc[]): Promise<void> {
-    for (const doc of docs) {
-      let preChunked: string[] | undefined;
-
-      if (doc.language && this.chunker.supports(doc.language)) {
-        try {
-          const codeChunks = await this.chunker.chunk(doc.content, doc.language);
-          preChunked = codeChunks.map((c) => c.content);
-        } catch {
-          // tree-sitter not installed or parse failed — fall back to text chunker
-        }
-      }
-
-      await indexDocument(this.db, this.provider, {
-        title: doc.title,
-        content: doc.content,
-        sourceType: doc.sourceType ?? "manual",
-        library: doc.library,
-        version: doc.version,
-        topicId: doc.topicId,
-        url: doc.url,
-        preChunked,
-      });
-    }
-  }
-
-  async indexRaw(input: RawInput): Promise<string[]> {
-    const normalized = await normalizeRawInput(input);
-    if (normalized.chunks !== undefined && normalized.chunks.length > 1) {
-      const ids: string[] = [];
-      for (let i = 0; i < normalized.chunks.length; i++) {
-        const chunk = normalized.chunks[i]!;
-        const result = await indexDocument(this.db, this.provider, {
-          title: `${normalized.title} (part ${String(i + 1)})`,
-          content: chunk,
-          sourceType: "manual",
-        });
-        ids.push(result.id);
-      }
-      return ids;
-    }
-    const result = await indexDocument(this.db, this.provider, {
-      title: normalized.title,
-      content: normalized.content,
-      sourceType: "manual",
-      url: input.type === "url" ? input.url : undefined,
-    });
-    return [result.id];
-  }
-
-  async indexBatch(docs: LiteDoc[], opts: { concurrency: number }): Promise<void> {
-    const concurrency = Math.max(1, opts.concurrency);
-    let activeCount = 0;
-    let idx = 0;
-
-    await new Promise<void>((resolve, reject) => {
-      if (docs.length === 0) {
-        resolve();
-        return;
-      }
-
-      const runNext = (): void => {
-        while (activeCount < concurrency && idx < docs.length) {
-          const doc = docs[idx];
-          if (!doc) break;
-          idx++;
-          activeCount++;
-          this.index([doc])
-            .then(() => {
-              activeCount--;
-              if (idx >= docs.length && activeCount === 0) {
-                resolve();
-              } else {
-                runNext();
-              }
-            })
-            .catch(reject);
-        }
-      };
-
-      runNext();
-    });
-  }
-
-  async search(query: string, opts?: LiteSearchOptions): Promise<LiteSearchResult[]> {
-    const { results } = await searchDocuments(this.db, this.provider, {
-      query,
-      limit: opts?.limit ?? 10,
-      topic: opts?.topic,
-      library: opts?.library,
-      tags: opts?.tags,
-      diversity: opts?.diversity,
-    });
-    return results.map((r) => ({
-      docId: r.documentId,
-      chunkId: r.chunkId,
-      title: r.title,
-      content: r.content,
-      score: r.score,
-      url: r.url,
-    }));
-  }
-
-  async getContext(question: string, opts?: LiteContextOptions): Promise<string> {
-    const { contextPrompt } = await getContextForQuestion(this.db, this.provider, {
-      question,
-      topK: opts?.topK ?? 5,
-      topic: opts?.topic,
-      library: opts?.library,
-    });
-    return contextPrompt;
-  }
-
-  async ask(question: string, opts?: LiteAskOptions): Promise<string> {
-    const llm = opts?.llmProvider ?? this.llmProvider;
-    if (!llm) {
-      throw new Error("No LlmProvider configured. Pass llmProvider to constructor or ask() opts.");
-    }
-    const result = await askQuestion(this.db, this.provider, llm, {
-      question,
-      topK: opts?.topK ?? 5,
-      topic: opts?.topic,
-      library: opts?.library,
-      systemPrompt: opts?.systemPrompt,
-    });
-    return result.answer;
-  }
-
-  async *askStream(question: string, opts?: LiteAskOptions): AsyncGenerator<string> {
-    const llm = opts?.llmProvider ?? this.llmProvider;
-    if (!llm) {
-      throw new Error("No LlmProvider configured.");
-    }
-    if (!llm.completeStream) {
-      throw new Error("This LlmProvider does not support streaming.");
-    }
-    const context = await this.getContext(question, opts);
-    yield* llm.completeStream(context, opts?.systemPrompt);
-  }
-
-  rate(docId: string, score: number): void {
-    rateDocument(this.db, { documentId: docId, rating: score });
-  }
-
-  deleteByLibrary(library: string): void {
-    // bulkDelete caps at MAX_BATCH_SIZE=1000; loop until all cleared
-    let result;
-    do {
-      result = bulkDelete(this.db, { library }, false);
-    } while (result.affected > 0);
-  }
-
-  close(): void {
-    this.db.close();
-  }
+  };
 }

@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { LibScopeConfig } from "../../config.js";
 import { ConfigError, ValidationError } from "../../errors.js";
 import type { EmbeddingProvider } from "../../providers/embedding.js";
+import type { Chunker } from "../indexing.js";
 import { createLlmProvider, isPassthroughMode, type LlmProvider, type LlmSurface } from "../rag.js";
 import { taskRegistry, type Task } from "../tasks.js";
 
@@ -40,6 +41,8 @@ export interface OperationContext {
   surface: Surface;
   signal?: AbortSignal | undefined;
   onProgress?: ((p: ProgressEvent) => void) | undefined;
+  /** Custom chunker used by `add` for inline content and local files (SDK only). */
+  chunker?: Chunker | undefined;
   /** True when `ask` should return context for the caller to answer (passthrough). */
   isPassthrough(): boolean;
   /** The configured LLM provider, created on first use; null when none is configured. */
@@ -86,18 +89,27 @@ function formatIssues(error: z.ZodError): string {
     .join("; ");
 }
 
+/** Validate `rawInput` against the operation's schema. ZodError -> ValidationError. */
+export function parseOperationInput<S extends z.ZodObject>(
+  op: Operation<S, unknown>,
+  rawInput: unknown,
+): z.output<S> {
+  const parsed = op.input.safeParse(rawInput ?? {});
+  if (!parsed.success) {
+    throw new ValidationError(`Invalid input for ${op.name}: ${formatIssues(parsed.error)}`);
+  }
+  return parsed.data;
+}
+
 /** Validate `rawInput` against the operation's schema and run it. ZodError -> ValidationError. */
 export async function runOperation<S extends z.ZodObject, O>(
   op: Operation<S, O>,
   ctx: OperationContext,
   rawInput: unknown,
 ): Promise<O> {
-  const parsed = op.input.safeParse(rawInput ?? {});
-  if (!parsed.success) {
-    throw new ValidationError(`Invalid input for ${op.name}: ${formatIssues(parsed.error)}`);
-  }
+  const input = parseOperationInput(op, rawInput);
   ctx.signal?.throwIfAborted();
-  return op.handler(ctx, parsed.data);
+  return op.handler(ctx, input);
 }
 
 /**
@@ -110,10 +122,7 @@ export function startOperationTask<S extends z.ZodObject, O>(
   ctx: OperationContext,
   rawInput: unknown,
 ): Task {
-  const parsed = op.input.safeParse(rawInput ?? {});
-  if (!parsed.success) {
-    throw new ValidationError(`Invalid input for ${op.name}: ${formatIssues(parsed.error)}`);
-  }
+  const input = parseOperationInput(op, rawInput);
   const { task } = taskRegistry.run(
     "operation",
     async (signal, onProgress) => {
@@ -123,7 +132,7 @@ export function startOperationTask<S extends z.ZodObject, O>(
           signal,
           onProgress: (p) => onProgress(p.done, p.total ?? 0),
         },
-        parsed.data,
+        input,
       );
       return JSON.stringify(result ?? null);
     },
@@ -139,6 +148,7 @@ export interface CreateContextOptions {
   surface: Surface;
   signal?: AbortSignal | undefined;
   onProgress?: ((p: ProgressEvent) => void) | undefined;
+  chunker?: Chunker | undefined;
   /** Use this LLM instead of the configured one (null: none). */
   llm?: LlmProvider | null | undefined;
 }

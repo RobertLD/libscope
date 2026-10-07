@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { ValidationError } from "../../errors.js";
-import { answer } from "../rag.js";
+import { answer, type RagOptions } from "../rag.js";
 import { firstChunkId, getRelatedChunks, searchDocuments, type SearchResult } from "../search.js";
 import { topicForFilter } from "./documents.js";
 import * as s from "./schemas.js";
@@ -58,6 +58,12 @@ export const searchOperation = defineOperation({
       .max(2)
       .default(0)
       .describe("Neighbouring chunks to include before and after each result"),
+    diversity: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe("Query search: MMR reranking, 0 = relevance only (default), 1 = most diverse"),
   }),
   annotations: { readOnly: true },
   http: { method: "GET", path: "/search" },
@@ -94,22 +100,46 @@ export const searchOperation = defineOperation({
       offset: input.offset,
       maxChunksPerDocument: input.maxChunksPerDocument,
       contextChunks: input.contextChunks,
+      diversity: input.diversity,
     });
     return { items: results, total: totalCount, limit: input.limit, offset: input.offset };
   },
 });
+
+const askInput = z.object({
+  question: z.string().min(1).max(10_000).describe("The question"),
+  ...s.documentFilters,
+  minRating,
+  topK: z.number().int().min(1).max(20).default(5).describe("Chunks to retrieve as context"),
+  systemPrompt: z
+    .string()
+    .min(1)
+    .max(10_000)
+    .optional()
+    .describe("System prompt for the LLM (default: answer from the context and cite titles)"),
+});
+
+/** RAG options for a parsed `ask` input (topic names resolved). Shared with streaming ask. */
+export function toRagOptions(ctx: OperationContext, input: z.output<typeof askInput>): RagOptions {
+  return {
+    question: input.question,
+    topK: input.topK,
+    topic: topicForFilter(ctx, input.topic),
+    library: input.library,
+    version: input.version,
+    sourceType: input.sourceType,
+    tags: input.tags,
+    minRating: input.minRating,
+    systemPrompt: input.systemPrompt,
+  };
+}
 
 export const askOperation = defineOperation({
   name: "ask",
   group: "search",
   summary:
     "Answer a question from the knowledge base with an LLM, or (passthrough) return the context to answer from",
-  input: z.object({
-    question: z.string().min(1).max(10_000).describe("The question"),
-    ...s.documentFilters,
-    minRating,
-    topK: z.number().int().min(1).max(20).default(5).describe("Chunks to retrieve as context"),
-  }),
+  input: askInput,
   annotations: { readOnly: true },
   http: { method: "POST", path: "/ask" },
   handler: (ctx: OperationContext, input) =>
@@ -117,16 +147,7 @@ export const askOperation = defineOperation({
       ctx.db,
       ctx.provider,
       { passthrough: ctx.isPassthrough(), llm: ctx.isPassthrough() ? null : ctx.getLlm() },
-      {
-        question: input.question,
-        topK: input.topK,
-        topic: topicForFilter(ctx, input.topic),
-        library: input.library,
-        version: input.version,
-        sourceType: input.sourceType,
-        tags: input.tags,
-        minRating: input.minRating,
-      },
+      toRagOptions(ctx, input),
     ),
 });
 
