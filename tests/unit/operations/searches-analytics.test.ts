@@ -36,7 +36,7 @@ describe("saved search and analytics operations", () => {
         library: "react",
         sourceType: "library",
       });
-      expect(saved.filters).toEqual({ library: "react", source: "library" });
+      expect(saved.filters).toEqual({ library: "react", sourceType: "library" });
 
       const list = await run(listSavedSearchesOperation, t.ctx, {});
       expect(list).toMatchObject({ total: 1, limit: 50, offset: 0 });
@@ -44,9 +44,14 @@ describe("saved search and analytics operations", () => {
       const ran = await run(runSavedSearchOperation, t.ctx, { search: "react-hooks" });
       expect(ran.items.length).toBe(1);
       expect(ran.search.resultCount).toBe(1);
+      expect(ran.search.lastRunAt).not.toBeNull();
+
+      // Stored filters apply when the search runs.
+      await run(saveSearchOperation, t.ctx, { name: "vue", query: "hooks", library: "vue" });
+      expect((await run(runSavedSearchOperation, t.ctx, { search: "vue" })).items).toEqual([]);
 
       await run(deleteSavedSearchOperation, t.ctx, { search: saved.id });
-      expect((await run(listSavedSearchesOperation, t.ctx, {})).total).toBe(0);
+      expect((await run(listSavedSearchesOperation, t.ctx, {})).total).toBe(1);
     });
 
     it("rejects a missing query and a duplicate name", async () => {
