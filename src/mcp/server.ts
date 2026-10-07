@@ -33,10 +33,10 @@ import { spiderUrl } from "../core/spider.js";
 import type { SpiderOptions } from "../core/spider.js";
 import { initLogger, getLogger } from "../logger.js";
 import { ConfigError, ValidationError } from "../errors.js";
-import { errorResponse, withErrorHandling } from "./errors.js";
+import { errorResponse, textResult, withErrorHandling, type ToolResult } from "./errors.js";
 export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
 import { taskRegistry } from "./tasks.js";
-import type { TaskType } from "./tasks.js";
+import type { Task, TaskType } from "./tasks.js";
 
 /** Build SpiderOptions from submit-document params. */
 function buildSpiderOptions(
@@ -75,7 +75,7 @@ async function handleSpiderSubmit(
     excludePatterns?: string[] | undefined;
   },
   fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<string> {
   const { url, library, version, topic } = params;
   if (!url) {
     throw new ValidationError("Field 'url' is required when spider is true");
@@ -109,18 +109,16 @@ async function handleSpiderSubmit(
   }
   const stats = result.value;
 
-  const summary = [
+  return [
     `Spider complete.`,
     `Pages indexed: ${indexed.length}`,
-    `Pages crawled: ${stats?.pagesCrawled ?? indexed.length}`,
-    `Pages skipped: ${stats?.pagesSkipped ?? 0}`,
+    `Pages crawled: ${stats.pagesCrawled}`,
+    `Pages skipped: ${stats.pagesSkipped}`,
     errors.length > 0 ? `Errors: ${errors.length}` : null,
-    stats?.abortReason ? `Stopped early: ${stats.abortReason}` : null,
+    stats.abortReason ? `Stopped early: ${stats.abortReason}` : null,
   ]
     .filter(Boolean)
     .join("\n");
-
-  return { content: [{ type: "text" as const, text: summary }] };
 }
 
 /** Handle single-document submission for submit-document. */
@@ -137,7 +135,7 @@ async function handleSingleDocSubmit(
     sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
   },
   fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<string> {
   let { title, content } = params;
   const { url, library, version, topic } = params;
 
@@ -167,59 +165,61 @@ async function handleSingleDocSubmit(
     submittedBy: "model",
   });
 
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text:
-          `Document indexed successfully.\n` +
-          `Title: ${title}\n` +
-          `ID: ${result.id}\n` +
-          `Chunks: ${result.chunkCount}` +
-          (url ? `\nSource: ${url}` : ""),
-      },
-    ],
-  };
+  return (
+    `Document indexed successfully.\n` +
+    `Title: ${title}\n` +
+    `ID: ${result.id}\n` +
+    `Chunks: ${result.chunkCount}` +
+    (url ? `\nSource: ${url}` : "")
+  );
 }
 
+/** Background work for a tool: receives the task's abort signal and a progress reporter. */
+type TaskWork = (
+  signal: AbortSignal,
+  onProgress: (current: number, total: number) => void,
+) => Promise<string>;
+
 /** Fire-and-forget helper: creates a task, runs `work` in background, returns task ID response. */
-function startAsyncTask(
-  type: TaskType,
-  work: (
-    signal: AbortSignal,
-    onProgress: (current: number, total: number) => void,
-  ) => Promise<string>,
-): { content: Array<{ type: "text"; text: string }> } {
+function startAsyncTask(type: TaskType, work: TaskWork): ToolResult {
   const { task, signal } = taskRegistry.create(type);
   taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
   const onProgress = (current: number, total: number): void => {
     taskRegistry.update(task.id, { progress: { current, total } });
   };
-  void work(signal, onProgress).then(
-    (result) => {
-      if (signal.aborted) {
-        taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
-      } else {
-        taskRegistry.update(task.id, { status: "completed", completedAt: new Date(), result });
-      }
-    },
-    (err: unknown) => {
-      if (signal.aborted) {
-        taskRegistry.update(task.id, { status: "cancelled", completedAt: new Date() });
-      } else {
-        taskRegistry.update(task.id, {
-          status: "failed",
-          completedAt: new Date(),
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-  );
-  return {
-    content: [
-      { type: "text" as const, text: `Task queued. ID: ${task.id}\nUse get-task to check status.` },
-    ],
+  const finish = (updates: Partial<Task>): void => {
+    taskRegistry.update(
+      task.id,
+      signal.aborted ? { status: "cancelled", completedAt: new Date() } : updates,
+    );
   };
+  void work(signal, onProgress).then(
+    (result) => finish({ status: "completed", completedAt: new Date(), result }),
+    (err: unknown) =>
+      finish({
+        status: "failed",
+        completedAt: new Date(),
+        error: err instanceof Error ? err.message : String(err),
+      }),
+  );
+  return textResult(`Task queued. ID: ${task.id}\nUse get-task to check status.`);
+}
+
+const noProgress = (): void => {
+  // Inline (sync) runs have no task to report progress to.
+};
+
+/**
+ * Runs `work` as a background task when `isAsync` is set; otherwise runs it inline with a
+ * never-aborted signal and returns its text as the tool result.
+ */
+async function runMaybeAsync(
+  isAsync: boolean | undefined,
+  type: TaskType,
+  work: TaskWork,
+): Promise<ToolResult> {
+  if (isAsync) return startAsyncTask(type, work);
+  return textResult(await work(new AbortController().signal, noProgress));
 }
 
 // Start the server
@@ -330,9 +330,7 @@ async function main(): Promise<void> {
       });
 
       if (results.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: "No documents found matching your query." }],
-        };
+        return textResult("No documents found matching your query.");
       }
 
       const text =
@@ -360,7 +358,7 @@ async function main(): Promise<void> {
           })
           .join("\n---\n\n");
 
-      return { content: [{ type: "text" as const, text }] };
+      return textResult(text);
     }),
   );
 
@@ -401,14 +399,7 @@ async function main(): Promise<void> {
           ...(minScore !== undefined && { minScore }),
           ...(includeLinkedDocuments !== undefined && { includeLinkedDocuments }),
         });
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
+        return textResult(JSON.stringify(result, null, 2));
       },
     ),
   );
@@ -433,7 +424,7 @@ async function main(): Promise<void> {
         `**Rating:** ${ratings.averageRating.toFixed(1)}/5 (${ratings.totalRatings} ratings)\n\n` +
         doc.content;
 
-      return { content: [{ type: "text" as const, text }] };
+      return textResult(text);
     }),
   );
 
@@ -447,14 +438,7 @@ async function main(): Promise<void> {
     withErrorHandling((params) => {
       deleteDocument(db, params.documentId);
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Document ${params.documentId} has been deleted successfully.`,
-          },
-        ],
-      };
+      return textResult(`Document ${params.documentId} has been deleted successfully.`);
     }),
   );
 
@@ -491,9 +475,7 @@ async function main(): Promise<void> {
               })
             : undefined,
       });
-      return {
-        content: [{ type: "text" as const, text: `Document updated: ${doc.title} (${doc.id})` }],
-      };
+      return textResult(`Document updated: ${doc.title} (${doc.id})`);
     }),
   );
 
@@ -521,17 +503,11 @@ async function main(): Promise<void> {
         ratedBy: "model",
       });
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text:
-              `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
-              (result.feedback ? `\nFeedback: ${result.feedback}` : "") +
-              (result.suggestedCorrection ? `\nCorrection suggested.` : ""),
-          },
-        ],
-      };
+      return textResult(
+        `Rating submitted: ${result.rating}/5 for document ${result.documentId}` +
+          (result.feedback ? `\nFeedback: ${result.feedback}` : "") +
+          (result.suggestedCorrection ? `\nCorrection suggested.` : ""),
+      );
     }),
   );
 
@@ -604,22 +580,11 @@ async function main(): Promise<void> {
         allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
       };
 
-      if (params.async) {
-        return startAsyncTask("index_document", async () => {
-          if (params.spider) {
-            const r = await handleSpiderSubmit(db, provider, params, fetchOptions);
-            return r.content[0]?.text ?? "Done";
-          }
-          const r = await handleSingleDocSubmit(db, provider, params, fetchOptions);
-          return r.content[0]?.text ?? "Done";
-        });
-      }
-
-      if (params.spider) {
-        return handleSpiderSubmit(db, provider, params, fetchOptions);
-      }
-
-      return handleSingleDocSubmit(db, provider, params, fetchOptions);
+      return runMaybeAsync(params.async, "index_document", () =>
+        params.spider
+          ? handleSpiderSubmit(db, provider, params, fetchOptions)
+          : handleSingleDocSubmit(db, provider, params, fetchOptions),
+      );
     }),
   );
 
@@ -634,9 +599,7 @@ async function main(): Promise<void> {
       const topics = listTopics(db, params.parentId);
 
       if (topics.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: "No topics found." }],
-        };
+        return textResult("No topics found.");
       }
 
       const text = topics
@@ -646,7 +609,7 @@ async function main(): Promise<void> {
         })
         .join("\n");
 
-      return { content: [{ type: "text" as const, text: `## Topics\n\n${text}` }] };
+      return textResult(`## Topics\n\n${text}`);
     }),
   );
 
@@ -699,9 +662,7 @@ async function main(): Promise<void> {
           getLogger().warn({ err }, "Health check: FTS5 index query failed");
         }
 
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(health, null, 2) }],
-        };
+        return textResult(JSON.stringify(health, null, 2));
       } catch (err) {
         return errorResponse(err);
       }
@@ -730,7 +691,7 @@ async function main(): Promise<void> {
       });
 
       if (docs.length === 0) {
-        return { content: [{ type: "text" as const, text: "No documents found." }] };
+        return textResult("No documents found.");
       }
 
       const text = docs
@@ -745,9 +706,7 @@ async function main(): Promise<void> {
         })
         .join("\n");
 
-      return {
-        content: [{ type: "text" as const, text: `## Documents (${docs.length})\n\n${text}` }],
-      };
+      return textResult(`## Documents (${docs.length})\n\n${text}`);
     }),
   );
 
@@ -783,9 +742,7 @@ async function main(): Promise<void> {
                 .join("\n")
             : "";
 
-        return {
-          content: [{ type: "text" as const, text: contextPrompt + sourcesText }],
-        };
+        return textResult(contextPrompt + sourcesText);
       }
 
       if (!llmProvider) {
@@ -814,9 +771,7 @@ async function main(): Promise<void> {
           ? `\n\n_Model: ${result.model} | Tokens: ${result.tokensUsed}_`
           : "";
 
-      return {
-        content: [{ type: "text" as const, text: result.answer + sourcesText + metaText }],
-      };
+      return textResult(result.answer + sourcesText + metaText);
     }),
   );
 
@@ -853,47 +808,27 @@ async function main(): Promise<void> {
     withErrorHandling(async (params) => {
       const { reindex } = await import("../core/reindex.js");
 
-      if (params.async) {
-        return startAsyncTask("reindex_library", async (signal, onProgress) => {
-          const result = await reindex(db, provider, {
-            documentIds: params.documentIds,
-            since: params.since,
-            before: params.before,
-            batchSize: params.batchSize,
-            onProgress: (p) => {
-              if (signal.aborted) throw new Error("Task cancelled");
-              onProgress(p.completed, p.total);
-            },
-          });
-          return (
-            `Reindex complete.\n` +
-            `Total chunks: ${result.total}\n` +
-            `Updated: ${result.completed}\n` +
-            `Failed: ${result.failed}` +
-            (result.failedChunkIds.length > 0
-              ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
-              : "")
-          );
+      return runMaybeAsync(params.async, "reindex_library", async (signal, onProgress) => {
+        const result = await reindex(db, provider, {
+          documentIds: params.documentIds,
+          since: params.since,
+          before: params.before,
+          batchSize: params.batchSize,
+          onProgress: (p) => {
+            if (signal.aborted) throw new Error("Task cancelled");
+            onProgress(p.completed, p.total);
+          },
         });
-      }
-
-      const result = await reindex(db, provider, {
-        documentIds: params.documentIds,
-        since: params.since,
-        before: params.before,
-        batchSize: params.batchSize,
+        return (
+          `Reindex complete.\n` +
+          `Total chunks: ${result.total}\n` +
+          `Updated: ${result.completed}\n` +
+          `Failed: ${result.failed}` +
+          (result.failedChunkIds.length > 0
+            ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
+            : "")
+        );
       });
-
-      const text =
-        `Reindex complete.\n` +
-        `Total chunks: ${result.total}\n` +
-        `Updated: ${result.completed}\n` +
-        `Failed: ${result.failed}` +
-        (result.failedChunkIds.length > 0
-          ? `\nFailed chunk IDs: ${result.failedChunkIds.join(", ")}`
-          : "");
-
-      return { content: [{ type: "text" as const, text }] };
     }),
   );
 
@@ -933,35 +868,18 @@ async function main(): Promise<void> {
         threadMode: params.threadMode ?? ("aggregate" as const),
       };
 
-      if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await doSyncSlack(db, provider, slackConfig);
-          const slackErrorLines = result.errors
-            .map((e) => `  #${e.channel}: ${e.error}`)
-            .join("\n");
-          const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
-          return (
-            `Slack sync complete.\n` +
-            `Channels: ${result.channels}\n` +
-            `Messages indexed: ${result.messagesIndexed}\n` +
-            `Threads indexed: ${result.threadsIndexed}` +
-            slackErrors
-          );
-        });
-      }
-
-      const result = await doSyncSlack(db, provider, slackConfig);
-
-      const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
-      const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
-      const text =
-        `Slack sync complete.\n` +
-        `Channels: ${result.channels}\n` +
-        `Messages indexed: ${result.messagesIndexed}\n` +
-        `Threads indexed: ${result.threadsIndexed}` +
-        slackErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return runMaybeAsync(params.async, "sync_connector", async () => {
+        const result = await doSyncSlack(db, provider, slackConfig);
+        const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
+        const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
+        return (
+          `Slack sync complete.\n` +
+          `Channels: ${result.channels}\n` +
+          `Messages indexed: ${result.messagesIndexed}\n` +
+          `Threads indexed: ${result.threadsIndexed}` +
+          slackErrors
+        );
+      });
     }),
   );
 
@@ -982,41 +900,18 @@ async function main(): Promise<void> {
     withErrorHandling(async (params) => {
       const { installPack } = await import("../core/packs.js");
 
-      if (params.async) {
-        return startAsyncTask("install_pack", async (signal, onProgress) => {
-          const result = await installPack(db, provider, params.nameOrPath, {
-            registryUrl: params.registryUrl,
-            onProgress: (current, total) => {
-              if (signal.aborted) throw new Error("Task cancelled");
-              onProgress(current, total);
-            },
-          });
-          return result.alreadyInstalled
-            ? `Pack "${result.packName}" is already installed.`
-            : `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`;
-        });
-      }
-
-      const result = await installPack(db, provider, params.nameOrPath, {
-        registryUrl: params.registryUrl,
-      });
-
-      if (result.alreadyInstalled) {
-        return {
-          content: [
-            { type: "text" as const, text: `Pack "${result.packName}" is already installed.` },
-          ],
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`,
+      return runMaybeAsync(params.async, "install_pack", async (signal, onProgress) => {
+        const result = await installPack(db, provider, params.nameOrPath, {
+          registryUrl: params.registryUrl,
+          onProgress: (current, total) => {
+            if (signal.aborted) throw new Error("Task cancelled");
+            onProgress(current, total);
           },
-        ],
-      };
+        });
+        return result.alreadyInstalled
+          ? `Pack "${result.packName}" is already installed.`
+          : `Pack "${result.packName}" installed successfully (${result.documentsInstalled} documents).`;
+      });
     }),
   );
 
@@ -1036,20 +931,18 @@ async function main(): Promise<void> {
         const { listAvailablePacks } = await import("../core/packs.js");
         const packs = await listAvailablePacks(params.registryUrl);
         if (packs.length === 0) {
-          return {
-            content: [{ type: "text" as const, text: "No packs available in the registry." }],
-          };
+          return textResult("No packs available in the registry.");
         }
         const text = packs
           .map((p) => `- **${p.name}** v${p.version} — ${p.description} (${p.docCount} docs)`)
           .join("\n");
-        return { content: [{ type: "text" as const, text: `## Available Packs\n\n${text}` }] };
+        return textResult(`## Available Packs\n\n${text}`);
       }
 
       const { listInstalledPacks } = await import("../core/packs.js");
       const packs = listInstalledPacks(db);
       if (packs.length === 0) {
-        return { content: [{ type: "text" as const, text: "No packs installed." }] };
+        return textResult("No packs installed.");
       }
       const text = packs
         .map(
@@ -1057,7 +950,7 @@ async function main(): Promise<void> {
             `- **${p.name}** v${p.version} — ${p.description ?? ""} (${p.docCount} docs, installed ${p.installedAt})`,
         )
         .join("\n");
-      return { content: [{ type: "text" as const, text: `## Installed Packs\n\n${text}` }] };
+      return textResult(`## Installed Packs\n\n${text}`);
     }),
   );
 
@@ -1086,37 +979,20 @@ async function main(): Promise<void> {
         excludeSections: [] as string[],
       };
 
-      if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncOneNote(db, provider, oneNoteConfig);
-          const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-          const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
-          return (
-            `OneNote sync complete.\n` +
-            `Notebooks: ${result.notebooks}\n` +
-            `Sections: ${result.sections}\n` +
-            `Pages added: ${result.pagesAdded}\n` +
-            `Pages updated: ${result.pagesUpdated}\n` +
-            `Pages deleted: ${result.pagesDeleted}` +
-            oneNoteErrors
-          );
-        });
-      }
-
-      const result = await syncOneNote(db, provider, oneNoteConfig);
-
-      const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-      const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
-      const text =
-        `OneNote sync complete.\n` +
-        `Notebooks: ${result.notebooks}\n` +
-        `Sections: ${result.sections}\n` +
-        `Pages added: ${result.pagesAdded}\n` +
-        `Pages updated: ${result.pagesUpdated}\n` +
-        `Pages deleted: ${result.pagesDeleted}` +
-        oneNoteErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return runMaybeAsync(params.async, "sync_connector", async () => {
+        const result = await syncOneNote(db, provider, oneNoteConfig);
+        const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+        const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
+        return (
+          `OneNote sync complete.\n` +
+          `Notebooks: ${result.notebooks}\n` +
+          `Sections: ${result.sections}\n` +
+          `Pages added: ${result.pagesAdded}\n` +
+          `Pages updated: ${result.pagesUpdated}\n` +
+          `Pages deleted: ${result.pagesDeleted}` +
+          oneNoteErrors
+        );
+      });
     }),
   );
 
@@ -1150,31 +1026,17 @@ async function main(): Promise<void> {
         excludePages: params.excludePages,
       };
 
-      if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncNotion(db, provider, notionConfig);
-          const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-          const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
-          return (
-            `Notion sync complete.\n` +
-            `Pages indexed: ${result.pagesIndexed}\n` +
-            `Databases indexed: ${result.databasesIndexed}` +
-            notionErrors
-          );
-        });
-      }
-
-      const result = await syncNotion(db, provider, notionConfig);
-
-      const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
-      const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
-      const text =
-        `Notion sync complete.\n` +
-        `Pages indexed: ${result.pagesIndexed}\n` +
-        `Databases indexed: ${result.databasesIndexed}` +
-        notionErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return runMaybeAsync(params.async, "sync_connector", async () => {
+        const result = await syncNotion(db, provider, notionConfig);
+        const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
+        const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
+        return (
+          `Notion sync complete.\n` +
+          `Pages indexed: ${result.pagesIndexed}\n` +
+          `Databases indexed: ${result.databasesIndexed}` +
+          notionErrors
+        );
+      });
     }),
   );
 
@@ -1200,33 +1062,18 @@ async function main(): Promise<void> {
         excludePatterns: [] as string[],
       };
 
-      if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncObsidianVault(db, provider, obsidianConfig);
-          const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
-          const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
-          return (
-            `Obsidian vault sync complete.\n` +
-            `Added: ${result.added}\n` +
-            `Updated: ${result.updated}\n` +
-            `Deleted: ${result.deleted}` +
-            obsidianErrors
-          );
-        });
-      }
-
-      const result = await syncObsidianVault(db, provider, obsidianConfig);
-
-      const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
-      const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
-      const text =
-        `Obsidian vault sync complete.\n` +
-        `Added: ${result.added}\n` +
-        `Updated: ${result.updated}\n` +
-        `Deleted: ${result.deleted}` +
-        obsidianErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return runMaybeAsync(params.async, "sync_connector", async () => {
+        const result = await syncObsidianVault(db, provider, obsidianConfig);
+        const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
+        const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
+        return (
+          `Obsidian vault sync complete.\n` +
+          `Added: ${result.added}\n` +
+          `Updated: ${result.updated}\n` +
+          `Deleted: ${result.deleted}` +
+          obsidianErrors
+        );
+      });
     }),
   );
 
@@ -1261,34 +1108,19 @@ async function main(): Promise<void> {
         excludeSpaces: params.excludeSpaces,
       };
 
-      if (params.async) {
-        return startAsyncTask("sync_connector", async () => {
-          const result = await syncConfluence(db, provider, confluenceConfig);
-          const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
-          const confluenceErrors =
-            result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
-          return (
-            `Confluence sync complete.\n` +
-            `Spaces: ${result.spaces}\n` +
-            `Pages indexed: ${result.pagesIndexed}\n` +
-            `Pages updated: ${result.pagesUpdated}` +
-            confluenceErrors
-          );
-        });
-      }
-
-      const result = await syncConfluence(db, provider, confluenceConfig);
-
-      const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
-      const confluenceErrors = result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
-      const text =
-        `Confluence sync complete.\n` +
-        `Spaces: ${result.spaces}\n` +
-        `Pages indexed: ${result.pagesIndexed}\n` +
-        `Pages updated: ${result.pagesUpdated}` +
-        confluenceErrors;
-
-      return { content: [{ type: "text" as const, text }] };
+      return runMaybeAsync(params.async, "sync_connector", async () => {
+        const result = await syncConfluence(db, provider, confluenceConfig);
+        const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
+        const confluenceErrors =
+          result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";
+        return (
+          `Confluence sync complete.\n` +
+          `Spaces: ${result.spaces}\n` +
+          `Pages indexed: ${result.pagesIndexed}\n` +
+          `Pages updated: ${result.pagesUpdated}` +
+          confluenceErrors
+        );
+      });
     }),
   );
 
@@ -1319,7 +1151,7 @@ async function main(): Promise<void> {
         "Knowledge gaps:",
         ...gaps.map((g) => `  ${g.count}x  ${g.query} (last: ${g.lastSearched})`),
       ];
-      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      return textResult(lines.join("\n"));
     }),
   );
 
@@ -1344,14 +1176,9 @@ async function main(): Promise<void> {
         params.label,
       );
       const linkLabel = link.label ? ` — ${link.label}` : "";
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `✓ Link created: ${link.sourceId} → ${link.targetId} (${link.linkType})${linkLabel}`,
-          },
-        ],
-      };
+      return textResult(
+        `✓ Link created: ${link.sourceId} → ${link.targetId} (${link.linkType})${linkLabel}`,
+      );
     }),
   );
 
@@ -1365,7 +1192,7 @@ async function main(): Promise<void> {
     withErrorHandling((params) => {
       const { outgoing, incoming } = getDocumentLinks(db, params.documentId);
       if (outgoing.length === 0 && incoming.length === 0) {
-        return { content: [{ type: "text" as const, text: "No links found for this document." }] };
+        return textResult("No links found for this document.");
       }
 
       const lines: string[] = [];
@@ -1383,7 +1210,7 @@ async function main(): Promise<void> {
           lines.push(`  ← [${l.linkType}] ${l.sourceTitle} (${l.sourceId})${inLabel}`);
         }
       }
-      return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      return textResult(lines.join("\n"));
     }),
   );
 
@@ -1396,7 +1223,7 @@ async function main(): Promise<void> {
     },
     withErrorHandling((params) => {
       deleteLink(db, params.linkId);
-      return { content: [{ type: "text" as const, text: `✓ Link ${params.linkId} deleted.` }] };
+      return textResult(`✓ Link ${params.linkId} deleted.`);
     }),
   );
 
@@ -1431,14 +1258,7 @@ async function main(): Promise<void> {
         query,
         Object.keys(filters).length > 0 ? filters : undefined,
       );
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(saved, null, 2),
-          },
-        ],
-      };
+      return textResult(JSON.stringify(saved, null, 2));
     }),
   );
 
@@ -1452,14 +1272,7 @@ async function main(): Promise<void> {
     },
     withErrorHandling((params) => {
       const suggestions = suggestTags(db, params.documentId, params.maxSuggestions);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ documentId: params.documentId, suggestions }, null, 2),
-          },
-        ],
-      };
+      return textResult(JSON.stringify({ documentId: params.documentId, suggestions }, null, 2));
     }),
   );
 
@@ -1470,14 +1283,9 @@ async function main(): Promise<void> {
     {},
     withErrorHandling(() => {
       const searches = listSavedSearches(db);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: searches.length === 0 ? "No saved searches." : JSON.stringify(searches, null, 2),
-          },
-        ],
-      };
+      return textResult(
+        searches.length === 0 ? "No saved searches." : JSON.stringify(searches, null, 2),
+      );
     }),
   );
 
@@ -1490,14 +1298,7 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       const { search, results } = await runSavedSearch(db, provider, params.nameOrId);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ search, resultCount: results.length, results }, null, 2),
-          },
-        ],
-      };
+      return textResult(JSON.stringify({ search, resultCount: results.length, results }, null, 2));
     }),
   );
 
@@ -1510,9 +1311,7 @@ async function main(): Promise<void> {
     },
     withErrorHandling((params) => {
       deleteSavedSearch(db, params.nameOrId);
-      return {
-        content: [{ type: "text" as const, text: `✓ Saved search "${params.nameOrId}" deleted.` }],
-      };
+      return textResult(`✓ Saved search "${params.nameOrId}" deleted.`);
     }),
   );
 
@@ -1539,9 +1338,7 @@ async function main(): Promise<void> {
         params.events as WebhookEvent[],
         params.secret,
       );
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(redactWebhook(webhook), null, 2) }],
-      };
+      return textResult(JSON.stringify(redactWebhook(webhook), null, 2));
     }),
   );
 
@@ -1552,11 +1349,7 @@ async function main(): Promise<void> {
     {},
     withErrorHandling(() => {
       const webhooks = listWebhooks(db);
-      return {
-        content: [
-          { type: "text" as const, text: JSON.stringify(webhooks.map(redactWebhook), null, 2) },
-        ],
-      };
+      return textResult(JSON.stringify(webhooks.map(redactWebhook), null, 2));
     }),
   );
 
@@ -1569,9 +1362,7 @@ async function main(): Promise<void> {
     },
     withErrorHandling((params) => {
       deleteWebhook(db, params.id);
-      return {
-        content: [{ type: "text" as const, text: `✓ Webhook "${params.id}" deleted.` }],
-      };
+      return textResult(`✓ Webhook "${params.id}" deleted.`);
     }),
   );
 
@@ -1585,16 +1376,11 @@ async function main(): Promise<void> {
     withErrorHandling((params) => {
       const task = taskRegistry.get(params.taskId);
       if (!task) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Task ${params.taskId} not found or has expired (tasks are kept for 1 hour after completion).`,
-            },
-          ],
-        };
+        return textResult(
+          `Task ${params.taskId} not found or has expired (tasks are kept for 1 hour after completion).`,
+        );
       }
-      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+      return textResult(JSON.stringify(task, null, 2));
     }),
   );
 
@@ -1608,35 +1394,16 @@ async function main(): Promise<void> {
     withErrorHandling((params) => {
       const outcome = taskRegistry.cancel(params.taskId);
       if (outcome === "not_found") {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Task ${params.taskId} not found or has expired.`,
-            },
-          ],
-        };
+        return textResult(`Task ${params.taskId} not found or has expired.`);
       }
       if (outcome === "already_terminal") {
         const task = taskRegistry.get(params.taskId);
         const status = task?.status ?? "unknown";
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Task ${params.taskId} cannot be cancelled (current status: ${status}).`,
-            },
-          ],
-        };
+        return textResult(`Task ${params.taskId} cannot be cancelled (current status: ${status}).`);
       }
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Cancellation requested for task ${params.taskId}. Running operations will stop at the next checkpoint.`,
-          },
-        ],
-      };
+      return textResult(
+        `Cancellation requested for task ${params.taskId}. Running operations will stop at the next checkpoint.`,
+      );
     }),
   );
 
