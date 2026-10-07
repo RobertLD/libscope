@@ -34,6 +34,8 @@ function leaf<T extends z.ZodType>(schema: T, meta: ConfigKeyMeta = {}): T {
 export const EMBEDDING_PROVIDERS = ["local", "ollama", "openai"] as const;
 export const LLM_PROVIDERS = ["auto", "openai", "anthropic", "ollama", "passthrough"] as const;
 export const LOG_LEVELS = ["debug", "info", "warn", "error", "silent"] as const;
+/** Values of `mcp.toolsets`. "core" is always on; "all" enables every optional toolset. */
+export const MCP_TOOLSET_SETTINGS = ["core", "admin", "all"] as const;
 
 /** Ollama server URL used when embedding.url and llm.url are not set. */
 export const DEFAULT_OLLAMA_URL = "http://localhost:11434";
@@ -135,6 +137,17 @@ export const ConfigSchema = z.object({
   logging: z.object({
     level: leaf(z.enum(LOG_LEVELS).default("info").describe("Log level.")),
   }),
+  mcp: z.object({
+    toolsets: leaf(
+      z
+        .array(z.enum(MCP_TOOLSET_SETTINGS))
+        .default([])
+        .describe(
+          "Optional MCP toolsets (comma list). admin adds sync, install-pack, list-packs and " +
+            "reindex-documents; all enables every optional toolset. The core tools are always on.",
+        ),
+    ),
+  }),
 });
 
 type SchemaOutput = z.output<typeof ConfigSchema>;
@@ -159,8 +172,10 @@ export interface ConfigKeySpec {
   /** Default value, or undefined when the key has no fixed default. */
   defaultValue: unknown;
   defaultText: string | undefined;
-  /** "string", "integer", "boolean", or the enum values. */
-  type: "string" | "integer" | "boolean" | readonly string[];
+  /** "string", "integer", "boolean", "list" (of `listValues`), or the enum values. */
+  type: "string" | "integer" | "boolean" | "list" | readonly string[];
+  /** Allowed items of a "list" key. */
+  listValues?: readonly string[] | undefined;
 }
 
 /** `indexing.allowPrivateUrls` -> `LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS`. */
@@ -178,12 +193,23 @@ function baseSchema(schema: z.ZodType): z.ZodType {
   return current;
 }
 
+function enumValues(schema: z.ZodType): string[] | undefined {
+  return schema instanceof z.ZodEnum ? schema.options.map(String) : undefined;
+}
+
 function leafType(schema: z.ZodType): ConfigKeySpec["type"] {
   const base = baseSchema(schema);
-  if (base instanceof z.ZodEnum) return base.options.map(String);
+  if (base instanceof z.ZodArray) return "list";
+  const values = enumValues(base);
+  if (values) return values;
   if (base instanceof z.ZodBoolean) return "boolean";
   if (base instanceof z.ZodNumber) return "integer";
   return "string";
+}
+
+function listItemValues(schema: z.ZodType): string[] | undefined {
+  const base = baseSchema(schema);
+  return base instanceof z.ZodArray ? enumValues(base.element as z.ZodType) : undefined;
 }
 
 function buildSpecs(): ConfigKeySpec[] {
@@ -205,6 +231,7 @@ function buildSpecs(): ConfigKeySpec[] {
         defaultValue: parsedDefault.success ? parsedDefault.data : undefined,
         defaultText: meta.defaultText,
         type: leafType(schema),
+        listValues: listItemValues(schema),
       });
     }
   }
@@ -229,7 +256,7 @@ export function getConfigKeySpec(key: string): ConfigKeySpec | undefined {
 /** One row of the generated configuration reference. */
 export interface ConfigKeyTableRow {
   key: ConfigKey;
-  /** "string", "integer", "boolean", or the allowed values joined with " | ". */
+  /** "string", "integer", "boolean", "list of a | b", or the allowed values joined with " | ". */
   type: string;
   /** Default value as text ("" when none). */
   default: string;
@@ -245,14 +272,20 @@ function defaultAsText(spec: ConfigKeySpec): string {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
+  if (Array.isArray(value)) return value.length > 0 ? value.join(",") : "none";
   return "";
+}
+
+function typeAsText(spec: ConfigKeySpec): string {
+  if (spec.type === "list") return `list of ${(spec.listValues ?? ["string"]).join(" | ")}`;
+  return typeof spec.type === "string" ? spec.type : spec.type.join(" | ");
 }
 
 /** The key table (for docs and `config` help): key, type, default, env vars, secret, description. */
 export function getConfigKeyTable(): ConfigKeyTableRow[] {
   return CONFIG_KEY_SPECS.map((spec) => ({
     key: spec.key,
-    type: typeof spec.type === "string" ? spec.type : spec.type.join(" | "),
+    type: typeAsText(spec),
     default: defaultAsText(spec),
     env: [...spec.env],
     secret: spec.secret,

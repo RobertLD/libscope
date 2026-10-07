@@ -80,7 +80,13 @@ If you're using [workspaces](/guide/configuration#workspaces), pass the workspac
 
 ## Admin Tools
 
-The server starts with 11 core tools. To also give the assistant `sync`, `install-pack`, `list-packs` and `reindex-documents`, set `LIBSCOPE_MCP_TOOLSETS` in the server's environment:
+The server starts with 11 core tools. To also give the assistant `sync`, `install-pack`, `list-packs` and `reindex-documents`, enable the `admin` toolset with the `mcp.toolsets` config key:
+
+```bash
+libscope config set mcp.toolsets admin
+```
+
+You can also set the environment variable `LIBSCOPE_MCP_TOOLSETS` (a comma-separated list) in the server's environment:
 
 ```json
 {
@@ -112,7 +118,7 @@ See the [MCP Tools Reference](/reference/mcp-tools) for all parameters.
 - **`link-documents`**: create (`action: "create"`) or delete (`action: "delete"`) a link between documents.
 - **`task`**: status, cancel or list of background tasks started with `async: true`.
 
-**Admin tools** (with `LIBSCOPE_MCP_TOOLSETS=admin`)
+**Admin tools** (with `mcp.toolsets` set to `admin` or `all`)
 
 - **`sync`**: sync one saved connector connection, or all of them. Set up connections with `libscope connect`; the tool does not accept credentials.
 - **`install-pack`**, **`list-packs`**: manage knowledge packs.

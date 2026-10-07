@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { McpToolsetSetting } from "../../src/config.js";
 import type { LlmProvider } from "../../src/core/rag.js";
 import { createDatabase } from "../../src/db/connection.js";
 import { createVectorTable, runMigrations } from "../../src/db/schema.js";
@@ -21,7 +22,7 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...orig, homedir: (): string => tempHome };
 });
 
-const { createMcpServer, parseToolsets, buildInstructions } =
+const { createMcpServer, resolveToolsets, buildInstructions } =
   await import("../../src/mcp/server.js");
 const { saveConnectorSettings } = await import("../../src/connectors/saved-config.js");
 const { taskRegistry } = await import("../../src/core/tasks.js");
@@ -68,7 +69,7 @@ function passthroughContext(): TestContext {
 
 async function connect(
   t: TestContext,
-  toolsets: string[] = [],
+  toolsets: McpToolsetSetting[] = [],
 ): Promise<{ client: Client; close: () => Promise<void> }> {
   const mcp = createMcpServer({ ctx: t.ctx, toolsets });
   const client = new Client({ name: "test-client", version: "1.0.0" });
@@ -233,7 +234,8 @@ describe("MCP server: tool list", () => {
   });
 
   it("adds the admin toolset only when enabled", async () => {
-    for (const toolsets of [["admin"], ["all"], ["core", "Admin"]]) {
+    const settings: McpToolsetSetting[][] = [["admin"], ["all"], ["core", "admin"]];
+    for (const toolsets of settings) {
       const { client, close } = await connect(t, toolsets);
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name)).toEqual([...CORE_TOOLS, ...ADMIN_TOOLS]);
@@ -244,19 +246,22 @@ describe("MCP server: tool list", () => {
     }
   });
 
-  it("reads LIBSCOPE_MCP_TOOLSETS when no toolsets are passed", () => {
-    vi.stubEnv("LIBSCOPE_MCP_TOOLSETS", "admin");
-    const mcp = createMcpServer({ ctx: t.ctx });
-    expect(mcp.tools).toEqual([...CORE_TOOLS, ...ADMIN_TOOLS]);
-    vi.stubEnv("LIBSCOPE_MCP_TOOLSETS", "");
+  it("reads mcp.toolsets from config when no toolsets are passed", () => {
+    const withAdmin = makeContext({
+      db: t.db,
+      surface: "mcp",
+      llm: undefined,
+      config: { ...testConfig(), mcp: { toolsets: ["admin"] } },
+    });
+    expect(createMcpServer({ ctx: withAdmin.ctx }).tools).toEqual([...CORE_TOOLS, ...ADMIN_TOOLS]);
     expect(createMcpServer({ ctx: t.ctx }).tools).toEqual(CORE_TOOLS);
   });
 
-  it("parseToolsets accepts a comma list, 'all' and ignores unknown names", () => {
-    expect([...parseToolsets("admin")]).toEqual(["admin"]);
-    expect([...parseToolsets(" ALL ")]).toEqual(["admin"]);
-    expect([...parseToolsets("bogus,core")]).toEqual([]);
-    expect([...parseToolsets(undefined)]).toEqual([]);
+  it("resolveToolsets expands 'all' and ignores 'core'", () => {
+    expect([...resolveToolsets(["admin"])]).toEqual(["admin"]);
+    expect([...resolveToolsets(["all"])]).toEqual(["admin"]);
+    expect([...resolveToolsets(["core"])]).toEqual([]);
+    expect([...resolveToolsets([])]).toEqual([]);
   });
 
   it("omits ask when no LLM is configured and passthrough is off", async () => {
@@ -421,6 +426,10 @@ describe("MCP server: tool calls", () => {
     expect(status).toContain("Background (documentId: ");
 
     expect(await callError(client, "submit-document", {})).toContain("Provide content");
+    // Checked before a background task starts: the error comes back at once, with no taskId.
+    const background = await callError(client, "submit-document", { async: true });
+    expect(background).toContain("Provide content");
+    expect(background).not.toContain("taskId");
     expect(await callError(client, "submit-document", { url: "/etc/passwd" })).toMatch(/url/);
     expect(await callError(client, "submit-document", { title: "T", content: "" })).toMatch(
       /content/,

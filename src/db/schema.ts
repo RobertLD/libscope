@@ -12,7 +12,7 @@ import {
   writeEmbeddingIdentity,
 } from "./index-meta.js";
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 /** Copy every chunk into chunks_fts, keyed by the chunk's rowid. */
 const FTS_BACKFILL_SQL = `
@@ -330,6 +330,22 @@ const MIGRATIONS: Record<number, string> = {
     ${INDEX_META_DDL};
 
     INSERT INTO schema_version (version) VALUES (18);
+  `,
+  // Saved search filters use the search operation's field names: "source" -> "sourceType".
+  // Rows with invalid JSON or without "source" are left as they are.
+  19: `
+    UPDATE saved_searches
+    SET filters = json_remove(
+      json_set(filters, '$.sourceType', json_extract(filters, '$.source')),
+      '$.source'
+    )
+    WHERE CASE
+      WHEN json_valid(filters) THEN json_type(filters, '$.source') IS NOT NULL
+        AND json_type(filters, '$.sourceType') IS NULL
+      ELSE 0
+    END;
+
+    INSERT INTO schema_version (version) VALUES (19);
   `,
 };
 

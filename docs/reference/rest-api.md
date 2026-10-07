@@ -3,7 +3,7 @@
 Start the REST API server:
 
 ```bash
-libscope serve --api --port 3378
+libscope serve api --port 3378
 ```
 
 Every route under `/api/v1` runs one LibScope operation: the same operation, with the same parameter names, defaults and validation, as the CLI, the MCP server and the SDK. The OpenAPI 3.1 document at `GET /openapi.json` is generated from the operations, so it always matches the server.

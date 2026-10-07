@@ -227,11 +227,12 @@ const CASES: Record<string, RouteCases> = {
     ok: () => ({ path: `${V}/sync`, body: { all: true } }),
     okStatus: 202,
     bad: () => ({ path: `${V}/sync`, body: { name: "bad name!" } }),
+    missing: () => ({ path: `${V}/sync`, body: { name: "nope" } }),
   },
   "DELETE /api/v1/connections/:name": {
     ok: () => ({ path: `${V}/connections/notes` }),
-    // An unknown name with no saved connection is a 400 (unknown connector type), not a 404.
-    bad: () => ({ path: `${V}/connections/nope` }),
+    bad: () => ({ path: `${V}/connections/notes`, query: { type: "nope" } }),
+    missing: () => ({ path: `${V}/connections/nope` }),
   },
 
   "GET /api/v1/overview": { ok: () => ({ path: `${V}/overview` }) },
@@ -496,16 +497,19 @@ describe("REST routes generated from operations", () => {
     expect((tagged.body.data as { total: number }).total).toBe(1);
   });
 
-  it("refuses local files over REST (the add task fails)", async () => {
-    const started = await send("POST", { path: `${V}/documents`, body: { source: "/etc/hosts" } });
-    const { taskId } = started.body.data as { taskId: string };
-    await vi.waitFor(async () => {
-      const polled = await send("GET", { path: `${V}/tasks/${taskId}` });
-      expect(polled.body.data).toMatchObject({
-        status: "failed",
-        error: expect.stringContaining("only available from the CLI") as string,
-      });
+  it("refuses local paths over REST with 400 before any task starts", async () => {
+    const tasksBefore = taskRegistry.list().length;
+    for (const source of ["/etc/hosts", "/no/such/path"]) {
+      const reply = await send("POST", { path: `${V}/documents`, body: { source } });
+      expect(reply.status).toBe(400);
+      expect(reply.body.error?.message).toContain("only available from the CLI");
+    }
+    const noTopic = await send("POST", {
+      path: `${V}/documents`,
+      body: { title: "T", content: "C", topic: "nope" },
     });
+    expect(noTopic.status).toBe(404);
+    expect(taskRegistry.list()).toHaveLength(tasksBefore);
   });
 
   it("answers 400 for a malformed JSON body and a non-object body", async () => {

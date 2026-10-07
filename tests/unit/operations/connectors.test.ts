@@ -100,7 +100,7 @@ describe("connector operations", () => {
     const result = await run(ops.disconnectOperation, t.ctx, { name: "slack" });
     expect(result).toMatchObject({ type: "slack", documentsRemoved: 0, configRemoved: false });
     await expect(run(ops.disconnectOperation, t.ctx, { name: "unknown" })).rejects.toBeInstanceOf(
-      ValidationError,
+      NotFoundError,
     );
     saveVault("notes");
     await expect(

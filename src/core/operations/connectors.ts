@@ -4,6 +4,7 @@ import { listNamedConnectorConfigs } from "../../connectors/index.js";
 import {
   disconnectConnection,
   listConnections,
+  savedConnectionType,
   syncConnection,
   type ConnectorSyncSummary,
 } from "../../connectors/registry.js";
@@ -14,7 +15,7 @@ import { defineOperation } from "./types.js";
 const connectionName = z
   .string()
   .regex(/^[\w-]+$/, "letters, digits, '_' and '-' only")
-  .describe("Saved connection name (see list-connections)");
+  .describe("Name of a saved connection");
 
 export const listConnectionsOperation = defineOperation({
   name: "list-connections",
@@ -40,10 +41,13 @@ export const syncOperation = defineOperation({
   }),
   annotations: { longRunning: true },
   http: { method: "POST", path: "/sync" },
-  async handler(ctx, input): Promise<{ items: SyncOutcome[] }> {
+  validate(_ctx, input) {
     if ((input.name === undefined) === !input.all) {
       throw new ValidationError("Give either a connection name or all: true");
     }
+    if (input.name !== undefined) savedConnectionType(input.name);
+  },
+  async handler(ctx, input): Promise<{ items: SyncOutcome[] }> {
     if (input.name !== undefined) {
       const result = await syncConnection(ctx.db, ctx.provider, input.name, { signal: ctx.signal });
       return { items: [{ ...result, status: "completed" }] };

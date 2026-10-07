@@ -5,17 +5,17 @@ LibScope includes a local web dashboard for browsing, searching, and managing yo
 ## Starting the Dashboard
 
 ```bash
-libscope serve --dashboard
+libscope serve dashboard
 ```
 
 This starts an HTTP server at `http://localhost:3377` by default.
 
 ```bash
 # Use a custom port
-libscope serve --dashboard --port 8080
+libscope serve dashboard --port 8080
 
 # Bind to all interfaces (for LAN access)
-libscope serve --dashboard --host 0.0.0.0 --port 3377
+libscope serve dashboard --host 0.0.0.0 --port 3377
 ```
 
 The dashboard page needs no external files. The knowledge graph page (`/graph`) loads d3 from `d3js.org`.
@@ -75,7 +75,7 @@ The dashboard pages read their data from a small JSON API on the same server. Ea
 | `GET /api/search?q&limit&topic`               | `search`                                      |
 | `GET /api/graph?threshold&maxNodes&topic&tag` | `graph`                                       |
 
-These URLs are for the dashboard pages. For your own scripts, use the [REST API](../reference/rest-api.md) (`libscope serve --api`), which has every operation, API-key authentication and an OpenAPI document.
+These URLs are for the dashboard pages. For your own scripts, use the [REST API](../reference/rest-api.md) (`libscope serve api`), which has every operation, API-key authentication and an OpenAPI document.
 
 ## Rate Limiting
 
@@ -87,10 +87,10 @@ The dashboard, the REST API and the MCP server are separate servers. You can sta
 
 ```bash
 # Dashboard in one terminal
-libscope serve --dashboard --port 3377
+libscope serve dashboard --port 3377
 
 # REST API in another
-libscope serve --api --port 3378
+libscope serve api --port 3378
 
 # MCP server (or configure it in your AI client)
 libscope serve

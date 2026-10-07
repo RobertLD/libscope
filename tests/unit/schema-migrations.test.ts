@@ -191,6 +191,38 @@ describe("schema migrations", () => {
     });
   });
 
+  describe("migration 19: saved search filter names", () => {
+    it("renames source to sourceType and keeps other rows and keys", () => {
+      const db = newDb();
+      runMigrations(db, 18);
+      const insert = db.prepare(
+        "INSERT INTO saved_searches (id, name, query, filters) VALUES (?, ?, 'q', ?)",
+      );
+      insert.run("a", "a", JSON.stringify({ source: "library", topic: "t", limit: 5 }));
+      insert.run("b", "b", JSON.stringify({ library: "react" }));
+      insert.run("c", "c", null);
+      insert.run("d", "d", "{not json");
+
+      runMigrations(db);
+
+      const filters = (id: string): string | null =>
+        (
+          db.prepare("SELECT filters FROM saved_searches WHERE id = ?").get(id) as {
+            filters: string | null;
+          }
+        ).filters;
+      expect(JSON.parse(filters("a") ?? "null")).toEqual({
+        sourceType: "library",
+        topic: "t",
+        limit: 5,
+      });
+      expect(JSON.parse(filters("b") ?? "null")).toEqual({ library: "react" });
+      expect(filters("c")).toBeNull();
+      expect(filters("d")).toBe("{not json");
+      expect(count(db, "saved_searches")).toBe(4);
+    });
+  });
+
   describe("migration 18: index_meta table", () => {
     it("creates an empty index_meta table on upgrade", () => {
       const db = newDb();

@@ -3,13 +3,13 @@ import {
   countSavedSearches,
   createSavedSearch,
   deleteSavedSearch,
+  getSavedSearch,
   listSavedSearches,
-  runSavedSearch,
+  recordSavedSearchRun,
 } from "../saved-searches.js";
-import type { SearchOptions } from "../search.js";
-import { topicForFilter } from "./documents.js";
+import { searchOperation } from "./search.js";
 import * as s from "./schemas.js";
-import { defineOperation, type ListResult } from "./types.js";
+import { defineOperation, runOperation, type ListResult } from "./types.js";
 
 const savedSearch = z.string().min(1).describe("Saved search name or ID");
 
@@ -26,19 +26,12 @@ export const saveSearchOperation = defineOperation({
   }),
   http: { method: "POST", path: "/searches" },
   handler(ctx, input) {
-    const filters: Omit<SearchOptions, "query"> = {};
-    const topic = topicForFilter(ctx, input.topic);
-    if (topic !== undefined) filters.topic = topic;
-    if (input.library !== undefined) filters.library = input.library;
-    if (input.version !== undefined) filters.version = input.version;
-    if (input.sourceType !== undefined) filters.source = input.sourceType;
-    if (input.tags !== undefined) filters.tags = input.tags;
-    if (input.minRating !== undefined) filters.minRating = input.minRating;
-    if (input.limit !== undefined) filters.limit = input.limit;
+    // Filters are stored under the search operation's field names and run through it.
+    const { name, query, ...filters } = input;
     return createSavedSearch(
       ctx.db,
-      input.name,
-      input.query,
+      name,
+      query,
       Object.keys(filters).length > 0 ? filters : undefined,
     );
   },
@@ -67,8 +60,12 @@ export const runSavedSearchOperation = defineOperation({
   annotations: { readOnly: true },
   http: { method: "POST", path: "/searches/:search/run" },
   async handler(ctx, input) {
-    const { search, results } = await runSavedSearch(ctx.db, ctx.provider, input.search);
-    return { search, items: results };
+    const saved = getSavedSearch(ctx.db, input.search);
+    const { items } = await runOperation(searchOperation, ctx, {
+      ...saved.filters,
+      query: saved.query,
+    });
+    return { search: recordSavedSearchRun(ctx.db, saved.id, items.length), items };
   },
 });
 

@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import type { EmbeddingProvider } from "../providers/embedding.js";
-import { searchDocuments } from "./search.js";
-import type { SearchOptions, SearchResult } from "./search.js";
 import { ValidationError, NotFoundError } from "../errors.js";
 import { getLogger } from "../logger.js";
+
+/** Stored filters: input fields of the `search` operation (same names). */
+export interface SavedSearchFilters {
+  topic?: string | undefined;
+  library?: string | undefined;
+  version?: string | undefined;
+  sourceType?: string | undefined;
+  tags?: string[] | undefined;
+  minRating?: number | undefined;
+  limit?: number | undefined;
+}
 
 export interface SavedSearch {
   id: string;
   name: string;
   query: string;
-  filters: Omit<SearchOptions, "query"> | null;
+  filters: SavedSearchFilters | null;
   createdAt: string;
   lastRunAt: string | null;
   resultCount: number;
@@ -27,10 +35,10 @@ interface SavedSearchRow {
 }
 
 function rowToSavedSearch(row: SavedSearchRow): SavedSearch {
-  let filters: Omit<SearchOptions, "query"> | null = null;
+  let filters: SavedSearchFilters | null = null;
   if (row.filters) {
     try {
-      filters = JSON.parse(row.filters) as Omit<SearchOptions, "query">;
+      filters = JSON.parse(row.filters) as SavedSearchFilters;
     } catch {
       getLogger().warn({ id: row.id }, "Failed to parse saved search filters JSON; using null");
     }
@@ -50,7 +58,7 @@ export function createSavedSearch(
   db: Database.Database,
   name: string,
   query: string,
-  filters?: Omit<SearchOptions, "query">,
+  filters?: SavedSearchFilters,
 ): SavedSearch {
   const trimmedName = name.trim();
   const trimmedQuery = query.trim();
@@ -117,24 +125,14 @@ export function deleteSavedSearch(db: Database.Database, id: string): void {
   }
 }
 
-export async function runSavedSearch(
+/** Record a run of saved search `id` (time and result count); returns the updated search. */
+export function recordSavedSearchRun(
   db: Database.Database,
-  provider: EmbeddingProvider,
   id: string,
-): Promise<{ search: SavedSearch; results: SearchResult[] }> {
-  const search = getSavedSearch(db, id);
-
-  const options: SearchOptions = {
-    query: search.query,
-    ...search.filters,
-  };
-
-  const { results } = await searchDocuments(db, provider, options);
-
+  resultCount: number,
+): SavedSearch {
   db.prepare(
     "UPDATE saved_searches SET last_run_at = datetime('now'), result_count = ? WHERE id = ?",
-  ).run(results.length, search.id);
-
-  const updated = getSavedSearch(db, search.id);
-  return { search: updated, results };
+  ).run(resultCount, id);
+  return getSavedSearch(db, id);
 }

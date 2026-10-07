@@ -272,7 +272,7 @@ The LLM integration in `src/core/rag.ts` supports OpenAI, Ollama, Anthropic, and
 
 ## Database Schema
 
-Key tables (schema version 18):
+Key tables (schema version 19):
 
 | Table               | Purpose                                            |
 | ------------------- | -------------------------------------------------- |

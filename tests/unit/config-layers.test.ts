@@ -91,6 +91,7 @@ describe("config layering (temp HOME and cwd)", () => {
         allowSelfSignedCerts: false,
       });
       expect(config.logging.level).toBe("info");
+      expect(config.mcp).toEqual({ toolsets: [] });
       expect(config.database).toEqual({});
       expect(config.openai).toBeUndefined();
       expect(config.anthropic).toBeUndefined();
@@ -287,6 +288,20 @@ describe("config layering (temp HOME and cwd)", () => {
       const config = load();
       expect(config.indexing.allowSelfSignedCerts).toBe(true);
       expect(config.indexing.maxDocumentSize).toBe(4096);
+    });
+
+    it("reads mcp.toolsets as an array or a comma list, and from LIBSCOPE_MCP_TOOLSETS", () => {
+      writeUserConfig({ mcp: { toolsets: ["admin"] } });
+      expect(load().mcp?.toolsets).toEqual(["admin"]);
+      writeUserConfig({ mcp: { toolsets: "core, all" } });
+      expect(load().mcp?.toolsets).toEqual(["core", "all"]);
+      expect(load({ LIBSCOPE_MCP_TOOLSETS: "admin" }).mcp?.toolsets).toEqual(["admin"]);
+    });
+
+    it("ignores an unknown mcp toolset with a warning", () => {
+      const warn = spyWarn();
+      expect(load({ LIBSCOPE_MCP_TOOLSETS: "admin,bogus" }).mcp?.toolsets).toEqual([]);
+      expect(messages(warn).some((m) => m.includes("LIBSCOPE_MCP_TOOLSETS"))).toBe(true);
     });
 
     it("accepts a custom embedding provider name in a file", () => {
