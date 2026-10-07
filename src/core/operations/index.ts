@@ -2,6 +2,7 @@ import { adminOperations } from "./admin.js";
 import { analyticsOperations } from "./analytics.js";
 import { connectorOperations } from "./connectors.js";
 import { documentOperations } from "./documents.js";
+import { graphOperations } from "./graph.js";
 import { linkOperations } from "./links.js";
 import { packOperations } from "./packs.js";
 import { savedSearchOperations } from "./searches.js";
@@ -17,6 +18,7 @@ export * from "./admin.js";
 export * from "./analytics.js";
 export * from "./connectors.js";
 export * from "./documents.js";
+export * from "./graph.js";
 export * from "./links.js";
 export * from "./packs.js";
 export * from "./searches.js";
@@ -31,6 +33,7 @@ export const OPERATIONS: readonly Operation[] = [
   ...documentOperations,
   ...searchOperations,
   ...linkOperations,
+  ...graphOperations,
   ...tagOperations,
   ...topicOperations,
   ...savedSearchOperations,

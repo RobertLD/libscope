@@ -120,3 +120,99 @@ These operations are available from the CLI, the REST API and the SDK, not over 
 | `create-webhook`, `list-webhooks`, `delete-webhook`                             | `create-webhook`, `list-webhooks`, `delete-webhook` (`/webhooks`)                             |
 | `search-analytics`                                                              | `search-analytics` (`/analytics/searches`)                                                    |
 | `suggest-tags`                                                                  | `suggest-tags` (`/documents/:documentId/suggested-tags`)                                      |
+
+## REST API
+
+Every `/api/v1` route now runs one operation and is generated from it. The [REST API reference](reference/rest-api.md) lists all routes. The OpenAPI document at `GET /openapi.json` is generated from the same routes (OpenAPI 3.1.0, was a hand-written 3.0.3 document that listed 14 routes).
+
+### Routes
+
+| Old route (1.x)                                     | New route (2.0)                                                                                       |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/search?q=&source=&tag=`                | `GET /api/v1/search?query=&sourceType=&tags=` (also `library`, `version`, `minRating`, `relatedTo`)   |
+| `POST /api/v1/batch-search`                         | Removed. Send one `GET /api/v1/search` per query.                                                     |
+| `POST /api/v1/documents/url`                        | `POST /api/v1/documents` with `url` (and `spider: true` to crawl)                                     |
+| `POST /api/v1/index/repos/:repoSlug`                | Removed with the REST repo indexer. `POST /api/v1/documents` with `source: "<repository URL>"`.       |
+| `GET /api/v1/index/jobs/:jobId`                     | `GET /api/v1/tasks/:taskId`                                                                           |
+| `GET /api/v1/stats`                                 | `GET /api/v1/overview` (`data.stats`)                                                                 |
+| `GET /api/v1/connectors/status`                     | `GET /api/v1/connections` (`lastRun` of each connection). The `history=true` sync history is removed. |
+| `GET /api/v1/connectors/schedules`                  | `GET /api/v1/connections` (`schedule` of each connection)                                             |
+| `GET /api/v1/documents/:id/links`                   | `GET /api/v1/links?documentId=:id`                                                                    |
+| `GET /api/v1/documents/:id/suggest-tags`            | `GET /api/v1/documents/:id/suggested-tags`                                                            |
+| `POST /api/v1/bulk/:operation` with any other name  | Only `delete`, `retag` and `move` exist; other names are `404`.                                       |
+| `POST /api/v1/ask` with `Accept: text/event-stream` | Removed (no streaming). `POST /api/v1/ask` returns the whole answer.                                  |
+
+These routes did not change their path: `GET /openapi.json`, `GET /api/v1/health`, `GET` and `POST /api/v1/documents`, `GET`, `PATCH` and `DELETE /api/v1/documents/:id`, `POST /api/v1/documents/:id/tags`, `POST /api/v1/documents/:id/links`, `DELETE /api/v1/links/:id`, `POST /api/v1/ask`, `GET` and `POST /api/v1/topics`, `GET /api/v1/tags`, `GET /api/v1/analytics/searches`, the saved-search routes, `POST /api/v1/bulk/{delete,retag,move}` and the webhook routes.
+
+New routes: `DELETE /api/v1/documents/:id/tags`, `POST /api/v1/documents/:id/ratings`, `GET /api/v1/documents/:id/versions`, `POST /api/v1/documents/:id/rollback`, `GET /api/v1/documents/:id/prerequisites`, `GET /api/v1/links`, `GET /api/v1/graph`, `DELETE /api/v1/topics/:topic`, `GET`, `POST` and `DELETE /api/v1/packs`, `GET /api/v1/connections`, `DELETE /api/v1/connections/:name`, `POST /api/v1/sync`, `GET /api/v1/overview`, `POST /api/v1/admin/reindex`, `GET /api/v1/admin/duplicates`, `POST /api/v1/admin/prune-expired`, `GET /api/v1/analytics/{popular,stale,top-queries}`, `GET /api/v1/tasks`, `GET /api/v1/tasks/:taskId` and `POST /api/v1/tasks/:taskId/cancel`.
+
+### Request fields
+
+| Route                                 | Old field (1.x)                       | New field (2.0)                                                                                               |
+| ------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/documents`              | `source` (the source type)            | `sourceType`. `source` now names what to add (URL or repository).                                             |
+| `POST /api/v1/documents`              | `topic` (topic ID)                    | `topic` (topic ID or name; the topic must exist)                                                              |
+| `PATCH /api/v1/documents/:id`         | `topicId`                             | `topic` (ID or name; `null` clears it). New: `tags` replaces the tags.                                        |
+| `POST /api/v1/documents/:id/links`    | `targetId`                            | `targetDocumentId`                                                                                            |
+| `POST /api/v1/searches`               | `filters: { topic, library, ... }`    | The filter fields at the top level: `topic`, `library`, `version`, `sourceType`, `tags`, `minRating`, `limit` |
+| `POST /api/v1/bulk/*`                 | `selector: { topicId, library, ... }` | The selector fields at the top level: `topic`, `library`, `sourceType`, `tags`, `dateFrom`, `dateTo`          |
+| `POST /api/v1/bulk/move`              | `targetTopicId`                       | `targetTopic` (ID or name)                                                                                    |
+| `GET` routes with `limit` or `offset` | Out-of-range values were clamped      | Out-of-range values are rejected with `400`                                                                   |
+
+### Responses
+
+| 1.x                                                                        | 2.0                                                                                                                                                             |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/documents` indexed the document and answered `201` with it.  | It starts a task and answers `202` with `taskId`. Poll `GET /api/v1/tasks/:taskId`; `result` (a JSON string) lists the added documents with their `documentId`. |
+| Create routes answered `201`; `DELETE` routes answered `204` with no body. | Every synchronous route answers `200` with `{ data, meta }`. `DELETE` returns, for example, `{ "documentId": "...", "deleted": true }`.                         |
+| `GET /api/v1/search` returned `{ results, totalCount }`.                   | `{ items, total, limit, offset }`                                                                                                                               |
+| `GET /api/v1/documents` returned an array of documents with their content. | `{ items, total, limit, offset }`. Items have `documentId` and `contentLength`, not `id` and `content`.                                                         |
+| `GET /api/v1/documents/:id` returned the document row.                     | `{ document, content, contentLength, offset, nextOffset, tags, links, ratings }`. Use `offset` and `maxLength` to page the content.                             |
+| `GET /api/v1/topics`, `/tags`, `/webhooks`, `/searches` returned arrays.   | `{ items, ... }`                                                                                                                                                |
+| `GET /api/v1/health` returned `{ status, docCount, dbSize }`.              | `{ status: "ok" }`. Counts and index health are in `GET /api/v1/overview`.                                                                                      |
+| Links had `id`.                                                            | Links have `linkId`.                                                                                                                                            |
+| Not-found errors had the code `NOT_FOUND`.                                 | The code names the resource: `DOCUMENT_NOT_FOUND`, `TOPIC_NOT_FOUND`, `LINK_NOT_FOUND`, `TASK_NOT_FOUND`, ... Unknown routes keep `NOT_FOUND`.                  |
+| A body over 1 MB answered `500`.                                           | `413` with the code `PAYLOAD_TOO_LARGE`                                                                                                                         |
+| `ask` without an LLM answered `500` with a generic message.                | `500` with the code `CONFIG_ERROR` and the setting to change                                                                                                    |
+
+### CORS and browser requests
+
+| 1.x                                                                                             | 2.0                                                                                                                   |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `corsOrigins: ["*"]` allowed every method from every origin.                                    | `"*"` allows `GET` only. Name an origin in `corsOrigins` to let it write.                                             |
+| A page on any origin could send a write request without a preflight (for example, a form POST). | Write requests from an origin that is not listed, and is not the server's own origin, get `403` (`FORBIDDEN_ORIGIN`). |
+
+### REST repo indexer (removed)
+
+The REST repo indexer is removed: the routes `POST /api/v1/index/repos/:repoSlug` and `GET /api/v1/index/jobs/:jobId`, the `LIBSCOPE_REPOS_CONFIG` environment variable and its repos JSON file. It indexed each repository into its own database (`~/.libscope/repos/<slug>.db`) that no other part of LibScope could search, and it always used the local embedding model.
+
+Add a repository to the workspace database instead:
+
+```bash
+curl -X POST http://localhost:3378/api/v1/documents \
+  -H "Content-Type: application/json" \
+  -d '{ "source": "https://github.com/org/repo", "branch": "main", "paths": ["docs"] }'
+```
+
+LibScope 2.0 does not read or delete the files in `~/.libscope/repos/`. Delete them yourself when you no longer need them.
+
+### Web dashboard server
+
+The dashboard URLs (`/`, `/graph`, `/api/stats`, `/api/topics`, `/api/documents`, `/api/documents/:id`, `/api/search`, `/api/graph`) keep their paths and response shapes, with these changes:
+
+| 1.x                                                                     | 2.0                                                                                           |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Every response had `Access-Control-Allow-Origin: *`, also for `DELETE`. | No CORS header by default (same origin only). Cross-origin `DELETE` gets `403`.               |
+| Errors were `{ "error": "<message>" }`.                                 | `{ "error": { "code", "message" } }`                                                          |
+| `GET /api/documents` items had `content`.                               | Items have `contentLength` instead.                                                           |
+| Out-of-range `limit` values were clamped.                               | Out-of-range values are rejected with `400` (`limit` 1-1000 for documents, 1-100 for search). |
+
+### Library code
+
+| Old (1.x)                                                     | New (2.0)                                                                                                                     |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `startApiServer(db, provider, options)`                       | `startApiServer({ db, provider, config }, options)`. Pass the result of `bootstrap()`. The returned `port` is the bound port. |
+| `startWebServer(db, provider, options)`                       | `startWebServer({ db, provider, config }, options)`                                                                           |
+| `handleRequest(req, res, db, provider)` (`src/api/routes.ts`) | `handleRequest(req, res, ctx)` with an `OperationContext` from `createOperationContext`                                       |
+| `OPENAPI_SPEC` (`src/api/openapi.ts`)                         | `buildOpenApiSpec(API_ROUTES)`                                                                                                |
+| `handleGraphRequest` (`src/web/graph-api.ts`)                 | The `graph` operation (`graphOperation`)                                                                                      |

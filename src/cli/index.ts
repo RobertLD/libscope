@@ -1536,19 +1536,19 @@ program
   .option("--host <host>", "Server host", "localhost")
   .action(async (opts: { api?: boolean; dashboard?: boolean; port?: string; host: string }) => {
     if (opts.dashboard) {
-      const { db, provider } = initializeAppWithEmbedding();
+      const app = initializeAppWithEmbedding();
       const { startWebServer } = await import("../web/server.js");
       const defaultPort = 3377;
       const port = opts.port ? parseIntOption(opts.port, "--port") : defaultPort;
-      await startWebServer(db, provider, { port, host: opts.host });
+      await startWebServer(app, { port, host: opts.host });
       console.log(`LibScope dashboard running at http://${opts.host}:${port}`);
       console.log("Press Ctrl+C to stop");
     } else if (opts.api) {
-      const { db, provider } = initializeAppWithEmbedding();
+      const app = initializeAppWithEmbedding();
       const { startApiServer } = await import("../api/server.js");
       const defaultPort = 3378;
       const port = opts.port ? parseIntOption(opts.port, "--port") : defaultPort;
-      const result = await startApiServer(db, provider, { port, host: opts.host });
+      const result = await startApiServer(app, { port, host: opts.host });
       console.log(`LibScope API server listening on http://${opts.host}:${result.port}`);
       console.log("Press Ctrl+C to stop");
     } else {

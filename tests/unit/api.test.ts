@@ -1,12 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
-import type Database from "better-sqlite3";
-import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
-import { createTestDbWithVec } from "../fixtures/test-db.js";
-import { handleRequest } from "../../src/api/routes.js";
 import {
   corsMiddleware,
+  rejectForeignWrite,
   parseJsonBody,
   sendJson,
   sendError,
@@ -14,18 +11,10 @@ import {
   checkApiKey,
   getRateLimitMapSize,
   MAX_RATE_LIMIT_ENTRIES,
+  setSecurityHeaders,
 } from "../../src/api/middleware.js";
-import { OPENAPI_SPEC } from "../../src/api/openapi.js";
-import { indexDocument } from "../../src/core/indexing.js";
-import { createTopic } from "../../src/core/topics.js";
-
-vi.mock("../../src/core/scheduler.js", async (importOriginal) => {
-  const orig = await importOriginal<typeof import("../../src/core/scheduler.js")>();
-  return {
-    ...orig,
-    loadScheduleEntries: vi.fn(() => []),
-  };
-});
+import { API_ROUTES, OPENAPI_PATH } from "../../src/api/routes.js";
+import { buildOpenApiSpec, toOpenApiPath } from "../../src/api/openapi.js";
 
 interface ApiResponse {
   data?: Record<string, unknown>;
@@ -124,38 +113,62 @@ function createMockRes(): MockRes {
 
 describe("API middleware", () => {
   describe("corsMiddleware", () => {
-    it("should handle OPTIONS preflight", () => {
-      const req = createMockReq("OPTIONS", "/api/v1/health");
+    it("answers OPTIONS preflight for a listed origin with every method", () => {
+      const req = createMockReq("OPTIONS", "/api/v1/documents");
+      req.headers["origin"] = "http://localhost:3000";
       const { res, getStatus, getHeaders } = createMockRes();
 
-      const handled = corsMiddleware(req, res, ["*"]);
+      const handled = corsMiddleware(req, res, ["http://localhost:3000"]);
 
       expect(handled).toBe(true);
       expect(getStatus()).toBe(204);
-      expect(getHeaders()["Access-Control-Allow-Origin"]).toBe("*");
+      expect(getHeaders()["Access-Control-Allow-Origin"]).toBe("http://localhost:3000");
       expect(getHeaders()["Access-Control-Allow-Methods"]).toBe(
-        "GET, POST, PATCH, DELETE, OPTIONS",
+        "GET, POST, PATCH, PUT, DELETE, OPTIONS",
       );
+      expect(getHeaders()["Vary"]).toBe("Origin");
     });
 
-    it("should set CORS headers for non-preflight requests", () => {
-      const req = createMockReq("GET", "/api/v1/health");
+    it("lets a wildcard origin read but not write", () => {
+      const req = createMockReq("OPTIONS", "/api/v1/documents");
+      req.headers["origin"] = "http://evil.example";
       const { res, getHeaders } = createMockRes();
 
-      const handled = corsMiddleware(req, res, ["*"]);
+      corsMiddleware(req, res, ["*"]);
 
-      expect(handled).toBe(false);
       expect(getHeaders()["Access-Control-Allow-Origin"]).toBe("*");
+      expect(getHeaders()["Access-Control-Allow-Methods"]).toBe("GET, OPTIONS");
     });
 
-    it("should restrict origin when not wildcard", () => {
+    it("sets no allow-origin for an unlisted origin", () => {
       const req = createMockReq("GET", "/api/v1/health");
-      req.headers["origin"] = "http://example.com";
+      req.headers["origin"] = "http://evil.example";
       const { res, getHeaders } = createMockRes();
 
-      corsMiddleware(req, res, ["http://example.com"]);
+      expect(corsMiddleware(req, res, ["http://localhost"])).toBe(false);
+      expect(getHeaders()["Access-Control-Allow-Origin"]).toBeUndefined();
+    });
+  });
 
-      expect(getHeaders()["Access-Control-Allow-Origin"]).toBe("http://example.com");
+  describe("rejectForeignWrite", () => {
+    function check(method: string, origin: string | undefined, origins: string[]): number | null {
+      const req = createMockReq(method, "/api/v1/documents/x");
+      if (origin !== undefined) req.headers["origin"] = origin;
+      const { res, getStatus } = createMockRes();
+      return rejectForeignWrite(req, res, origins) ? getStatus() : null;
+    }
+
+    it('rejects writes from unlisted origins, also when "*" is allowed', () => {
+      expect(check("DELETE", "http://evil.example", [])).toBe(403);
+      expect(check("POST", "http://evil.example", ["*"])).toBe(403);
+    });
+
+    it("allows reads, same-origin writes, listed origins and non-browser clients", () => {
+      expect(check("GET", "http://evil.example", [])).toBeNull();
+      expect(check("DELETE", "http://localhost:3378", [])).toBeNull();
+      expect(check("POST", "http://app.example", ["http://app.example"])).toBeNull();
+      expect(check("PATCH", undefined, [])).toBeNull();
+      expect(check("POST", "null", [])).toBe(403);
     });
   });
 
@@ -168,7 +181,7 @@ describe("API middleware", () => {
 
     it("should reject invalid JSON", async () => {
       const req = createMockReq("POST", "/test", "not json{{{");
-      await expect(parseJsonBody(req)).rejects.toThrow("Invalid JSON body");
+      await expect(parseJsonBody(req)).rejects.toThrow("Request body contains invalid JSON");
     });
 
     it("should return null for empty body", async () => {
@@ -199,628 +212,56 @@ describe("API middleware", () => {
   });
 });
 
-describe("API routes", () => {
-  let db: Database.Database;
-  let provider: MockEmbeddingProvider;
-
-  beforeEach(() => {
-    db = createTestDbWithVec();
-    provider = new MockEmbeddingProvider();
-  });
-
-  describe("GET /api/v1/health", () => {
-    it("should return health status", async () => {
-      const req = createMockReq("GET", "/api/v1/health");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.status).toBe("ok");
-      expect(typeof parsed.data.docCount).toBe("number");
-      expect(typeof parsed.meta.took).toBe("number");
-    });
-  });
-
-  describe("GET /openapi.json", () => {
-    it("should return the OpenAPI spec", async () => {
-      const req = createMockReq("GET", "/openapi.json");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.openapi).toBe("3.0.3");
-      expect(parsed.info.title).toBe("LibScope REST API");
-    });
-  });
-
-  describe("GET /api/v1/search", () => {
-    it("should return 400 without query param", async () => {
-      const req = createMockReq("GET", "/api/v1/search");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(400);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("VALIDATION_ERROR");
-    });
-
-    it("should search with query params", async () => {
-      await indexDocument(db, provider, {
-        title: "Test Doc",
-        content: "Hello world content",
-        sourceType: "manual",
-      });
-
-      const req = createMockReq("GET", "/api/v1/search?q=hello&limit=5");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data).toBeDefined();
-      expect(parsed.meta.took).toBeDefined();
-    });
-
-    it("should accept offset query parameter for pagination", async () => {
-      await indexDocument(db, provider, {
-        title: "Doc A",
-        content: "First document content",
-        sourceType: "manual",
-      });
-      await indexDocument(db, provider, {
-        title: "Doc B",
-        content: "Second document content",
-        sourceType: "manual",
-      });
-
-      const req = createMockReq("GET", "/api/v1/search?q=document&limit=5&offset=1");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data).toBeDefined();
-      expect(parsed.meta.took).toBeDefined();
-    });
-  });
-
-  describe("POST /api/v1/documents", () => {
-    it("should index a new document", async () => {
-      const req = createMockReq("POST", "/api/v1/documents", {
-        title: "My Doc",
-        content: "Some content here",
-      });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(201);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.id).toBeDefined();
-      expect(parsed.data.chunkCount).toBeGreaterThanOrEqual(1);
-    });
-
-    it("should return 400 for missing fields", async () => {
-      const req = createMockReq("POST", "/api/v1/documents", { title: "No content" });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(400);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("VALIDATION_ERROR");
-    });
-
-    it("should index document with tags", async () => {
-      const req = createMockReq("POST", "/api/v1/documents", {
-        title: "Tagged Doc",
-        content: "Content with tags",
-        tags: ["typescript", "api"],
-      });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(201);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.id).toBeDefined();
-    });
-
-    it("should return 400 for invalid JSON body", async () => {
-      const req = createMockReq("POST", "/api/v1/documents", "not-valid-json{{{");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(400);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("INVALID_JSON");
-    });
-  });
-
-  describe("GET /api/v1/documents/:id", () => {
-    it("should return a document by ID", async () => {
-      const doc = await indexDocument(db, provider, {
-        title: "Fetch Me",
-        content: "Document content",
-        sourceType: "manual",
-      });
-
-      const req = createMockReq("GET", `/api/v1/documents/${doc.id}`);
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.id).toBe(doc.id);
-      expect(parsed.data.title).toBe("Fetch Me");
-    });
-
-    it("should return 404 for non-existent document", async () => {
-      const req = createMockReq("GET", "/api/v1/documents/nonexistent-id");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(404);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("NOT_FOUND");
-    });
-  });
-
-  describe("DELETE /api/v1/documents/:id", () => {
-    it("should delete a document", async () => {
-      const doc = await indexDocument(db, provider, {
-        title: "Delete Me",
-        content: "To be deleted",
-        sourceType: "manual",
-      });
-
-      const req = createMockReq("DELETE", `/api/v1/documents/${doc.id}`);
-      const { res, getStatus } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(204);
-    });
-
-    it("should return 404 for deleting non-existent document", async () => {
-      const req = createMockReq("DELETE", "/api/v1/documents/nonexistent-id");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(404);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("NOT_FOUND");
-    });
-  });
-
-  describe("POST /api/v1/ask", () => {
-    it("should return 400 without question", async () => {
-      const req = createMockReq("POST", "/api/v1/ask", { notQuestion: "test" });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(400);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("VALIDATION_ERROR");
-    });
-
-    it("should return SSE stream when Accept: text/event-stream", async () => {
-      // Mock the LLM and search modules to avoid real calls
-      const ragModule = await import("../../src/core/rag.js");
-      const searchModule = await import("../../src/core/search.js");
-      const configModule = await import("../../src/config.js");
-
-      vi.spyOn(configModule, "loadConfig").mockReturnValue({
-        embedding: { provider: "local" },
-        llm: { provider: "openai" },
-        openai: { apiKey: "sk-test" },
-        database: { path: ":memory:" },
-        indexing: { maxDocumentSize: 1024 },
-        logging: { level: "silent" },
-      });
-
-      vi.spyOn(searchModule, "searchDocuments").mockResolvedValue({
-        results: [],
-        totalCount: 0,
-      });
-
-      vi.spyOn(ragModule, "createLlmProvider").mockReturnValue({
-        model: "mock-model",
-        complete: vi.fn().mockResolvedValue({ text: "SSE answer", tokensUsed: 10 }),
-      });
-
-      const req = createMockReq("POST", "/api/v1/ask", { question: "What is SSE?" });
-      req.headers["accept"] = "text/event-stream";
-      const { res, getStatus, getBody, getHeaders } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      expect(getHeaders()["Content-Type"]).toBe("text/event-stream");
-      expect(getHeaders()["Cache-Control"]).toBe("no-cache");
-      expect(getHeaders()["Connection"]).toBe("keep-alive");
-
-      const body = getBody();
-      // Should contain at least one token event and a done event
-      expect(body).toContain("data: ");
-      expect(body).toContain('"token"');
-      expect(body).toContain('"done":true');
-      expect(body).toContain('"sources"');
-
-      // Parse individual SSE events
-      const events = body
-        .split("\n\n")
-        .filter((line: string) => line.startsWith("data: "))
-        .map((line: string) => JSON.parse(line.replace("data: ", "")) as Record<string, unknown>);
-
-      expect(events.length).toBeGreaterThanOrEqual(2);
-      expect(events[0]).toHaveProperty("token");
-      expect(events[events.length - 1]).toMatchObject({ done: true });
-
-      vi.mocked(configModule.loadConfig).mockRestore();
-      vi.mocked(searchModule.searchDocuments).mockRestore();
-      vi.mocked(ragModule.createLlmProvider).mockRestore();
-    });
-
-    it("should return normal JSON when Accept header is not SSE", async () => {
-      const req = createMockReq("POST", "/api/v1/ask", { question: "test" });
-      req.headers["accept"] = "application/json";
-      const { res, getHeaders } = createMockRes();
-
-      // This will fail because no LLM is configured, but it should NOT return SSE headers
-      await handleRequest(req, res, db, provider);
-
-      expect(getHeaders()["Content-Type"]).not.toBe("text/event-stream");
-    });
-  });
-
-  describe("GET /api/v1/documents", () => {
-    it("should list documents", async () => {
-      await indexDocument(db, provider, {
-        title: "Doc 1",
-        content: "Content 1",
-        sourceType: "manual",
-      });
-
-      const req = createMockReq("GET", "/api/v1/documents");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(Array.isArray(parsed.data)).toBe(true);
-      expect(parsed.data.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe("GET /api/v1/topics", () => {
-    it("should list topics", async () => {
-      createTopic(db, { name: "test-topic" });
-
-      const req = createMockReq("GET", "/api/v1/topics");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(Array.isArray(parsed.data)).toBe(true);
-    });
-  });
-
-  describe("POST /api/v1/topics", () => {
-    it("should create a topic", async () => {
-      const req = createMockReq("POST", "/api/v1/topics", { name: "new-topic" });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(201);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data.name).toBe("new-topic");
-    });
-
-    it("should return 400 without name", async () => {
-      const req = createMockReq("POST", "/api/v1/topics", { description: "no name" });
-      const { res, getStatus } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(400);
-    });
-  });
-
-  describe("GET /api/v1/tags", () => {
-    it("should list tags", async () => {
-      const req = createMockReq("GET", "/api/v1/tags");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(Array.isArray(parsed.data)).toBe(true);
-    });
-  });
-
-  describe("POST /api/v1/documents/:id/tags", () => {
-    it("should add tags to a document", async () => {
-      const doc = await indexDocument(db, provider, {
-        title: "Tag Target",
-        content: "Content",
-        sourceType: "manual",
-      });
-
-      const req = createMockReq("POST", `/api/v1/documents/${doc.id}/tags`, {
-        tags: ["alpha", "beta"],
-      });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(Array.isArray(parsed.data)).toBe(true);
-    });
-  });
-
-  describe("GET /api/v1/stats", () => {
-    it("should return stats", async () => {
-      const req = createMockReq("GET", "/api/v1/stats");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(typeof parsed.data.totalDocuments).toBe("number");
-    });
-
-    it("should return databaseSizeBytes field", async () => {
-      const req = createMockReq("GET", "/api/v1/stats");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(typeof parsed.data.databaseSizeBytes).toBe("number");
-    });
-  });
-
-  describe("Connector status endpoint", () => {
-    it("GET /api/v1/connectors/status should return empty array when no syncs", async () => {
-      const req = createMockReq("GET", "/api/v1/connectors/status");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(parsed.data).toEqual([]);
-    });
-
-    it("GET /api/v1/connectors/status should return latest sync status", async () => {
-      // Insert a sync record directly
-      db.prepare(
-        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, completed_at, status, docs_added)
-         VALUES ('obsidian', 'vault1', datetime('now'), datetime('now'), 'completed', 5)`,
-      ).run();
-
-      const req = createMockReq("GET", "/api/v1/connectors/status");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      const data = parsed.data as unknown as Array<Record<string, unknown>>;
-      expect(data).toHaveLength(1);
-      expect(data[0].connector_type).toBe("obsidian");
-      expect(data[0].docs_added).toBe(5);
-    });
-
-    it("GET /api/v1/connectors/status?history=true should return full history", async () => {
-      db.prepare(
-        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, status)
-         VALUES ('obsidian', 'vault1', datetime('now'), 'running')`,
-      ).run();
-      db.prepare(
-        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, completed_at, status)
-         VALUES ('obsidian', 'vault1', datetime('now'), datetime('now'), 'completed')`,
-      ).run();
-
-      const req = createMockReq("GET", "/api/v1/connectors/status?history=true");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      const data = parsed.data as unknown as Array<Record<string, unknown>>;
-      expect(data).toHaveLength(2);
-    });
-
-    it("GET /api/v1/connectors/status?type=notion should filter by type", async () => {
-      db.prepare(
-        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, status)
-         VALUES ('obsidian', 'vault1', datetime('now'), 'completed')`,
-      ).run();
-      db.prepare(
-        `INSERT INTO connector_syncs (connector_type, connector_name, started_at, status)
-         VALUES ('notion', 'notion', datetime('now'), 'completed')`,
-      ).run();
-
-      const req = createMockReq("GET", "/api/v1/connectors/status?type=notion");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      const data = parsed.data as unknown as Array<Record<string, unknown>>;
-      expect(data).toHaveLength(1);
-      expect(data[0].connector_type).toBe("notion");
-    });
-  });
-
-  describe("Connector schedules", () => {
-    it("GET /api/v1/connectors/schedules should return schedule entries", async () => {
-      const { loadScheduleEntries } = await import("../../src/core/scheduler.js");
-      const mockLoad = vi.mocked(loadScheduleEntries);
-      mockLoad.mockReturnValueOnce([
-        { connectorType: "notion", connectorName: "notion", cronExpression: "0 */6 * * *" },
-      ]);
-
-      const req = createMockReq("GET", "/api/v1/connectors/schedules");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      const schedules = (parsed.data as unknown as { schedules: unknown[] }).schedules;
-      expect(schedules).toHaveLength(1);
-    });
-
-    it("GET /api/v1/connectors/schedules should return empty array when none configured", async () => {
-      const { loadScheduleEntries } = await import("../../src/core/scheduler.js");
-      const mockLoad = vi.mocked(loadScheduleEntries);
-      mockLoad.mockReturnValueOnce([]);
-
-      const req = createMockReq("GET", "/api/v1/connectors/schedules");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      const schedules = (parsed.data as unknown as { schedules: unknown[] }).schedules;
-      expect(schedules).toHaveLength(0);
-    });
-  });
-
-  describe("Unknown route", () => {
-    it("should return 404", async () => {
-      const req = createMockReq("GET", "/api/v1/nonexistent");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(404);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("NOT_FOUND");
-    });
-  });
-
-  describe("Webhooks API", () => {
-    it("should create a webhook via POST /api/v1/webhooks", async () => {
-      process.env.LIBSCOPE_SECRET_KEY = "test-key";
-      try {
-        const req = createMockReq("POST", "/api/v1/webhooks", {
-          url: "https://example.com/hook",
-          events: ["document.created"],
-          secret: "my-secret",
-        });
-        const { res, getStatus, getBody } = createMockRes();
-
-        await handleRequest(req, res, db, provider);
-
-        expect(getStatus()).toBe(201);
-        const parsed = parseResponse(getBody());
-        expect(parsed.data.url).toBe("https://example.com/hook");
-        expect(parsed.data.hasSecret).toBe(true);
-        expect(parsed.data.secret).toBeUndefined();
-      } finally {
-        delete process.env.LIBSCOPE_SECRET_KEY;
-      }
-    });
-
-    it("should list webhooks via GET /api/v1/webhooks", async () => {
-      // Create one first
-      const createReq = createMockReq("POST", "/api/v1/webhooks", {
-        url: "https://example.com/hook",
-        events: ["document.created"],
-      });
-      const { res: createRes } = createMockRes();
-      await handleRequest(createReq, createRes, db, provider);
-
-      const req = createMockReq("GET", "/api/v1/webhooks");
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(200);
-      const parsed = parseResponse(getBody());
-      expect(Array.isArray(parsed.data)).toBe(true);
-      expect(parsed.data.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it("should return 400 when creating webhook without url", async () => {
-      const req = createMockReq("POST", "/api/v1/webhooks", {
-        events: ["document.created"],
-      });
-      const { res, getStatus, getBody } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(400);
-      const parsed = parseResponse(getBody());
-      expect(parsed.error.code).toBe("VALIDATION_ERROR");
-    });
-
-    it("should delete a webhook via DELETE /api/v1/webhooks/:id", async () => {
-      const createReq = createMockReq("POST", "/api/v1/webhooks", {
-        url: "https://example.com/hook",
-        events: ["document.created"],
-      });
-      const { res: createRes, getBody: getCreateBody } = createMockRes();
-      await handleRequest(createReq, createRes, db, provider);
-      const created = parseResponse(getCreateBody());
-      const id = (created.data as Record<string, unknown>).id as string;
-
-      const req = createMockReq("DELETE", `/api/v1/webhooks/${id}`);
-      const { res, getStatus } = createMockRes();
-
-      await handleRequest(req, res, db, provider);
-
-      expect(getStatus()).toBe(204);
-    });
-  });
-});
-
 describe("OpenAPI spec", () => {
-  it("should have valid structure", () => {
-    expect(OPENAPI_SPEC.openapi).toBe("3.0.3");
-    expect(OPENAPI_SPEC.info.title).toBeDefined();
-    expect(OPENAPI_SPEC.paths).toBeDefined();
-    expect(OPENAPI_SPEC.components).toBeDefined();
+  const spec = buildOpenApiSpec(API_ROUTES) as {
+    openapi: string;
+    info: { title: string; version: string };
+    paths: Record<string, Record<string, Record<string, unknown>>>;
+  };
+  const specRoutes = Object.entries(spec.paths).flatMap(([path, methods]) =>
+    Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`),
+  );
+
+  it("is OpenAPI 3.1 with the package version", () => {
+    expect(spec.openapi).toBe("3.1.0");
+    expect(spec.info.version).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("should define all endpoints", () => {
-    const paths = Object.keys(OPENAPI_SPEC.paths);
-    expect(paths).toContain("/api/v1/search");
-    expect(paths).toContain("/api/v1/documents");
-    expect(paths).toContain("/api/v1/documents/{id}");
-    expect(paths).toContain("/api/v1/ask");
-    expect(paths).toContain("/api/v1/topics");
-    expect(paths).toContain("/api/v1/tags");
-    expect(paths).toContain("/api/v1/stats");
-    expect(paths).toContain("/api/v1/health");
-    expect(paths).toContain("/openapi.json");
+  it("documents every route in the router, and nothing else", () => {
+    const routerRoutes = API_ROUTES.map((r) => `${r.method} ${toOpenApiPath(r.path)}`);
+    expect([...specRoutes].sort()).toEqual([...routerRoutes].sort());
+    expect(specRoutes).toContain(`GET ${OPENAPI_PATH}`);
+  });
+
+  it("takes parameters and summaries from the operation schemas", () => {
+    const search = spec.paths["/api/v1/search"]?.["get"] as {
+      operationId: string;
+      summary: string;
+      parameters: Array<{ name: string; in: string; schema: { type?: string } }>;
+    };
+    expect(search.operationId).toBe("search");
+    const limit = search.parameters.find((p) => p.name === "limit");
+    expect(limit).toMatchObject({ in: "query", schema: { type: "integer", default: 10 } });
+    const getDoc = spec.paths["/api/v1/documents/{documentId}"]?.["get"] as {
+      parameters: Array<{ name: string; in: string; required: boolean }>;
+    };
+    expect(getDoc.parameters).toContainEqual(
+      expect.objectContaining({ name: "documentId", in: "path", required: true }),
+    );
+    const add = spec.paths["/api/v1/documents"]?.["post"] as {
+      requestBody: { content: Record<string, { schema: { properties: object } }> };
+      responses: Record<string, unknown>;
+    };
+    expect(add.requestBody.content["application/json"]?.schema.properties).toHaveProperty("url");
+    expect(add.responses).toHaveProperty("202");
+    const link = spec.paths["/api/v1/documents/{documentId}/links"]?.["post"] as {
+      requestBody: {
+        content: Record<string, { schema: { properties: object; required: string[] } }>;
+      };
+    };
+    const body = link.requestBody.content["application/json"]?.schema;
+    expect(body?.properties).not.toHaveProperty("documentId");
+    expect(body?.required).toEqual(["targetDocumentId", "linkType"]);
   });
 });
 
@@ -844,17 +285,20 @@ describe("middleware — security", () => {
     expect(result).toEqual(data);
   });
 
-  it("should set security headers via CORS middleware", () => {
+  it("should set security headers", () => {
     const socket = new Socket();
     const req = new IncomingMessage(socket);
     req.method = "GET";
     const res = new ServerResponse(req);
-    corsMiddleware(req, res, ["*"]);
+    setSecurityHeaders(res);
     expect(res.getHeader("X-Content-Type-Options")).toBe("nosniff");
     expect(res.getHeader("X-Frame-Options")).toBe("DENY");
     expect(res.getHeader("X-XSS-Protection")).toBe("1; mode=block");
     expect(res.getHeader("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
     expect(res.getHeader("Content-Security-Policy")).toBeDefined();
+    const noCsp = new ServerResponse(req);
+    setSecurityHeaders(noCsp, false);
+    expect(noCsp.getHeader("Content-Security-Policy")).toBeUndefined();
   });
 });
 
@@ -954,222 +398,5 @@ describe("middleware — rate limiting", () => {
     checkRateLimit(testIp);
     expect(getRateLimitMapSize()).toBeGreaterThan(0);
     // Entry exists; size is at least 1
-  });
-});
-
-describe("Saved Searches API", () => {
-  let db: Database.Database;
-  const provider = new MockEmbeddingProvider();
-
-  beforeEach(async () => {
-    db = createTestDbWithVec();
-    await indexDocument(db, provider, {
-      title: "Test Doc",
-      content: "# Test\n\nSome test content for searching.",
-      sourceType: "manual",
-    });
-  });
-
-  afterEach(() => db.close());
-
-  it("POST /api/v1/searches creates a saved search", async () => {
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/searches", { name: "my search", query: "test" });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(201);
-    const body = parseResponse(getBody());
-    expect(body.data).toBeDefined();
-  });
-
-  it("POST /api/v1/searches returns 400 without name", async () => {
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/searches", { query: "test" });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(400);
-    const body = parseResponse(getBody());
-    expect(body.error?.code).toBe("VALIDATION_ERROR");
-  });
-
-  it("GET /api/v1/searches lists saved searches", async () => {
-    // First create one
-    const req1 = createMockReq("POST", "/api/v1/searches", { name: "my search", query: "test" });
-    const mock1 = createMockRes();
-    await handleRequest(req1, mock1.res, db, provider);
-
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("GET", "/api/v1/searches");
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toBeDefined();
-  });
-
-  it("DELETE /api/v1/searches/:id deletes a saved search", async () => {
-    // Create one first
-    const req1 = createMockReq("POST", "/api/v1/searches", { name: "del search", query: "test" });
-    const mock1 = createMockRes();
-    await handleRequest(req1, mock1.res, db, provider);
-    const created = parseResponse(mock1.getBody());
-    const id = (created.data as Record<string, unknown>)?.id as string;
-
-    const { res, getStatus } = createMockRes();
-    const req = createMockReq("DELETE", `/api/v1/searches/${id}`);
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(204);
-  });
-
-  it("POST /api/v1/searches/:id/run runs a saved search", async () => {
-    // Create one first
-    const req1 = createMockReq("POST", "/api/v1/searches", { name: "run search", query: "test" });
-    const mock1 = createMockRes();
-    await handleRequest(req1, mock1.res, db, provider);
-    const created = parseResponse(mock1.getBody());
-    const id = (created.data as Record<string, unknown>)?.id as string;
-
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", `/api/v1/searches/${id}/run`);
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toBeDefined();
-  });
-});
-
-describe("Bulk Operations API", () => {
-  let db: Database.Database;
-  const provider = new MockEmbeddingProvider();
-
-  beforeEach(async () => {
-    db = createTestDbWithVec();
-    await indexDocument(db, provider, {
-      title: "Bulk Doc",
-      content: "# Bulk\n\nContent for bulk ops.",
-      sourceType: "manual",
-    });
-  });
-
-  afterEach(() => db.close());
-
-  it("POST /api/v1/bulk/delete returns 400 without selector", async () => {
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/bulk/delete", {});
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(400);
-    const body = parseResponse(getBody());
-    expect(body.error?.code).toBe("VALIDATION_ERROR");
-  });
-
-  it("POST /api/v1/bulk/delete dry run", async () => {
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/bulk/delete", {
-      selector: { sourceType: "manual" },
-      dryRun: true,
-    });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toBeDefined();
-  });
-
-  it("POST /api/v1/bulk/retag adds tags", async () => {
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/bulk/retag", {
-      selector: { sourceType: "manual" },
-      addTags: ["new-tag"],
-      dryRun: true,
-    });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toBeDefined();
-  });
-
-  it("POST /api/v1/bulk/move requires targetTopicId", async () => {
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/bulk/move", {
-      selector: { sourceType: "manual" },
-    });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(400);
-    const body = parseResponse(getBody());
-    expect(body.error?.code).toBe("VALIDATION_ERROR");
-  });
-
-  it("POST /api/v1/bulk/move with targetTopicId", async () => {
-    const topic = createTopic(db, { name: "Bulk Target" });
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", "/api/v1/bulk/move", {
-      selector: { sourceType: "manual" },
-      targetTopicId: topic.id,
-      dryRun: true,
-    });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(200);
-    const body = parseResponse(getBody());
-    expect(body.data).toBeDefined();
-  });
-});
-
-describe("Links API", () => {
-  let db: Database.Database;
-  const provider = new MockEmbeddingProvider();
-
-  beforeEach(() => {
-    db = createTestDbWithVec();
-  });
-
-  afterEach(() => db.close());
-
-  it("DELETE /api/v1/links/:id deletes a link", async () => {
-    // Create two docs and link them
-    const doc1 = await indexDocument(db, provider, {
-      title: "Doc A",
-      content: "# A\n\nContent A.",
-      sourceType: "manual",
-    });
-    const doc2 = await indexDocument(db, provider, {
-      title: "Doc B",
-      content: "# B\n\nContent B.",
-      sourceType: "manual",
-    });
-
-    // Create a link via the API: POST /api/v1/documents/:id/links
-    const { res: createRes, getBody: createBody } = createMockRes();
-    const createReq = createMockReq("POST", `/api/v1/documents/${doc1.id}/links`, {
-      targetId: doc2.id,
-      linkType: "related",
-    });
-    await handleRequest(createReq, createRes, db, provider);
-    const created = parseResponse(createBody());
-    const linkId = (created.data as Record<string, unknown>)?.id as string;
-
-    // Delete the link
-    const { res, getStatus } = createMockRes();
-    const req = createMockReq("DELETE", `/api/v1/links/${linkId}`);
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(204);
-  });
-
-  it("POST /api/v1/documents/:id/links accepts the references link type", async () => {
-    const doc1 = await indexDocument(db, provider, {
-      title: "Doc C",
-      content: "# C\n\nContent C.",
-      sourceType: "manual",
-    });
-    const doc2 = await indexDocument(db, provider, {
-      title: "Doc D",
-      content: "# D\n\nContent D.",
-      sourceType: "manual",
-    });
-
-    const { res, getStatus, getBody } = createMockRes();
-    const req = createMockReq("POST", `/api/v1/documents/${doc1.id}/links`, {
-      targetId: doc2.id,
-      linkType: "references",
-    });
-    await handleRequest(req, res, db, provider);
-    expect(getStatus()).toBe(201);
-    const created = parseResponse(getBody());
-    expect((created.data as Record<string, unknown>)?.linkType).toBe("references");
   });
 });

@@ -6,6 +6,7 @@ import { createTestDbWithVec } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { initLogger } from "../../src/logger.js";
 import { ValidationError } from "../../src/errors.js";
+import { testConfig } from "./operations/helpers.js";
 
 const resolve4 = vi.fn();
 vi.mock("node:dns", async (importOriginal) => {
@@ -27,6 +28,7 @@ const { updateDocument, deleteDocument } = await import("../../src/core/document
 const { rateDocument } = await import("../../src/core/ratings.js");
 const { searchDocuments } = await import("../../src/core/search.js");
 const { handleRequest } = await import("../../src/api/routes.js");
+const { createOperationContext } = await import("../../src/core/operations/index.js");
 
 interface SentPayload {
   event: string;
@@ -231,7 +233,16 @@ describe("deliverWebhook", () => {
         if (typeof chunk === "string") body = chunk;
         return res;
       }) as typeof res.end;
-      await handleRequest(req, res, db, new MockEmbeddingProvider());
+      await handleRequest(
+        req,
+        res,
+        createOperationContext({
+          db,
+          provider: new MockEmbeddingProvider(),
+          config: testConfig(),
+          surface: "api",
+        }),
+      );
       return { status: res.statusCode, body };
     };
 
