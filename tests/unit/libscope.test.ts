@@ -308,6 +308,25 @@ describe("LibScope options", () => {
     }
   });
 
+  it("indexes a file with no parser (source code) when the chunker returns chunks", async () => {
+    const chunker = vi.fn(({ source }: { source: string }) =>
+      source.endsWith(".ts") ? ["function a() {}", "function b() {}"] : undefined,
+    );
+    const scope = create({ chunker });
+    try {
+      const code = join(tempHome, "util.ts");
+      writeFileSync(code, "function a() {}\nfunction b() {}\n");
+      const result = await scope.add(code);
+      expect(result.documents[0]!.chunkCount).toBe(2);
+
+      const binary = join(tempHome, "image.png");
+      writeFileSync(binary, "not really a png");
+      await expect(scope.add(binary)).rejects.toThrow(/Unsupported file format/);
+    } finally {
+      scope.close();
+    }
+  });
+
   it("leaves an injected database open on close", async () => {
     const db = createTestDb();
     const scope = LibScope.create({

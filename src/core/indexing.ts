@@ -630,20 +630,20 @@ export async function indexFile(
       : undefined;
   const effectiveName = normalizedFormat ? `file${normalizedFormat}` : filePath;
   const parser = getParserForFile(effectiveName);
-
-  if (!parser) {
-    const supported = getSupportedExtensions().join(", ");
-    throw new ValidationError(
-      `Unsupported file format: "${filePath}". Supported extensions: ${supported}`,
+  const unsupported = (): ValidationError =>
+    new ValidationError(
+      `Unsupported file format: "${filePath}". Supported extensions: ${getSupportedExtensions().join(", ")}`,
     );
-  }
+  // Without a parser, a custom chunker may still take the file as UTF-8 text (e.g. source code).
+  if (!parser && !options.chunker) throw unsupported();
 
-  log.info({ filePath, parser: parser.extensions[0] }, "Parsing file for indexing");
+  log.info({ filePath, parser: parser?.extensions[0] ?? "chunker" }, "Parsing file for indexing");
   const buffer = readFileSync(filePath);
-  const content = await parser.parse(buffer);
+  const content = parser ? await parser.parse(buffer) : buffer.toString("utf-8");
 
   const title = options.title ?? basename(filePath).replace(/\.[^.]+$/, "");
   const preChunked = await options.chunker?.({ content, title, source: filePath });
+  if (!parser && !preChunked) throw unsupported();
 
   return indexDocument(db, provider, {
     title,
