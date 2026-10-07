@@ -1,4 +1,12 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, unlinkSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  chmodSync,
+  unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError } from "../errors.js";
@@ -167,6 +175,29 @@ export function loadNamedConnectorConfig<T>(name: string): T {
 /** Check if a named connector config exists */
 export function hasNamedConnectorConfig(name: string): boolean {
   return existsSync(namedConfigPath(name));
+}
+
+/**
+ * Every named connector config in ~/.libscope/connectors, sorted by name. A file that cannot
+ * be read or parsed is skipped with a warning.
+ */
+export function listNamedConnectorConfigs(): Array<{
+  name: string;
+  config: Record<string, unknown>;
+}> {
+  const dir = getConnectorsDir();
+  if (!existsSync(dir)) return [];
+  const entries: Array<{ name: string; config: Record<string, unknown> }> = [];
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+    const name = file.slice(0, -".json".length);
+    try {
+      const config = JSON.parse(readFileSync(join(dir, file), "utf-8")) as Record<string, unknown>;
+      entries.push({ name, config });
+    } catch (err) {
+      getLogger().warn({ file, err }, "Skipping unreadable connector config");
+    }
+  }
+  return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Delete a named connector config. Returns false when none existed. */
