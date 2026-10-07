@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { FetchError, ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -207,10 +208,6 @@ async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Pr
     `Failed to fetch ${url} after ${MAX_RETRIES} retries: ${lastError?.message ?? "unknown error"}`,
     lastError,
   );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ── Tree Fetching ────────────────────────────────────────────────────────────

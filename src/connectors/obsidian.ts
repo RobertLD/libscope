@@ -5,7 +5,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
-import { createTopic, listTopics } from "../core/topics.js";
+import { createTopic } from "../core/topics.js";
 import { addTagsToDocument, createTag } from "../core/tags.js";
 import { createLink, resolveDocumentByTitle } from "../core/links.js";
 import { getLogger } from "../logger.js";
@@ -199,19 +199,24 @@ function collectTags(body: string, frontmatter: Record<string, unknown>): string
   return [...tagSet];
 }
 
-export function parseObsidianMarkdown(
-  content: string,
-  vaultFiles: string[],
-): {
+interface ParsedObsidianMarkdown {
   frontmatter: Record<string, unknown>;
   body: string;
   tags: string[];
   wikilinks: string[];
-} {
+}
+
+export function parseObsidianMarkdown(
+  content: string,
+  vaultFiles: string[],
+): ParsedObsidianMarkdown {
+  return parseWithFileMap(content, buildVaultFileMap(vaultFiles));
+}
+
+function parseWithFileMap(content: string, fileMap: Map<string, string>): ParsedObsidianMarkdown {
   const safeContent = content.length > MAX_PARSE_SIZE ? content.slice(0, MAX_PARSE_SIZE) : content;
 
   const { frontmatter, body: rawBody } = extractFrontmatter(safeContent);
-  const fileMap = buildVaultFileMap(vaultFiles);
   const wikilinks = collectWikilinks(rawBody);
   const body = transformObsidianBody(rawBody, fileMap);
   const tags = collectTags(body, frontmatter);
@@ -222,15 +227,9 @@ export function parseObsidianMarkdown(
 function resolveEmbeds(
   body: string,
   vaultPath: string,
-  vaultFiles: string[],
+  fileMap: Map<string, string>,
   _visited: Set<string> = new Set(),
 ): string {
-  const fileMap = new Map<string, string>();
-  for (const f of vaultFiles) {
-    const name = basename(f, ".md");
-    fileMap.set(name.toLowerCase(), f);
-  }
-
   return body.replace(
     /!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
     (_match, link: string, display?: string) => {
@@ -261,13 +260,9 @@ function folderToTopic(relPath: string): string | undefined {
   return dir;
 }
 
+/** createTopic returns the existing topic when the name is already taken (ON CONFLICT). */
 function getOrCreateTopic(db: Database.Database, topicPath: string): string {
-  const existing = listTopics(db);
-  const found = existing.find((t) => t.name === topicPath);
-  if (found) return found.id;
-
-  const topic = createTopic(db, { name: topicPath });
-  return topic.id;
+  return createTopic(db, { name: topicPath }).id;
 }
 
 /** Determine the topic ID for a file based on the topic mapping strategy. */
@@ -345,7 +340,7 @@ async function processVaultFile(
   provider: EmbeddingProvider,
   config: ObsidianConfig,
   relPath: string,
-  vaultFiles: string[],
+  fileMap: Map<string, string>,
   tracked: VaultFileEntry | undefined,
   log: ReturnType<typeof getLogger>,
 ): Promise<{ entry: VaultFileEntry; isUpdate: boolean } | "unchanged"> {
@@ -356,8 +351,8 @@ async function processVaultFile(
   if (tracked?.mtime === mtime) return "unchanged";
 
   const rawContent = readFileSync(fullPath, "utf-8");
-  const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, vaultFiles);
-  const parsed = parseObsidianMarkdown(contentWithEmbeds, vaultFiles);
+  const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, fileMap);
+  const parsed = parseWithFileMap(contentWithEmbeds, fileMap);
 
   const title =
     typeof parsed.frontmatter.title === "string"
@@ -432,6 +427,7 @@ async function syncVaultFiles(
   result: SyncResult,
 ): Promise<void> {
   const log = getLogger();
+  const fileMap = buildVaultFileMap(vaultFiles);
   for (const relPath of vaultFiles) {
     try {
       const outcome = await processVaultFile(
@@ -439,7 +435,7 @@ async function syncVaultFiles(
         provider,
         config,
         relPath,
-        vaultFiles,
+        fileMap,
         trackedFiles[relPath],
         log,
       );

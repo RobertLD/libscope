@@ -137,11 +137,12 @@ function replaceStructuredMacros(
 ): string {
   const OPEN = "<ac:structured-macro";
   const CLOSE = "</ac:structured-macro>";
+  const lower = html.toLowerCase();
   let result = "";
   let pos = 0;
 
   while (pos < html.length) {
-    const start = html.toLowerCase().indexOf(OPEN.toLowerCase(), pos);
+    const start = lower.indexOf(OPEN, pos);
     if (start === -1) {
       result += html.slice(pos);
       break;
@@ -152,7 +153,7 @@ function replaceStructuredMacros(
       break;
     }
     const attrs = html.slice(start, tagEnd + 1);
-    const closeStart = html.toLowerCase().indexOf(CLOSE.toLowerCase(), tagEnd + 1);
+    const closeStart = lower.indexOf(CLOSE, tagEnd + 1);
     if (closeStart === -1) {
       result += html.slice(pos);
       break;
@@ -174,11 +175,14 @@ function replaceStructuredMacros(
 function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => string): string {
   const openPrefix = `<${tagName}`;
   const closeTag = `</${tagName}>`;
+  const lower = html.toLowerCase();
+  const lowerOpen = openPrefix.toLowerCase();
+  const lowerClose = closeTag.toLowerCase();
   let result = "";
   let pos = 0;
 
   while (pos < html.length) {
-    const start = html.toLowerCase().indexOf(openPrefix.toLowerCase(), pos);
+    const start = lower.indexOf(lowerOpen, pos);
     if (start === -1) {
       result += html.slice(pos);
       break;
@@ -188,7 +192,7 @@ function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => s
       result += html.slice(pos);
       break;
     }
-    const closeStart = html.toLowerCase().indexOf(closeTag.toLowerCase(), tagEnd + 1);
+    const closeStart = lower.indexOf(lowerClose, tagEnd + 1);
     if (closeStart === -1) {
       result += html.slice(pos);
       break;
@@ -204,10 +208,11 @@ function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => s
 function extractTagContent(html: string, tagName: string): string {
   const open = `<${tagName}>`;
   const close = `</${tagName}>`;
-  const start = html.toLowerCase().indexOf(open.toLowerCase());
+  const lower = html.toLowerCase();
+  const start = lower.indexOf(open.toLowerCase());
   if (start === -1) return "";
   const contentStart = start + open.length;
-  const end = html.toLowerCase().indexOf(close.toLowerCase(), contentStart);
+  const end = lower.indexOf(close.toLowerCase(), contentStart);
   if (end === -1) return "";
   return html.slice(contentStart, end);
 }
@@ -218,11 +223,12 @@ function extractTagContent(html: string, tagName: string): string {
  */
 function removeSelfClosingMacros(html: string, nameTest: RegExp): string {
   const OPEN = "<ac:structured-macro";
+  const lower = html.toLowerCase();
   let result = "";
   let pos = 0;
 
   while (pos < html.length) {
-    const start = html.toLowerCase().indexOf(OPEN.toLowerCase(), pos);
+    const start = lower.indexOf(OPEN, pos);
     if (start === -1) {
       result += html.slice(pos);
       break;

@@ -1,10 +1,6 @@
-import type { DocumentParser } from "./index.js";
+import { PlainTextParser } from "./text.js";
 
-/** Pass-through parser for Markdown files. */
-export class MarkdownParser implements DocumentParser {
-  readonly extensions = [".md", ".markdown", ".mdx"];
-
-  parse(content: Buffer): Promise<string> {
-    return Promise.resolve(content.toString("utf-8"));
-  }
+/** Pass-through parser for Markdown files (same UTF-8 decoding as plain text). */
+export class MarkdownParser extends PlainTextParser {
+  override readonly extensions = [".md", ".markdown", ".mdx"];
 }

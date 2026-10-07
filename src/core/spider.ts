@@ -9,6 +9,7 @@
  *  - Private/internal IPs are blocked by the underlying url-fetcher
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
 import { getLogger } from "../logger.js";
 import { FetchError } from "../errors.js";
 import { fetchRaw, type FetchOptions } from "./url-fetcher.js";
@@ -539,8 +540,4 @@ function extractTextTitle(text: string, url: string): string {
   } catch {
     return url;
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
