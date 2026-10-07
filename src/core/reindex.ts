@@ -15,6 +15,8 @@ export interface ReindexOptions {
   batchSize?: number | undefined;
   /** Called after each batch completes. */
   onProgress?: ((progress: ReindexProgress) => void) | undefined;
+  /** Abort between batches; the returned promise rejects with the signal's reason. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface ReindexProgress {
@@ -76,6 +78,7 @@ export async function reindex(
   const failedChunkIds: string[] = [];
 
   for (let i = 0; i < total; i += batchSize) {
+    options.signal?.throwIfAborted();
     const batch = chunks.slice(i, i + batchSize);
     const texts = batch.map((c) => c.content);
     const ids = batch.map((c) => c.id);

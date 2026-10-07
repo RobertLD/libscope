@@ -494,4 +494,41 @@ describe("spiderUrl", () => {
     const { stats } = await collectPages(gen);
     expect((stats as { abortReason?: string }).abortReason).toBe("maxPages");
   });
+
+  it("throws the abort reason between pages when the signal is aborted", async () => {
+    let counter = 0;
+    mockFetchRaw.mockImplementation((url: string) => {
+      if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
+      counter++;
+      const links = [`https://example.com/page${counter + 100}`];
+      return Promise.resolve(pageResponse(htmlPage(`Page ${counter}`, links), url));
+    });
+    const controller = new AbortController();
+
+    const gen = spiderUrl("https://example.com/", {
+      maxPages: 10,
+      maxDepth: 5,
+      requestDelay: 0,
+      signal: controller.signal,
+    });
+    const first = await gen.next();
+    expect(first.done).toBe(false);
+    controller.abort();
+
+    await expect(gen.next()).rejects.toBe(controller.signal.reason);
+    // Only the seed page was fetched (robots.txt calls excluded).
+    expect(counter).toBe(1);
+  });
+
+  it("throws the abort reason when a page fetch finishes after abort", async () => {
+    const controller = new AbortController();
+    mockFetchRaw.mockImplementation((url: string) => {
+      if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
+      controller.abort();
+      return Promise.resolve(pageResponse(htmlPage("Seed"), url));
+    });
+
+    const gen = spiderUrl("https://example.com/", { requestDelay: 0, signal: controller.signal });
+    await expect(gen.next()).rejects.toHaveProperty("name", "AbortError");
+  });
 });

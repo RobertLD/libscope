@@ -36,7 +36,7 @@ import { errorResponse, textResult, withErrorHandling, type ToolResult } from ".
 export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
 import { formatDocumentLinks, formatLinkCreated, formatSearchResults } from "./format.js";
 import { taskRegistry } from "./tasks.js";
-import type { Task, TaskType } from "./tasks.js";
+import type { TaskType, TaskWork } from "./tasks.js";
 
 /** Build SpiderOptions from submit-document params. */
 function buildSpiderOptions(
@@ -75,6 +75,7 @@ async function handleSpiderSubmit(
     excludePatterns?: string[] | undefined;
   },
   fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+  signal?: AbortSignal,
 ): Promise<string> {
   const { url, library, version, topic } = params;
   if (!url) {
@@ -82,6 +83,7 @@ async function handleSpiderSubmit(
   }
 
   const spiderOptions = buildSpiderOptions(params, fetchOptions);
+  if (signal) spiderOptions.signal = signal;
   const indexed: Array<{ id: string; title: string }> = [];
   const errors: Array<{ url: string; error: string }> = [];
   const sourceType = params.sourceType ?? (library ? "library" : "manual");
@@ -135,6 +137,7 @@ async function handleSingleDocSubmit(
     sourceType?: "library" | "topic" | "manual" | "model-generated" | undefined;
   },
   fetchOptions: { allowPrivateUrls: boolean; allowSelfSignedCerts: boolean },
+  signal?: AbortSignal,
 ): Promise<string> {
   let { title, content } = params;
   const { url, library, version, topic } = params;
@@ -154,6 +157,7 @@ async function handleSingleDocSubmit(
 
   const sourceType = params.sourceType ?? (library ? "library" : "manual");
 
+  signal?.throwIfAborted();
   const result = await indexDocument(db, provider, {
     title,
     content,
@@ -174,34 +178,9 @@ async function handleSingleDocSubmit(
   );
 }
 
-/** Background work for a tool: receives the task's abort signal and a progress reporter. */
-type TaskWork = (
-  signal: AbortSignal,
-  onProgress: (current: number, total: number) => void,
-) => Promise<string>;
-
 /** Fire-and-forget helper: creates a task, runs `work` in background, returns task ID response. */
 function startAsyncTask(type: TaskType, work: TaskWork): ToolResult {
-  const { task, signal } = taskRegistry.create(type);
-  taskRegistry.update(task.id, { status: "running", startedAt: new Date() });
-  const onProgress = (current: number, total: number): void => {
-    taskRegistry.update(task.id, { progress: { current, total } });
-  };
-  const finish = (updates: Partial<Task>): void => {
-    taskRegistry.update(
-      task.id,
-      signal.aborted ? { status: "cancelled", completedAt: new Date() } : updates,
-    );
-  };
-  void work(signal, onProgress).then(
-    (result) => finish({ status: "completed", completedAt: new Date(), result }),
-    (err: unknown) =>
-      finish({
-        status: "failed",
-        completedAt: new Date(),
-        error: err instanceof Error ? err.message : String(err),
-      }),
-  );
+  const { task } = taskRegistry.run(type, work);
   return textResult(`Task queued. ID: ${task.id}\nUse get-task to check status.`);
 }
 
@@ -551,10 +530,10 @@ async function main(): Promise<void> {
         allowSelfSignedCerts: config.indexing.allowSelfSignedCerts,
       };
 
-      return runMaybeAsync(params.async, "index_document", () =>
+      return runMaybeAsync(params.async, "index_document", (signal) =>
         params.spider
-          ? handleSpiderSubmit(db, provider, params, fetchOptions)
-          : handleSingleDocSubmit(db, provider, params, fetchOptions),
+          ? handleSpiderSubmit(db, provider, params, fetchOptions, signal)
+          : handleSingleDocSubmit(db, provider, params, fetchOptions, signal),
       );
     }),
   );
@@ -779,16 +758,14 @@ async function main(): Promise<void> {
     withErrorHandling(async (params) => {
       const { reindex } = await import("../core/reindex.js");
 
-      return runMaybeAsync(params.async, "reindex_library", async (signal, onProgress) => {
+      return runMaybeAsync(params.async, "reindex_documents", async (signal, onProgress) => {
         const result = await reindex(db, provider, {
           documentIds: params.documentIds,
           since: params.since,
           before: params.before,
           batchSize: params.batchSize,
-          onProgress: (p) => {
-            if (signal.aborted) throw new Error("Task cancelled");
-            onProgress(p.completed, p.total);
-          },
+          signal,
+          onProgress: (p) => onProgress(p.completed, p.total),
         });
         return (
           `Reindex complete.\n` +
@@ -874,10 +851,8 @@ async function main(): Promise<void> {
       return runMaybeAsync(params.async, "install_pack", async (signal, onProgress) => {
         const result = await installPack(db, provider, params.nameOrPath, {
           registryUrl: params.registryUrl,
-          onProgress: (current, total) => {
-            if (signal.aborted) throw new Error("Task cancelled");
-            onProgress(current, total);
-          },
+          signal,
+          onProgress: (current, total) => onProgress(current, total),
         });
         return result.alreadyInstalled
           ? `Pack "${result.packName}" is already installed.`
