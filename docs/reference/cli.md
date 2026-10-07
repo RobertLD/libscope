@@ -245,81 +245,82 @@ Running `connect` again for a saved connection changes only the settings you giv
 
 ## Knowledge packs
 
-| Command                                      | Description                                                                      |
-| -------------------------------------------- | -------------------------------------------------------------------------------- |
-| `pack install <nameOrPath>`                  | Install from a git registry, the pack registry URL, or a `.json`/`.json.gz` file |
-| `pack remove <name> [-y]`                    | Remove a pack and its documents                                                  |
-| `pack list [--available] [--registry <url>]` | Installed packs, or packs in the registry                                        |
-| `pack create --name <name> [options]`        | Create a pack from indexed documents, or from files and URLs (`--from`)          |
+| Command                                       | Description                                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `pack install <pack> [--registry <name>]`     | Install `name` or `name@version` from the configured registries, or a `.json`/`.json.gz` file |
+| `pack remove <name> [-y]`                     | Remove a pack and its documents                                                               |
+| `pack list [--available] [--registry <name>]` | Installed packs, or the packs in the configured registries                                    |
+| `pack create --name <name> [options]`         | Create a pack from indexed documents, or from files and URLs (`--from`)                       |
 
 ```bash
-libscope pack install react-docs              # latest from any configured git registry
+libscope pack install react-docs                     # latest version
 libscope pack install react-docs@1.2.0
-libscope pack install react-docs --from-registry official
+libscope pack install react-docs --registry official # when several registries have react-docs
 libscope pack install ./react-docs.json.gz
 libscope pack create --name team-docs --topic engineering
 libscope pack create --name react-docs --from ./react/docs --exclude "*.min.js"
 ```
 
-`pack install` options: `--registry <url>` (URL registry), `--from-registry <name>` and `--pack-version <semver>` (git registries), `-y` (with several registries, use the highest priority instead of asking), `--batch-size <n>`, `--concurrency <n>`, `--resume-from <n>`.
+`pack install` options: `--registry <name>`, `--batch-size <n>`, `--concurrency <n>`, `--resume-from <n>`. Pack names are looked up in the local copies of the registries; run `libscope registry sync` to update them. When more than one registry has the pack, the command fails and names the registries: choose one with `--registry`.
 
 `pack create` options: `--from <sources...>`, `--topic`, `--pack-version`, `--description`, `--author`, `--license`, `--output <path>` (default `<name>.json`, or `<name>.json.gz` with `--from`), `--extensions <exts>`, `--exclude <globs...>`, `--no-recursive`.
 
 ## Pack registries
 
-| Command                                                           | Description                                             |
-| ----------------------------------------------------------------- | ------------------------------------------------------- |
-| `libscope registry add <url> [-n <alias>]`                        | Register a git repo as a pack registry                  |
-| `libscope registry remove <name> [-y]`                            | Unregister a registry                                   |
-| `libscope registry list`                                          | List configured registries                              |
-| `libscope registry sync [<name>]`                                 | Sync one or all registries                              |
-| `libscope registry search <query> [-r <name>]`                    | Search registry pack indexes                            |
-| `libscope registry create <path>`                                 | Initialize a new registry repo                          |
-| `libscope registry publish <file> -r <name>`                      | Publish a pack file to a registry                       |
-| `libscope registry unpublish <pack> -r <name> --pack-version <v>` | Remove a pack version from a registry (or `<pack>@<v>`) |
+A registry is a git repository of packs. `--registry <name>` always means the name of a configured registry.
+
+| Command                                                        | Description                                     |
+| -------------------------------------------------------------- | ----------------------------------------------- |
+| `libscope registry add <url> [-n <name>] [--no-sync]`          | Add a git repository as a registry and clone it |
+| `libscope registry remove <name> [-y]`                         | Remove a registry and its local clone           |
+| `libscope registry list`                                       | List the configured registries                  |
+| `libscope registry sync [<name>]`                              | Fetch the latest packs of one or all registries |
+| `libscope registry search <query> [--registry <name>]`         | Search the packs in the registries              |
+| `libscope registry create <path>`                              | Create an empty registry repository             |
+| `libscope registry publish <file> --registry <name>`           | Publish a pack file to a registry               |
+| `libscope registry unpublish <name@version> --registry <name>` | Remove one version of a pack from a registry    |
 
 ### `libscope registry add`
 
 ```bash
 libscope registry add https://github.com/org/registry.git
-libscope registry add git@github.com:team/packs.git --name team --priority 5
-libscope registry add https://github.com/org/registry.git --sync-interval 86400 --no-sync
+libscope registry add git@github.com:team/packs.git --name team
+libscope registry add file:///srv/libscope-packs.git --no-sync
 ```
 
-| Option                      | Description                                               |
-| --------------------------- | --------------------------------------------------------- |
-| `-n, --name <alias>`        | Short name for this registry (default: inferred from URL) |
-| `--priority <n>`            | Conflict resolution priority — lower wins (default: 10)   |
-| `--sync-interval <seconds>` | Auto-sync interval in seconds, 0 = manual (default: 0)    |
-| `--no-sync`                 | Skip initial sync after adding                            |
+| Option              | Description                                       |
+| ------------------- | ------------------------------------------------- |
+| `-n, --name <name>` | Registry name (default: the last part of the URL) |
+| `--no-sync`         | Do not clone the registry now                     |
+
+URLs can use `https://`, `ssh://`, `git@host:path` or `file:///`.
 
 ### `libscope registry publish`
 
 ```bash
-libscope registry publish ./my-pack.json -r my-registry --pack-version 1.0.0
-libscope registry publish ./my-pack.json -r my-registry            # auto-bump patch version
-libscope registry publish ./my-pack.json -r community --submit     # push to a feature branch
+libscope registry publish ./my-pack.json --registry my-registry --pack-version 1.0.0
+libscope registry publish ./my-pack.json.gz --registry my-registry          # next patch version
+libscope registry publish ./my-pack.json --registry community --submit      # push to a feature branch
 ```
 
-| Option                    | Description                                      |
-| ------------------------- | ------------------------------------------------ |
-| `-r, --registry <name>`   | Target registry (required)                       |
-| `--pack-version <semver>` | Version to publish as (default: auto-bump patch) |
-| `-m, --message <msg>`     | Git commit message                               |
-| `--submit`                | Push to a feature branch instead of main         |
+| Option                    | Description                                                             |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `--registry <name>`       | Target registry (required)                                              |
+| `--pack-version <semver>` | Version to publish (default: next patch version, or the pack's version) |
+| `-m, --message <msg>`     | Git commit message                                                      |
+| `--submit`                | Push to a feature branch instead of the main branch                     |
 
 ### `libscope registry unpublish`
 
 ```bash
-libscope registry unpublish my-pack -r my-registry --pack-version 1.0.0
+libscope registry unpublish my-pack@1.0.0 --registry my-registry
 ```
 
-| Option                    | Description                                                     |
-| ------------------------- | --------------------------------------------------------------- |
-| `-r, --registry <name>`   | Target registry (required)                                      |
-| `--pack-version <semver>` | Version to remove (required unless given as `<pack>@<version>`) |
-| `-m, --message <msg>`     | Git commit message                                              |
-| `-y, --yes`               | Skip confirmation prompt                                        |
+| Option                | Description                |
+| --------------------- | -------------------------- |
+| `--registry <name>`   | Target registry (required) |
+| `-m, --message <msg>` | Git commit message         |
+| `-y, --yes`           | Skip confirmation prompt   |
 
 `libscope registry create ./my-registry` creates a git repo with the registry folder structure. See the [Registry Reference](/reference/registry).
 

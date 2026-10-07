@@ -104,11 +104,15 @@ The parameters of each route are in the OpenAPI document (`GET /openapi.json`).
 
 ### Packs
 
-| Method   | Path                  | Operation      | Description                                                                                      |
-| -------- | --------------------- | -------------- | ------------------------------------------------------------------------------------------------ |
-| `POST`   | `/api/v1/packs`       | `install-pack` | Install a knowledge pack from the registry or a local .json/.json.gz file. Runs as a task (202). |
-| `DELETE` | `/api/v1/packs/:pack` | `remove-pack`  | Remove an installed pack and its documents.                                                      |
-| `GET`    | `/api/v1/packs`       | `list-packs`   | List installed packs, or packs available in the registry.                                        |
+| Method   | Path                        | Operation           | Description                                                                                                         |
+| -------- | --------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/v1/packs`             | `install-pack`      | Install a knowledge pack from a registry (`pack`: name or name@version; optional `registry`). Runs as a task (202). |
+| `DELETE` | `/api/v1/packs/:pack`       | `remove-pack`       | Remove an installed pack and its documents.                                                                         |
+| `GET`    | `/api/v1/packs`             | `list-packs`        | List installed packs, or with `available=true` the packs in the configured registries (optional `registry`).        |
+| `GET`    | `/api/v1/registries`        | `list-registries`   | List the configured pack registries.                                                                                |
+| `GET`    | `/api/v1/registries/search` | `search-registries` | Search the packs in the configured registries (`query`, optional `registry`).                                       |
+
+Registries are read from the local copies under `~/.libscope/registries/`. Adding, removing, syncing and publishing to registries is done with the CLI or the SDK.
 
 ### Connectors
 

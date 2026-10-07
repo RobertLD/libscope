@@ -467,13 +467,13 @@ libscope pack install react-docs@1.2.0    # specific version
 libscope registry create ./my-registry
 
 # Publish a pack file to your registry
-libscope registry publish ./my-pack.json -r my-registry --pack-version 1.0.0
+libscope registry publish ./my-pack.json --registry my-registry --pack-version 1.0.0
 
 # Submit a pack to someone else's registry (creates a feature branch)
-libscope registry publish ./my-pack.json -r community --submit
+libscope registry publish ./my-pack.json --registry community --submit
 ```
 
-Authentication is delegated to git — SSH keys and HTTPS credential helpers work automatically. Registries cache locally and support offline index lookups. See the [Pack Registries guide](/guide/pack-registries) for full details.
+Authentication is delegated to git — SSH keys and HTTPS credential helpers work automatically. Search and install read the local copies of the registries; `libscope registry sync` updates them. See the [Pack Registries guide](/guide/pack-registries) for full details.
 
 There's also a web dashboard at `http://localhost:3377` when you run `libscope serve`, with search, document browsing, topic navigation, and a knowledge graph visualization at `/graph`.
 
@@ -565,10 +565,10 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 | `libscope registry remove <name>`                     | Unregister a registry                    |
 | `libscope registry list`                              | List configured registries               |
 | `libscope registry sync [<name>]`                     | Sync one or all registries               |
-| `libscope registry search <query> [-r <name>]`        | Search registry pack indexes             |
+| `libscope registry search <query> [--registry <name>]` | Search registry pack indexes            |
 | `libscope registry create <path>`                     | Initialize a new registry repo           |
-| `libscope registry publish <file> -r <name>`          | Publish a pack file to a registry        |
-| `libscope registry unpublish <pack> -r <name>`        | Remove a pack version from a registry    |
+| `libscope registry publish <file> --registry <name>`  | Publish a pack file to a registry        |
+| `libscope registry unpublish <name@version> --registry <name>` | Remove a pack version from a registry |
 
 **Utilities**
 
