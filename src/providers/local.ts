@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { EmbeddingError } from "../errors.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import { getLogger } from "../logger.js";
@@ -13,6 +15,15 @@ type FeatureExtractionPipeline = (
   options: { pooling: string; normalize: boolean },
 ) => Promise<TransformersOutput>;
 
+/** Download events from @xenova/transformers while the model is fetched (first use only). */
+export interface ModelDownloadEvent {
+  /** "initiate" | "download" | "progress" | "done" per file, then "ready". */
+  status: string;
+  file?: string | undefined;
+  /** Percent of `file` downloaded (status "progress"). */
+  progress?: number | undefined;
+}
+
 /**
  * Local embedding provider using @xenova/transformers (all-MiniLM-L6-v2).
  * Downloads the model on first use (~80MB). Runs entirely in-process.
@@ -25,6 +36,9 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   private pipeline: FeatureExtractionPipeline | null = null;
   private initPromise: Promise<void> | null = null;
 
+  /** Called while the model is downloaded (not when it is already cached), e.g. to show progress. */
+  onDownloadProgress: ((event: ModelDownloadEvent) => void) | undefined;
+
   private async ensureInitialized(): Promise<void> {
     this.initPromise ??= this.doInitialize();
     await this.initPromise;
@@ -35,11 +49,15 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     log.info("Loading local embedding model (all-MiniLM-L6-v2)...");
     try {
       // Dynamic import to avoid loading transformers until needed
-      const { pipeline } = await import("@xenova/transformers");
+      const { pipeline, env } = await import("@xenova/transformers");
+      const cacheDir: unknown = env.cacheDir;
+      const cached = typeof cacheDir === "string" && existsSync(join(cacheDir, this.model));
+      const onDownload = cached ? undefined : this.onDownloadProgress;
       // Cast to the typed interface; @xenova/transformers lacks precise TS generics for pipeline output
       this.pipeline = (await pipeline(
         "feature-extraction",
         this.model,
+        onDownload ? { progress_callback: onDownload } : undefined,
       )) as unknown as FeatureExtractionPipeline;
       log.info("Local embedding model loaded successfully");
     } catch (err) {

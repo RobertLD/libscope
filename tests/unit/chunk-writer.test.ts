@@ -52,6 +52,6 @@ describe.skipIf(!hasSqliteVec())("createChunkWriter (sqlite-vec)", () => {
       error = err;
     }
     expect(error).toBeInstanceOf(EmbeddingError);
-    expect((error as Error).message).toMatch(/3 dimensions.*libscope reindex --rebuild/);
+    expect((error as Error).message).toMatch(/3 dimensions.*libscope admin reindex --rebuild/);
   });
 });

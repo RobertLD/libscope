@@ -153,6 +153,19 @@ describe("ingest", () => {
     expect(row).toEqual({ source_type: "library", library: "lib" });
   });
 
+  it("stores a file's absolute path as its URL, so adding it again replaces it", async () => {
+    const file = join(dir, "a.md");
+    writeFileSync(file, "# A\n\nAlpha");
+    const first = await ingest({ db, provider }, { source: file });
+    const unchanged = await ingest({ db, provider }, { source: file });
+    expect(unchanged.documents[0]?.documentId).toBe(first.documents[0]?.documentId);
+    writeFileSync(file, "# A\n\nAlpha, changed");
+    await ingest({ db, provider }, { source: file });
+    expect(db.prepare("SELECT url, content FROM documents").all()).toEqual([
+      { url: file, content: "# A\n\nAlpha, changed" },
+    ]);
+  });
+
   it("plans without indexing on a dry run", async () => {
     writeFileSync(join(dir, "a.md"), "# A");
     const result = await ingest({ db, provider }, { source: dir, dryRun: true });

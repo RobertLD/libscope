@@ -48,6 +48,12 @@ export const installPackOperation = defineOperation({
       .max(16)
       .optional()
       .describe("Batches embedded in parallel (default 4)"),
+    resumeFrom: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Skip the first N documents (resume a partial install)"),
   }),
   annotations: { longRunning: true, idempotent: true },
   http: { method: "POST", path: "/packs" },
@@ -57,6 +63,7 @@ export const installPackOperation = defineOperation({
       registryUrl: input.registryUrl,
       batchSize: input.batchSize,
       concurrency: input.concurrency,
+      resumeFrom: input.resumeFrom,
       signal: ctx.signal,
       onProgress: (done, total, message) => ctx.onProgress?.({ done, total, message }),
     });

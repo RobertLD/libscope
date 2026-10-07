@@ -572,6 +572,8 @@ export interface IndexFileOptions {
   sourceType?: IndexDocumentInput["sourceType"] | undefined;
   /** ISO 8601 expiry timestamp (see IndexDocumentInput.expiresAt). */
   expiresAt?: string | undefined;
+  /** Stored as the document URL; re-indexing a file with the same URL updates that document. */
+  url?: string | undefined;
 }
 
 /** Document source types. */
@@ -638,5 +640,6 @@ export async function indexFile(
     topicId: options.topic,
     dedup: options.dedup,
     expiresAt: options.expiresAt,
+    url: options.url,
   });
 }

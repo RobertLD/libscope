@@ -14,7 +14,7 @@ export const INDEX_META_DDL = `
 
 /** The guidance shown whenever the vector index does not match the embedding model. */
 export const REBUILD_VECTOR_INDEX_HINT =
-  "Run `libscope reindex --rebuild` to rebuild the vector index with the configured embedding model.";
+  "Run `libscope admin reindex --rebuild` to rebuild the vector index with the configured embedding model.";
 
 /**
  * sqlite-vec error raised when a vector's size differs from the vector table's

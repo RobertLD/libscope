@@ -404,7 +404,7 @@ export function runMigrations(db: Database.Database, targetVersion: number = SCH
  * is detected, not only a change of vector size.
  *
  * @throws ConfigError when the existing vector table was built for a different provider,
- *   model or vector size. The message tells the user to run `libscope reindex --rebuild`.
+ *   model or vector size. The message tells the user to run `libscope admin reindex --rebuild`.
  * @throws DatabaseError when the vector size is invalid, or unknown (0) and no table exists.
  */
 export function createVectorTable(
@@ -424,7 +424,7 @@ export function createVectorTable(
   if (dimensions === 0) {
     throw new DatabaseError(
       "Invalid vector dimensions: the vector size of the embedding model is not known yet. " +
-        "Set embedding.dimensions in the config, or run `libscope reindex --rebuild` to detect it.",
+        "Set embedding.dimensions in the config, or run `libscope admin reindex --rebuild` to detect it.",
     );
   }
 

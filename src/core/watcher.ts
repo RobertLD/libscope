@@ -3,7 +3,7 @@ import { extname, resolve, basename } from "node:path";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { indexDocument } from "./indexing.js";
+import { indexDocument, resolveSourceType, type SourceType } from "./indexing.js";
 import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { createChildLogger } from "../logger.js";
@@ -37,6 +37,15 @@ export interface WatchOptions {
   onIndex?: (path: string) => void;
   onRemove?: (path: string) => void;
   onError?: (err: Error) => void;
+  /** Metadata for documents the watcher indexes (default: none, source type "manual"). */
+  document?:
+    | {
+        topicId?: string | undefined;
+        library?: string | undefined;
+        version?: string | undefined;
+        sourceType?: SourceType | undefined;
+      }
+    | undefined;
 }
 
 export class FileWatcher {
@@ -134,10 +143,14 @@ export class FileWatcher {
       }
 
       const title = basename(fullPath).replace(/\.[^.]+$/, "");
+      const doc = this.options.document ?? {};
       const result = await indexDocument(this.db, this.provider, {
         title,
         content,
-        sourceType: "manual",
+        sourceType: resolveSourceType({ ...doc, topic: doc.topicId }),
+        library: doc.library,
+        version: doc.version,
+        topicId: doc.topicId,
         url: fullPath,
       });
 
