@@ -1,105 +1,48 @@
 """Tests for libscope Pydantic models."""
 
-from pylibscope.models import (
-    Analytics,
-    AskResult,
-    Document,
-    Graph,
-    GraphEdge,
-    GraphNode,
-    SearchHit,
-    SearchResult,
-    SyncResult,
-    Topic,
-)
+import json
+
+from pylibscope.models import AskResult, Document, Page, SearchHit, Task, Topic
 
 
-class TestDocument:
-    def test_minimal(self):
-        doc = Document(id="1", title="Hello")
-        assert doc.id == "1"
-        assert doc.title == "Hello"
-        assert doc.url is None
-        assert doc.tags == []
-
-    def test_full(self):
-        doc = Document(
-            id="abc",
-            title="Test",
-            url="https://example.com",
-            topic="python",
-            topic_id="t1",
-            tags=["a", "b"],
-            content_hash="sha256:...",
-            source_type="manual",
-            created_at="2024-01-01",
-            updated_at="2024-01-02",
-        )
-        assert doc.url == "https://example.com"
-        assert doc.tags == ["a", "b"]
-        assert doc.source_type == "manual"
+def test_models_read_camel_case_and_accept_snake_case():
+    doc = Document.model_validate({"documentId": "d1", "title": "T", "sourceType": "manual"})
+    assert (doc.document_id, doc.source_type) == ("d1", "manual")
+    assert Document(document_id="d2", title="U").document_id == "d2"
 
 
-class TestSearchResult:
-    def test_empty(self):
-        sr = SearchResult()
-        assert sr.results == []
-        assert sr.total_count == 0
-
-    def test_with_hits(self):
-        hit = SearchHit(document_id="1", title="Doc", content="text", score=0.95)
-        sr = SearchResult(results=[hit], total_count=1)
-        assert len(sr.results) == 1
-        assert sr.results[0].score == 0.95
-        assert sr.results[0].document_id == "1"
-
-
-class TestTopic:
-    def test_basic(self):
-        t = Topic(id="t1", name="Python")
-        assert t.name == "Python"
-        assert t.parent_id is None
-
-    def test_with_parent(self):
-        t = Topic(id="t2", name="Flask", parent_id="t1")
-        assert t.parent_id == "t1"
+def test_page_of_hits():
+    page = Page[SearchHit].model_validate(
+        {
+            "items": [{"documentId": "d", "chunkId": "c", "title": "T", "score": 0.4}],
+            "total": 7,
+            "limit": 1,
+            "offset": 2,
+        }
+    )
+    assert page.items[0].score == 0.4
+    assert (page.total, page.limit, page.offset) == (7, 1, 2)
 
 
-class TestAnalytics:
-    def test_defaults(self):
-        a = Analytics()
-        assert a.total_documents == 0
-        assert a.database_size_bytes == 0
-
-    def test_values(self):
-        a = Analytics(total_documents=42, total_chunks=100, total_topics=5, total_tags=10, database_size_bytes=1024)
-        assert a.total_documents == 42
+def test_task_decodes_its_json_result():
+    task = Task.model_validate(
+        {"id": "t", "status": "completed", "result": json.dumps({"items": [1]})}
+    )
+    assert task.result == {"items": [1]}
+    assert task.done
+    assert not Task(id="t", status="running").done
 
 
-class TestAskResult:
-    def test_basic(self):
-        r = AskResult(answer="42", sources=[{"id": "1"}])
-        assert r.answer == "42"
-        assert len(r.sources) == 1
+def test_ask_result_in_context_mode():
+    result = AskResult.model_validate(
+        {"mode": "context", "contextPrompt": "ctx", "sources": [], "unknown": 1}
+    )
+    assert result.mode == "context"
+    assert result.context_prompt == "ctx"
+    assert result.answer is None
 
 
-class TestGraph:
-    def test_empty(self):
-        g = Graph()
-        assert g.nodes == []
-        assert g.edges == []
-
-    def test_with_data(self):
-        g = Graph(
-            nodes=[GraphNode(id="1", label="Doc1")],
-            edges=[GraphEdge(source="1", target="2", weight=0.8)],
-        )
-        assert len(g.nodes) == 1
-        assert g.edges[0].weight == 0.8
-
-
-class TestSyncResult:
-    def test_basic(self):
-        s = SyncResult(connector="obsidian", documents_synced=5)
-        assert s.connector == "obsidian"
-        assert s.errors == []
+def test_topic_defaults():
+    topic = Topic.model_validate({"id": "a", "name": "A"})
+    assert topic.parent_id is None
+    assert topic.document_count is None

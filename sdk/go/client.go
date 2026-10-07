@@ -1,11 +1,13 @@
 package libscope
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -13,21 +15,23 @@ import (
 const (
 	defaultBaseURL = "http://localhost:3378"
 	defaultTimeout = 30 * time.Second
+	apiPrefix      = "/api/v1"
 )
 
-// Client is the libscope API client.
+// Client is the libscope REST API client.
 type Client struct {
 	baseURL    string
+	apiKey     string
 	httpClient *http.Client
 }
 
 // Option configures a Client.
 type Option func(*Client)
 
-// WithBaseURL sets the base URL for the API.
-func WithBaseURL(url string) Option {
+// WithBaseURL sets the server URL (default http://localhost:3378).
+func WithBaseURL(u string) Option {
 	return func(c *Client) {
-		c.baseURL = strings.TrimRight(url, "/")
+		c.baseURL = strings.TrimRight(u, "/")
 	}
 }
 
@@ -45,7 +49,14 @@ func WithHTTPClient(hc *http.Client) Option {
 	}
 }
 
-// NewClient creates a new libscope API client with the given options.
+// WithAPIKey sends "Authorization: Bearer <key>" (needed when the server sets LIBSCOPE_API_KEY).
+func WithAPIKey(key string) Option {
+	return func(c *Client) {
+		c.apiKey = key
+	}
+}
+
+// NewClient creates a libscope API client.
 func NewClient(opts ...Option) *Client {
 	c := &Client{
 		baseURL:    defaultBaseURL,
@@ -57,65 +68,84 @@ func NewClient(opts ...Option) *Client {
 	return c
 }
 
-// do executes an HTTP request and returns the response body.
-func (c *Client) do(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	url := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+// call sends a request to /api/v1+path and decodes the "data" envelope into out (if non-nil).
+// Non-2xx responses are returned as *Error.
+func (c *Client) call(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	target := c.baseURL + apiPrefix + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("libscope: encoding request: %w", err)
+		}
+		reader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, reader)
 	if err != nil {
-		return nil, fmt.Errorf("libscope: creating request: %w", err)
+		return fmt.Errorf("libscope: creating request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("libscope: executing request: %w", err)
+		return fmt.Errorf("libscope: executing request: %w", err)
 	}
-	return resp, nil
-}
-
-// decodeResponse reads the response body and decodes the API envelope.
-// On non-2xx status, it returns an *Error.
-func decodeResponse[T any](resp *http.Response) (T, error) {
-	var zero T
 	defer resp.Body.Close()
-
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return zero, fmt.Errorf("libscope: reading response: %w", err)
+		return fmt.Errorf("libscope: reading response: %w", err)
 	}
-
 	if resp.StatusCode >= 400 {
-		var errResp apiErrorResponse
-		if json.Unmarshal(data, &errResp) == nil && errResp.Error.Message != "" {
-			return zero, &Error{
-				StatusCode: resp.StatusCode,
-				Code:       errResp.Error.Code,
-				Message:    errResp.Error.Message,
-			}
-		}
-		return zero, &Error{
-			StatusCode: resp.StatusCode,
-			Message:    string(data),
-		}
+		return newError(resp.StatusCode, data)
 	}
-
-	var envelope apiResponse[T]
+	if out == nil {
+		return nil
+	}
+	envelope := struct {
+		Data any `json:"data"`
+	}{Data: out}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return zero, fmt.Errorf("libscope: decoding response: %w", err)
+		return fmt.Errorf("libscope: decoding response: %w", err)
 	}
-	return envelope.Data, nil
+	return nil
 }
 
-// Health checks the health of the libscope server.
+// get decodes a GET response into a new T.
+func get[T any](ctx context.Context, c *Client, path string, query url.Values) (*T, error) {
+	var out T
+	if err := c.call(ctx, http.MethodGet, path, query, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// send decodes a response with a JSON body into a new T.
+func send[T any](ctx context.Context, c *Client, method, path string, body any) (*T, error) {
+	var out T
+	if err := c.call(ctx, method, path, nil, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// segment escapes one path segment (an ID or a name).
+func segment(s string) string {
+	return "/" + url.PathEscape(s)
+}
+
+// Health checks that the server is up.
 func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
-	resp, err := c.do(ctx, http.MethodGet, "/api/v1/health", nil)
-	if err != nil {
-		return nil, err
-	}
-	result, err := decodeResponse[HealthStatus](resp)
-	if err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return get[HealthStatus](ctx, c, "/health", nil)
+}
+
+// Overview returns counts, topics, installed packs, the embedding index and health.
+func (c *Client) Overview(ctx context.Context) (*Overview, error) {
+	return get[Overview](ctx, c, "/overview", nil)
 }

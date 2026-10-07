@@ -1,5 +1,12 @@
 """Custom exceptions for the libscope Python SDK."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibscope.models import Task
+
 
 class LibscopeError(Exception):
     """Base exception for all libscope SDK errors."""
@@ -35,3 +42,12 @@ class ServerError(LibscopeError):
 
     def __init__(self, message: str = "Internal server error") -> None:
         super().__init__(message, code="INTERNAL_ERROR")
+
+
+class TaskFailedError(LibscopeError):
+    """Raised by ``wait_for_task`` when a background task failed or was cancelled."""
+
+    def __init__(self, task: Task) -> None:
+        self.task = task
+        reason = task.error or task.status
+        super().__init__(f"Task {task.id} ({task.operation}) {reason}", code="TASK_FAILED")
