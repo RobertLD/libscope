@@ -276,8 +276,22 @@ const FTS_BACKFILL_SQL = `
   SELECT content, id, document_id FROM chunks;
 `;
 
-/** Run pending migrations on the database. */
-export function runMigrations(db: Database.Database): void {
+/**
+ * Populate chunks_fts from chunks, but only when the FTS index is empty (for example,
+ * right after it was created). A non-empty index is kept in sync by triggers, so
+ * backfilling it again would duplicate every row.
+ */
+function backfillFtsIfEmpty(db: Database.Database): void {
+  const hasFtsRows = db.prepare("SELECT 1 FROM chunks_fts LIMIT 1").get() !== undefined;
+  if (hasFtsRows) return;
+  db.exec(FTS_BACKFILL_SQL);
+}
+
+/**
+ * Run pending migrations on the database.
+ * @param targetVersion - Stop at this schema version (defaults to the latest). Used by tests.
+ */
+export function runMigrations(db: Database.Database, targetVersion: number = SCHEMA_VERSION): void {
   const log = getLogger();
 
   try {
@@ -294,15 +308,15 @@ export function runMigrations(db: Database.Database): void {
       currentVersion = row?.version ?? 0;
     }
 
-    if (currentVersion >= SCHEMA_VERSION) {
+    if (currentVersion >= targetVersion) {
       log.debug({ currentVersion }, "Database schema is up to date");
       return;
     }
 
-    log.info({ from: currentVersion, to: SCHEMA_VERSION }, "Running database migrations");
+    log.info({ from: currentVersion, to: targetVersion }, "Running database migrations");
 
     const migrate = db.transaction(() => {
-      for (let v = currentVersion + 1; v <= SCHEMA_VERSION; v++) {
+      for (let v = currentVersion + 1; v <= targetVersion; v++) {
         const sql = MIGRATIONS[v];
         if (!sql) {
           throw new DatabaseError(`Missing migration for version ${v}`);
@@ -315,7 +329,7 @@ export function runMigrations(db: Database.Database): void {
     migrate();
 
     try {
-      db.exec(FTS_BACKFILL_SQL);
+      backfillFtsIfEmpty(db);
     } catch (err) {
       log.warn({ err }, "FTS backfill failed — new chunks will still be indexed via triggers");
     }
