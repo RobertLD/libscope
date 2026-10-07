@@ -433,11 +433,6 @@ export type AnswerResult =
   | ({ mode: "answer" } & RagResult)
   | ({ mode: "context" } & PassthroughResult);
 
-/** Message for `ask` when no LLM is available. */
-export const NO_LLM_HINT =
-  "No LLM provider configured. Set one with `libscope config set llm.provider <openai|anthropic|ollama|passthrough>` " +
-  "or the LIBSCOPE_LLM_PROVIDER environment variable.";
-
 /**
  * Answer a question from the knowledge base. Every surface uses this one function:
  * passthrough mode returns the context prompt and sources; otherwise the LLM writes the answer.

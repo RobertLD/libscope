@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { createTestDb } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
-import { answer, NO_LLM_HINT, type LlmProvider } from "../../src/core/rag.js";
+import { answer, type LlmProvider } from "../../src/core/rag.js";
 import { indexDocument } from "../../src/core/indexing.js";
 import { addTagsToDocument } from "../../src/core/tags.js";
 import { ConfigError } from "../../src/errors.js";
@@ -66,8 +66,8 @@ describe("answer", () => {
   });
 
   it("throws a ConfigError with setup instructions when no LLM is configured", async () => {
-    await expect(
-      answer(db, provider, { passthrough: false, llm: null }, { question: "q" }),
-    ).rejects.toThrow(new ConfigError(NO_LLM_HINT));
+    const result = answer(db, provider, { passthrough: false, llm: null }, { question: "q" });
+    await expect(result).rejects.toBeInstanceOf(ConfigError);
+    await expect(result).rejects.toThrow("No LLM provider configured");
   });
 });

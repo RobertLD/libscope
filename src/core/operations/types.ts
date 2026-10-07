@@ -8,10 +8,10 @@ import { z } from "zod";
 import type { LibScopeConfig } from "../../config.js";
 import { ConfigError, ValidationError } from "../../errors.js";
 import type { EmbeddingProvider } from "../../providers/embedding.js";
-import { createLlmProvider, isPassthroughMode, type LlmProvider } from "../rag.js";
+import { createLlmProvider, isPassthroughMode, type LlmProvider, type LlmSurface } from "../rag.js";
 import { taskRegistry, type Task } from "../tasks.js";
 
-export type Surface = "cli" | "mcp" | "api" | "sdk";
+export type Surface = LlmSurface;
 
 export type OperationGroup =
   | "documents"
@@ -149,11 +149,12 @@ export function createOperationContext(options: CreateContextOptions): Operation
   let llm: LlmProvider | null | undefined = injected;
   return {
     ...rest,
-    isPassthrough: (): boolean => injected === undefined && isPassthroughMode(options.config),
+    isPassthrough: (): boolean =>
+      injected === undefined && isPassthroughMode(options.config, { surface: options.surface }),
     getLlm: (): LlmProvider | null => {
       if (llm !== undefined) return llm;
       try {
-        llm = createLlmProvider(options.config);
+        llm = createLlmProvider(options.config, { surface: options.surface });
       } catch (err) {
         if (!(err instanceof ConfigError)) throw err;
         llm = null;

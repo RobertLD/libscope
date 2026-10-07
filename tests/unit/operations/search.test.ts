@@ -97,6 +97,13 @@ describe("search operations", () => {
       if (result.mode === "context") expect(result.contextPrompt).toContain("install");
     });
 
+    it("resolves llm.provider auto to passthrough under MCP", async () => {
+      const mcp = makeContext({ db: t.db, surface: "mcp", llm: undefined });
+      await addDoc(t, "Install", "Run npm install to install libscope");
+      const result = await run(askOperation, mcp.ctx, { question: "install" });
+      expect(result.mode).toBe("context");
+    });
+
     it("throws ConfigError when no LLM is configured", async () => {
       await expect(run(askOperation, t.ctx, { question: "anything" })).rejects.toBeInstanceOf(
         ConfigError,
