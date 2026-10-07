@@ -13,6 +13,7 @@ import {
 import { getLogger } from "../logger.js";
 import { saveVersion } from "./versioning.js";
 import { emitEvent } from "./events.js";
+import { buildTagFilter } from "./search.js";
 
 export interface Document {
   id: string;
@@ -117,48 +118,77 @@ export function deleteDocument(db: Database.Database, documentId: string): void 
   emitEvent(db, "document.deleted", { documentId });
 }
 
-/** List documents with optional filters. */
-export function listDocuments(
-  db: Database.Database,
-  options?: {
-    library?: string | undefined;
-    topicId?: string | undefined;
-    sourceType?: string | undefined;
-    dateFrom?: string | undefined;
-    dateTo?: string | undefined;
-    limit?: number | undefined;
-  },
-): Document[] {
-  let sql = `SELECT ${DOC_COLUMNS} FROM documents WHERE 1=1`;
+/** Throw DocumentNotFoundError unless a document with this ID exists. */
+export function assertDocumentExists(db: Database.Database, documentId: string): void {
+  if (!db.prepare("SELECT 1 FROM documents WHERE id = ?").get(documentId)) {
+    throw new DocumentNotFoundError(documentId);
+  }
+}
+
+export interface DocumentFilters {
+  library?: string | undefined;
+  version?: string | undefined;
+  topicId?: string | undefined;
+  sourceType?: string | undefined;
+  /** Only documents carrying all of these tags. */
+  tags?: string[] | undefined;
+  dateFrom?: string | undefined;
+  dateTo?: string | undefined;
+}
+
+export interface ListDocumentsOptions extends DocumentFilters {
+  /** Default 50. */
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+/** WHERE clause (starting with "WHERE 1=1") and params for DocumentFilters on `documents d`. */
+function documentFilterSql(filters: DocumentFilters | undefined): {
+  where: string;
+  params: unknown[];
+} {
+  let where = "WHERE 1=1";
   const params: unknown[] = [];
+  const equals: Array<[string, string | undefined]> = [
+    ["d.library = ?", filters?.library],
+    ["d.version = ?", filters?.version],
+    ["d.topic_id = ?", filters?.topicId],
+    ["d.source_type = ?", filters?.sourceType],
+    ["d.created_at >= ?", filters?.dateFrom],
+    ["d.created_at <= ?", filters?.dateTo],
+  ];
+  for (const [clause, value] of equals) {
+    if (value) {
+      where += ` AND ${clause}`;
+      params.push(value);
+    }
+  }
+  const tagFilter = buildTagFilter(filters?.tags, "d");
+  return { where: where + tagFilter.clause, params: [...params, ...tagFilter.params] };
+}
 
-  if (options?.library) {
-    sql += " AND library = ?";
-    params.push(options.library);
-  }
-  if (options?.topicId) {
-    sql += " AND topic_id = ?";
-    params.push(options.topicId);
-  }
-  if (options?.sourceType) {
-    sql += " AND source_type = ?";
-    params.push(options.sourceType);
-  }
-  if (options?.dateFrom) {
-    sql += " AND created_at >= ?";
-    params.push(options.dateFrom);
-  }
-  if (options?.dateTo) {
-    sql += " AND created_at <= ?";
-    params.push(options.dateTo);
-  }
-
-  sql += " ORDER BY updated_at DESC LIMIT ?";
-  params.push(options?.limit ?? 50);
-
-  const rows = db.prepare(sql).all(...params) as DocumentRow[];
+/** List documents with optional filters, most recently updated first. */
+export function listDocuments(db: Database.Database, options?: ListDocumentsOptions): Document[] {
+  const { where, params } = documentFilterSql(options);
+  const columns = DOC_COLUMNS.split(", ")
+    .map((c) => `d.${c}`)
+    .join(", ");
+  const rows = db
+    .prepare(
+      `SELECT ${columns} FROM documents d ${where} ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
+    )
+    .all(...params, options?.limit ?? 50, options?.offset ?? 0) as DocumentRow[];
 
   return rows.map((row) => rowToDocument(row));
+}
+
+/** Number of documents matching the filters (for paging listDocuments). */
+export function countDocuments(db: Database.Database, filters?: DocumentFilters): number {
+  const { where, params } = documentFilterSql(filters);
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM documents d ${where}`).get(...params) as {
+    n: number;
+  };
+  return row.n;
 }
 
 export interface UpdateDocumentInput {

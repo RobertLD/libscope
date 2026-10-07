@@ -12,7 +12,7 @@ import {
 } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ValidationError, FetchError } from "../errors.js";
+import { ValidationError, FetchError, NotFoundError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import {
   buildEmbeddingText,
@@ -603,7 +603,7 @@ export function removePack(db: Database.Database, packName: string): void {
     | undefined;
 
   if (!existing) {
-    throw new ValidationError(`Pack "${packName}" is not installed`);
+    throw new NotFoundError(`Pack "${packName}" is not installed`, "PACK_NOT_FOUND");
   }
 
   const docIds = db.prepare("SELECT id FROM documents WHERE pack_name = ?").all(packName) as Array<{

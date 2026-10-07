@@ -96,6 +96,10 @@ export function listSavedSearches(
   return rows.map(rowToSavedSearch);
 }
 
+export function countSavedSearches(db: Database.Database): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM saved_searches").get() as { n: number }).n;
+}
+
 export function getSavedSearch(db: Database.Database, id: string): SavedSearch {
   const row = db.prepare("SELECT * FROM saved_searches WHERE id = ? OR name = ?").get(id, id) as
     | SavedSearchRow

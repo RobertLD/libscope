@@ -5,7 +5,7 @@ import {
   deleteTag,
   listTags,
   addTagsToDocument,
-  removeTagFromDocument,
+  removeTagsFromDocument,
   getDocumentTags,
   getDocumentsByTag,
   suggestTags,
@@ -110,13 +110,12 @@ describe("tags", () => {
     });
   });
 
-  describe("removeTagFromDocument", () => {
-    it("should remove only the specified tag", () => {
+  describe("removeTagsFromDocument", () => {
+    it("should remove only the named tags and report them", () => {
       insertDocument(db, "doc-1", "Test Doc");
-      const tags = addTagsToDocument(db, "doc-1", ["keep", "remove"]);
-      const removeId = tags.find((t) => t.name === "remove")!.id;
+      addTagsToDocument(db, "doc-1", ["keep", "remove"]);
 
-      removeTagFromDocument(db, "doc-1", removeId);
+      expect(removeTagsFromDocument(db, "doc-1", ["REMOVE", "absent"])).toEqual(["remove"]);
 
       const docTags = getDocumentTags(db, "doc-1");
       expect(docTags).toHaveLength(1);

@@ -8,10 +8,10 @@ import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-m
 import { logSearch, recordSearchQuery } from "./analytics.js";
 import { emitEvent } from "./events.js";
 import { performance } from "node:perf_hooks";
-import { ChunkNotFoundError } from "../errors.js";
+import { ChunkNotFoundError, DocumentNotFoundError } from "../errors.js";
 
 /** Build SQL clause and params for AND-logic tag filtering on a document alias. */
-function buildTagFilter(
+export function buildTagFilter(
   tags: string[] | undefined,
   docAlias: string,
 ): { clause: string; params: unknown[] } {
@@ -849,6 +849,23 @@ const SourceChunkSchema = z.object({
   chunk_index: z.number(),
 });
 const EmbeddingRowSchema = z.object({ embedding: z.instanceof(Buffer) });
+
+/**
+ * ID of a document's first chunk, used to find content related to a whole document.
+ * Throws DocumentNotFoundError for an unknown document, ChunkNotFoundError when it has no chunks.
+ */
+export function firstChunkId(db: Database.Database, documentId: string): string {
+  const row = db
+    .prepare(
+      `SELECT d.id AS document_id, c.id AS chunk_id FROM documents d
+       LEFT JOIN chunks c ON c.document_id = d.id
+       WHERE d.id = ? ORDER BY c.chunk_index LIMIT 1`,
+    )
+    .get(documentId) as { document_id: string; chunk_id: string | null } | undefined;
+  if (!row) throw new DocumentNotFoundError(documentId);
+  if (row.chunk_id === null) throw new ChunkNotFoundError(`first chunk of ${documentId}`);
+  return row.chunk_id;
+}
 
 /**
  * Find chunks related to a given chunk by vector similarity.

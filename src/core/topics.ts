@@ -138,6 +138,21 @@ export function getTopic(db: Database.Database, topicId: string): Topic {
   return rowToTopic(row);
 }
 
+/** ID of the topic whose ID or name (case-insensitive) is `ref`, or undefined. */
+export function findTopicId(db: Database.Database, ref: string): string | undefined {
+  const row = db
+    .prepare("SELECT id FROM topics WHERE id = ? OR name = ? COLLATE NOCASE ORDER BY id = ? DESC")
+    .get(ref, ref, ref) as { id: string } | undefined;
+  return row?.id;
+}
+
+/** ID of the topic whose ID or name is `ref`. Throws TopicNotFoundError when there is none. */
+export function resolveTopicId(db: Database.Database, ref: string): string {
+  const id = findTopicId(db, ref);
+  if (id === undefined) throw new TopicNotFoundError(ref);
+  return id;
+}
+
 export interface GetDocumentsByTopicOptions {
   limit?: number;
   offset?: number;
