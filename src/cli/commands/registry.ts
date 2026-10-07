@@ -23,6 +23,7 @@ import { getRegistryCacheDir } from "../../registry/types.js";
 import { syncRegistryByName, syncAllRegistries } from "../../registry/sync.js";
 import { searchRegistries } from "../../registry/search.js";
 import { publishPack, publishPackToBranch, unpublishPack } from "../../registry/publish.js";
+import { parsePackSpecifier } from "../../registry/resolve.js";
 import { confirmOrCancel } from "../confirm.js";
 
 /** Derive a short name from a git URL (e.g. "github.com/org/repo" → "repo"). */
@@ -349,13 +350,13 @@ export function registerRegistryCommands(program: Command): void {
     .command("publish <packFile>")
     .description("Publish a pack file to a registry")
     .requiredOption("-r, --registry <name>", "Target registry name")
-    .option("--version <semver>", "Version to publish as (default: auto-bump patch)")
+    .option("--pack-version <semver>", "Version to publish as (default: auto-bump patch)")
     .option("-m, --message <msg>", "Git commit message")
     .option("--submit", "Push to a feature branch instead of main (for PR workflow)")
     .action(
       async (
         packFile: string,
-        opts: { registry: string; version?: string; message?: string; submit?: boolean },
+        opts: { registry: string; packVersion?: string; message?: string; submit?: boolean },
       ) => {
         await requireGit();
 
@@ -366,7 +367,7 @@ export function registerRegistryCommands(program: Command): void {
             const result = await publishPackToBranch({
               registryName: opts.registry,
               packFilePath: resolved,
-              version: opts.version,
+              version: opts.packVersion,
               commitMessage: opts.message,
             });
             console.log(
@@ -377,7 +378,7 @@ export function registerRegistryCommands(program: Command): void {
             const result = await publishPack({
               registryName: opts.registry,
               packFilePath: resolved,
-              version: opts.version,
+              version: opts.packVersion,
               commitMessage: opts.message,
             });
             console.log(
@@ -394,21 +395,30 @@ export function registerRegistryCommands(program: Command): void {
   // --- registry unpublish ---
   registryCmd
     .command("unpublish <packName>")
-    .description("Remove a pack version from a registry")
+    .description("Remove a pack version from a registry (accepts name@version)")
     .requiredOption("-r, --registry <name>", "Target registry name")
-    .requiredOption("--version <semver>", "Version to unpublish")
+    .option("--pack-version <semver>", "Version to unpublish (or use name@version)")
     .option("-m, --message <msg>", "Git commit message")
     .option("-y, --yes", "Skip confirmation prompt")
     .action(
       async (
-        packName: string,
-        opts: { registry: string; version: string; message?: string; yes?: boolean },
+        packSpec: string,
+        opts: { registry: string; packVersion?: string; message?: string; yes?: boolean },
       ) => {
+        const { name: packName, version: specVersion } = parsePackSpecifier(packSpec);
+        const version = opts.packVersion ?? specVersion;
+        if (!version) {
+          console.error(
+            "Error: specify a version with <name>@<version> or --pack-version <semver>.",
+          );
+          process.exit(1);
+        }
+
         await requireGit();
 
         if (
           !(await confirmOrCancel(
-            `Unpublish "${packName}@${opts.version}" from "${opts.registry}"? This cannot be undone.`,
+            `Unpublish "${packName}@${version}" from "${opts.registry}"? This cannot be undone.`,
             opts.yes,
           ))
         ) {
@@ -419,10 +429,10 @@ export function registerRegistryCommands(program: Command): void {
           await unpublishPack({
             registryName: opts.registry,
             packName,
-            version: opts.version,
+            version,
             commitMessage: opts.message,
           });
-          console.log(`Pack "${packName}@${opts.version}" unpublished from "${opts.registry}".`);
+          console.log(`Pack "${packName}@${version}" unpublished from "${opts.registry}".`);
         } catch (err) {
           console.error(`Error: ${formatError(err)}`);
           process.exit(1);

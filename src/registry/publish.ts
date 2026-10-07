@@ -183,7 +183,7 @@ function resolveVersionAndManifest(
   if (manifest.versions.some((v) => v.version === version)) {
     throw new ValidationError(
       `Version ${version} of "${pack.name}" already exists in "${registryName}". ` +
-        "Use --version to specify a different version.",
+        "Use --pack-version to specify a different version.",
     );
   }
 

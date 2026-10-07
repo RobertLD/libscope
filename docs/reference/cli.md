@@ -22,12 +22,12 @@ libscope add ./path/to/doc.md --topic deployment --title "Deploy Guide"
 libscope add https://reactjs.org/docs/hooks-intro.html --library react
 ```
 
-| Option             | Description                 |
-| ------------------ | --------------------------- |
-| `--library <name>` | Assign to a library         |
-| `--topic <name>`   | Assign to a topic           |
-| `--title <title>`  | Override the document title |
-| `--version <ver>`  | Library version tag         |
+| Option                | Description                 |
+| --------------------- | --------------------------- |
+| `--library <name>`    | Assign to a library         |
+| `--topic <name>`      | Assign to a topic           |
+| `--title <title>`     | Override the document title |
+| `--lib-version <ver>` | Library version tag         |
 
 ### `libscope import`
 
@@ -37,25 +37,27 @@ Recursively import files from a directory.
 libscope import ./wiki/ --topic internal --extensions .md,.mdx,.txt
 ```
 
-| Option                | Description                                      |
-| --------------------- | ------------------------------------------------ |
-| `--library <name>`    | Assign all docs to a library                     |
-| `--topic <name>`      | Assign all docs to a topic                       |
-| `--extensions <exts>` | Comma-separated file extensions (default: `.md`) |
+| Option                | Description                                                      |
+| --------------------- | ---------------------------------------------------------------- |
+| `--library <name>`    | Assign all docs to a library                                     |
+| `--topic <name>`      | Assign all docs to a topic                                       |
+| `--lib-version <ver>` | Library version tag                                              |
+| `--extensions <exts>` | Comma-separated file extensions (default: all supported formats) |
 
 ### `libscope import-batch`
 
-Parallel batch import with progress tracking.
+Parallel batch import with progress tracking. Files are parsed by format (PDF, Word, EPUB, PowerPoint, HTML, and so on). Files with an unsupported extension are skipped with a warning.
 
 ```bash
 libscope import-batch ./docs/ --concurrency 10 --filter "**/*.md" --library my-lib
 ```
 
-| Option              | Description                  |
-| ------------------- | ---------------------------- |
-| `--concurrency <n>` | Number of parallel workers   |
-| `--filter <glob>`   | Glob pattern to match files  |
-| `--library <name>`  | Assign all docs to a library |
+| Option                | Description                                                  |
+| --------------------- | ------------------------------------------------------------ |
+| `--concurrency <n>`   | Number of parallel workers                                   |
+| `--filter <glob>`     | Glob pattern to match files (default: all supported formats) |
+| `--library <name>`    | Assign all docs to a library                                 |
+| `--lib-version <ver>` | Library version tag                                          |
 
 ### `libscope search`
 
@@ -142,7 +144,7 @@ Update an existing document's title, content, or metadata. Changing content trig
 ```bash
 libscope docs update <documentId> --title "New Title"
 libscope docs update <documentId> --content "Updated content here"
-libscope docs update <documentId> --library vue --version 3.0.0
+libscope docs update <documentId> --library vue --lib-version 3.0.0
 ```
 
 | Option                | Description                        |
@@ -150,7 +152,7 @@ libscope docs update <documentId> --library vue --version 3.0.0
 | `--title <title>`     | New document title                 |
 | `--content <content>` | New content (triggers re-chunking) |
 | `--library <name>`    | New library name                   |
-| `--version <ver>`     | New library version                |
+| `--lib-version <ver>` | New library version                |
 | `--url <url>`         | New source URL                     |
 | `--topic <topicId>`   | New topic ID                       |
 
@@ -252,14 +254,14 @@ When no local file path is given, `pack install` searches configured registries:
 ```bash
 libscope pack install react-docs              # latest from any registry
 libscope pack install react-docs@1.2.0        # specific version
-libscope pack install react-docs --version 1.2.0
+libscope pack install react-docs --pack-version 1.2.0
 libscope pack install react-docs --registry official
 ```
 
-| Option               | Description                                  |
-| -------------------- | -------------------------------------------- |
-| `--version <semver>` | Install a specific version (default: latest) |
-| `--registry <name>`  | Install from a specific registry             |
+| Option                    | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `--pack-version <semver>` | Install a specific version (default: latest) |
+| `--registry <name>`       | Install from a specific registry             |
 
 ## Pack Registries
 
@@ -272,7 +274,7 @@ libscope pack install react-docs --registry official
 | `libscope registry search <query> [-r <name>]`             | Search registry pack indexes           |
 | `libscope registry create <path>`                          | Initialize a new registry repo         |
 | `libscope registry publish <file> -r <name>`               | Publish a pack file to a registry      |
-| `libscope registry unpublish <pack> -r <name> --version <v>` | Remove a pack version from a registry |
+| `libscope registry unpublish <pack> -r <name> --pack-version <v>` | Remove a pack version from a registry (or `<pack>@<v>`) |
 
 ### `libscope registry add`
 
@@ -300,7 +302,7 @@ libscope registry search "kubernetes" -r official
 
 ```bash
 # Direct publish (you have write access)
-libscope registry publish ./my-pack.json -r my-registry --version 1.0.0
+libscope registry publish ./my-pack.json -r my-registry --pack-version 1.0.0
 
 # Auto-bump patch version
 libscope registry publish ./my-pack.json -r my-registry
@@ -312,20 +314,20 @@ libscope registry publish ./my-pack.json -r community --submit
 | Option                   | Description                                              |
 | ------------------------ | -------------------------------------------------------- |
 | `-r, --registry <name>`  | Target registry (required)                              |
-| `--version <semver>`     | Version to publish as (default: auto-bump patch)         |
+| `--pack-version <semver>` | Version to publish as (default: auto-bump patch)         |
 | `-m, --message <msg>`    | Git commit message                                      |
 | `--submit`               | Push to a feature branch instead of main                 |
 
 ### `libscope registry unpublish`
 
 ```bash
-libscope registry unpublish my-pack -r my-registry --version 1.0.0
+libscope registry unpublish my-pack -r my-registry --pack-version 1.0.0
 ```
 
 | Option                   | Description                       |
 | ------------------------ | --------------------------------- |
 | `-r, --registry <name>`  | Target registry (required)       |
-| `--version <semver>`     | Version to remove (required)      |
+| `--pack-version <semver>` | Version to remove (required unless given as `<pack>@<version>`) |
 | `-m, --message <msg>`    | Git commit message                |
 | `-y, --yes`              | Skip confirmation prompt          |
 
@@ -353,7 +355,7 @@ Creates a git repo with the canonical registry folder structure. See the [Regist
 
 | Command                               | Description                             |
 | ------------------------------------- | --------------------------------------- |
-| `libscope watch <directory>`          | Watch for file changes and auto-reindex |
+| `libscope watch <directory>`          | Watch for file changes and auto-reindex (all supported formats, plus `.rst`) |
 | `libscope reindex`                    | Re-embed chunks with current provider   |
 | `libscope dedupe`                     | Scan for duplicate documents            |
 | `libscope export <outputPath>`        | Export knowledge base to JSON           |

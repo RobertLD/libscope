@@ -1,8 +1,8 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { indexDocument } from "./indexing.js";
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { indexFile } from "./indexing.js";
+import { getParserForFile } from "./parsers/index.js";
+import { basename, extname } from "node:path";
 import { getLogger } from "../logger.js";
 
 export interface BatchImportOptions {
@@ -18,12 +18,16 @@ export interface BatchProgress {
   total: number;
   completed: number;
   failed: number;
+  /** Files skipped because no parser handles their extension. */
+  skipped: number;
   currentFile?: string;
 }
 
 export interface BatchFileResult {
   file: string;
   success: boolean;
+  /** True when the file was not imported because its extension is unsupported. */
+  skipped?: boolean;
   chunkCount?: number;
   documentId?: string;
   error?: string;
@@ -33,6 +37,7 @@ export interface BatchImportResult {
   total: number;
   completed: number;
   failed: number;
+  skipped: number;
   results: BatchFileResult[];
 }
 
@@ -48,7 +53,7 @@ export async function batchImport(
 ): Promise<BatchImportResult> {
   const logger = getLogger();
   const concurrency = options.concurrency ?? 5;
-  const progress: BatchProgress = { total: files.length, completed: 0, failed: 0 };
+  const progress: BatchProgress = { total: files.length, completed: 0, failed: 0, skipped: 0 };
   const results: BatchFileResult[] = [];
 
   logger.debug(`Starting batch import: ${files.length} files, concurrency ${concurrency}`);
@@ -75,6 +80,8 @@ export async function batchImport(
             results[currentIndex] = result;
             if (result.success) {
               progress.completed++;
+            } else if (result.skipped) {
+              progress.skipped++;
             } else {
               progress.failed++;
             }
@@ -91,7 +98,7 @@ export async function batchImport(
           })
           .finally(() => {
             activeCount--;
-            if (progress.completed + progress.failed === files.length) {
+            if (progress.completed + progress.failed + progress.skipped === files.length) {
               resolve();
             } else {
               runNext();
@@ -107,6 +114,7 @@ export async function batchImport(
     total: files.length,
     completed: progress.completed,
     failed: progress.failed,
+    skipped: progress.skipped,
     results,
   };
 }
@@ -117,16 +125,17 @@ async function processFile(
   file: string,
   options: BatchImportOptions,
 ): Promise<BatchFileResult> {
-  const content = readFileSync(file, "utf-8");
-  const title = basename(file).replace(/\.[^.]+$/, "");
+  if (!getParserForFile(file)) {
+    const error = `Unsupported file type "${extname(file) || basename(file)}"`;
+    getLogger().warn({ file }, `Skipping ${file}: ${error}`);
+    return { file, success: false, skipped: true, error };
+  }
 
-  const result = await indexDocument(db, provider, {
-    title,
-    content,
-    sourceType: options.library ? "library" : options.topicId ? "topic" : "manual",
+  const result = await indexFile(db, provider, file, {
+    sourceType: options.sourceType,
     library: options.library,
     version: options.version,
-    topicId: options.topicId,
+    topic: options.topicId,
   });
 
   return {

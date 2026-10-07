@@ -103,13 +103,13 @@ libscope registry publish <packFile> -r <name> [options]
 | ----------------------- | -------------------------------------------------------- |
 | `<packFile>`            | Path to the pack `.json` file to publish                 |
 | `-r, --registry <name>` | Target registry (required)                              |
-| `--version <semver>`    | Version to publish as (default: auto-bump patch)         |
+| `--pack-version <semver>` | Version to publish as (default: auto-bump patch)         |
 | `-m, --message <msg>`   | Git commit message                                      |
 | `--submit`              | Push to a feature branch instead of main (for PR workflow) |
 
 **Direct publish** (you have write access):
 ```bash
-libscope registry publish ./react-docs.json -r my-registry --version 1.0.0
+libscope registry publish ./react-docs.json -r my-registry --pack-version 1.0.0
 ```
 
 **Submit for inclusion** (you don't have write access):
@@ -124,14 +124,14 @@ The `--submit` flag creates a `feature/add-<pack-name>` branch and pushes it. Yo
 Remove a specific pack version from a registry.
 
 ```bash
-libscope registry unpublish <packName> -r <name> --version <semver> [options]
+libscope registry unpublish <packName>[@<semver>] -r <name> [--pack-version <semver>] [options]
 ```
 
 | Option                  | Description                       |
 | ----------------------- | --------------------------------- |
 | `<packName>`            | Name of the pack to unpublish     |
 | `-r, --registry <name>` | Target registry (required)       |
-| `--version <semver>`    | Version to remove (required)      |
+| `--pack-version <semver>` | Version to remove (required unless given as `<packName>@<semver>`) |
 | `-m, --message <msg>`   | Git commit message                |
 | `-y, --yes`             | Skip confirmation prompt          |
 
@@ -142,12 +142,12 @@ If the last version of a pack is unpublished, the entire pack is removed from th
 The existing `pack install` command is extended to resolve packs from registries.
 
 ```bash
-libscope pack install <name> [--version <semver>] [--registry <name>]
+libscope pack install <name> [--pack-version <semver>] [--registry <name>]
 ```
 
 | Option               | Description                                    |
 | -------------------- | ---------------------------------------------- |
-| `--version <semver>` | Install a specific version (default: latest)   |
+| `--pack-version <semver>` | Install a specific version (default: latest)   |
 | `--registry <name>`  | Install from a specific registry               |
 
 ```bash
@@ -156,7 +156,7 @@ libscope pack install react-docs
 
 # Install specific version
 libscope pack install react-docs@1.2.0
-libscope pack install react-docs --version 1.2.0
+libscope pack install react-docs --pack-version 1.2.0
 
 # Install from a specific registry
 libscope pack install react-docs --registry official
@@ -342,9 +342,9 @@ Pack versions follow [semver](https://semver.org/):
 
 - Versions must be valid semver strings (e.g. `1.0.0`, `2.3.1`)
 - `pack install <name>` installs the latest version
-- `pack install <name>@1.0.0` or `--version 1.0.0` installs a specific version
+- `pack install <name>@1.0.0` or `--pack-version 1.0.0` installs a specific version
 - Old versions are preserved in the registry — publishing a new version does not remove previous ones
-- When publishing without `--version`, the patch version is auto-bumped from the latest
+- When publishing without `--pack-version`, the patch version is auto-bumped from the latest
 - The `latestVersion` in `index.json` always points to the most recently published version
 
 ## Conflict Resolution

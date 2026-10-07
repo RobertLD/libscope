@@ -451,7 +451,7 @@ libscope pack install react-docs@1.2.0    # specific version
 libscope registry create ./my-registry
 
 # Publish a pack file to your registry
-libscope registry publish ./my-pack.json -r my-registry --version 1.0.0
+libscope registry publish ./my-pack.json -r my-registry --pack-version 1.0.0
 
 # Submit a pack to someone else's registry (creates a feature branch)
 libscope registry publish ./my-pack.json -r community --submit
