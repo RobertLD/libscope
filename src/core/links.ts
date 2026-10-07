@@ -4,15 +4,18 @@ import { ValidationError, DocumentNotFoundError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import { extractMarkdownLinks, extractWikilinks } from "./link-extractor.js";
 
-export type LinkType = "see_also" | "prerequisite" | "supersedes" | "related" | "references";
-
-const VALID_LINK_TYPES: ReadonlySet<string> = new Set<LinkType>([
+/** Every link type accepted by {@link createLink}. */
+export const LINK_TYPES = [
   "see_also",
   "prerequisite",
   "supersedes",
   "related",
   "references",
-]);
+] as const;
+
+export type LinkType = (typeof LINK_TYPES)[number];
+
+const VALID_LINK_TYPES: ReadonlySet<string> = new Set<string>(LINK_TYPES);
 
 export interface DocumentLink {
   id: string;

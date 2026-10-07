@@ -16,6 +16,8 @@ Semantic search across your knowledge base.
 | `limit`     | number |          | Max results (default: 10)    |
 | `offset`    | number |          | Pagination offset            |
 
+Each result shows a `**Document ID:** … | **Chunk ID:** …` line. Pass these IDs to `get-document`, `rate-document`, `get-related`, and `link-documents`.
+
 **Search results** include a `scoreExplanation` object on each result:
 
 ```typescript
@@ -236,12 +238,14 @@ Create a typed cross-reference relationship between two documents.
 | ---------- | ------ | -------- | -------------------------------------------------------------------- |
 | `sourceId` | string | ✅       | The source document ID                                               |
 | `targetId` | string | ✅       | The target document ID                                               |
-| `linkType` | string | ✅       | Relationship type: `see_also`, `prerequisite`, `supersedes`, `related` |
+| `linkType` | string | ✅       | Relationship type: `see_also`, `prerequisite`, `supersedes`, `related`, `references` |
 | `label`    | string |          | Optional human-readable description of the relationship              |
+
+The output includes a `Link ID:` line. Pass this ID to `delete-link`.
 
 ## get-document-links
 
-Get all cross-reference links for a document, both outgoing and incoming.
+Get all cross-reference links for a document, both outgoing and incoming. Each line ends with `[link ID: …]`, which you can pass to `delete-link`.
 
 | Parameter    | Type   | Required | Description     |
 | ------------ | ------ | -------- | --------------- |
