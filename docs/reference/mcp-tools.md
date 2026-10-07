@@ -73,7 +73,7 @@ Index a new document. You can provide content directly, or a URL to fetch automa
 
 ## update-document
 
-Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding.
+Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding. Changing the title, library, or version re-embeds the existing chunks, because these fields are part of the embedded text.
 
 | Parameter    | Type   | Required | Description                             |
 | ------------ | ------ | -------- | --------------------------------------- |

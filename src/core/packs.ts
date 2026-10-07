@@ -14,7 +14,12 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError, FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
-import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import {
+  buildEmbeddingText,
+  createChunkWriter,
+  splitIntoChunks,
+  type ChunkWriter,
+} from "./indexing.js";
 import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { suggestTagsFromText } from "./tags.js";
@@ -341,27 +346,28 @@ type DocChunkInfo = {
 };
 type ResolvedBatch = {
   docInfos: DocChunkInfo[];
-  allChunks: string[];
+  /** Text to embed for every chunk in the batch, in docInfos/chunk order. */
+  embeddingTexts: string[];
 };
 
 /** Chunk a batch's documents on demand, right before embedding. */
 function resolveBatch(batchDocs: PackDocument[]): ResolvedBatch {
   const docInfos: DocChunkInfo[] = [];
-  const allChunks: string[] = [];
+  const embeddingTexts: string[] = [];
   for (const doc of batchDocs) {
     const contentHash = createHash("sha256").update(doc.content).digest("hex");
-    const useStreaming = doc.content.length > STREAMING_THRESHOLD;
-    const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
+    const chunks = splitIntoChunks(doc.content);
     docInfos.push({
       doc,
       docId: randomUUID(),
       contentHash,
       chunks,
-      chunkOffset: allChunks.length,
+      chunkOffset: embeddingTexts.length,
     });
-    allChunks.push(...chunks);
+    // Pack documents are stored with a title only (no library/version).
+    embeddingTexts.push(...chunks.map((c) => buildEmbeddingText(c, { title: doc.title })));
   }
-  return { docInfos, allChunks };
+  return { docInfos, embeddingTexts };
 }
 
 /** Insert a single resolved batch into the database. Returns number of documents installed. */
@@ -371,10 +377,8 @@ function insertBatchIntoDb(
   embeddings: number[][],
   packName: string,
   insertDoc: Database.Statement,
-  insertChunk: Database.Statement,
-  insertEmbedding: Database.Statement,
+  writer: ChunkWriter,
 ): number {
-  const log = getLogger();
   const doInsert = db.transaction(() => {
     for (const info of batch.docInfos) {
       insertDoc.run(
@@ -387,21 +391,11 @@ function insertBatchIntoDb(
         info.contentHash,
         packName,
       );
-      for (let j = 0; j < info.chunks.length; j++) {
-        const chunkId = randomUUID();
-        const chunkText = info.chunks[j] ?? "";
-        const embedding = embeddings[info.chunkOffset + j] ?? [];
-        insertChunk.run(chunkId, info.docId, chunkText, j);
-        try {
-          const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-          insertEmbedding.run(chunkId, vecBuffer);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (!message.includes("no such table")) {
-            log.warn({ chunkId, err }, "Failed to insert vector embedding");
-          }
-        }
-      }
+      writer.insertChunks(
+        info.docId,
+        info.chunks,
+        embeddings.slice(info.chunkOffset, info.chunkOffset + info.chunks.length),
+      );
     }
   });
   doInsert();
@@ -514,14 +508,7 @@ export async function installPack(
     INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertChunk = db.prepare(`
-    INSERT INTO chunks (id, document_id, content, chunk_index)
-    VALUES (?, ?, ?, ?)
-  `);
-  const insertEmbedding = db.prepare(`
-    INSERT INTO chunk_embeddings (chunk_id, embedding)
-    VALUES (?, ?)
-  `);
+  const writer = createChunkWriter(db, provider);
 
   type BatchData = { batchDocs: PackDocument[] };
   const batches: BatchData[] = [];
@@ -549,15 +536,7 @@ export async function installPack(
         errors += batch.docInfos.length;
       } else {
         try {
-          installed += insertBatchIntoDb(
-            db,
-            batch,
-            embeddings,
-            pack.name,
-            insertDoc,
-            insertChunk,
-            insertEmbedding,
-          );
+          installed += insertBatchIntoDb(db, batch, embeddings, pack.name, insertDoc, writer);
         } catch (err) {
           log.warn(
             { err, pack: pack.name, batchIndex: i },
@@ -581,7 +560,9 @@ export async function installPack(
     const resolved = resolveBatch(batches[i]!.batchDocs);
     try {
       const embeddings =
-        resolved.allChunks.length > 0 ? await provider.embedBatch(resolved.allChunks) : [];
+        resolved.embeddingTexts.length > 0
+          ? await provider.embedBatch(resolved.embeddingTexts)
+          : [];
       embedResults[i] = { resolved, embeddings, success: true };
     } catch (err) {
       log.warn(
