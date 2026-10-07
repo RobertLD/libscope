@@ -1,6 +1,16 @@
 import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import type { EmbeddingProvider } from "../providers/embedding.js";
+import {
+  INDEX_META_DDL,
+  assertValidVectorDimensions,
+  checkVectorIndexIdentity,
+  execCreateVectorTable,
+  getVectorTableDimensions,
+  toEmbeddingIdentity,
+  writeEmbeddingIdentity,
+} from "./index-meta.js";
 
 const SCHEMA_VERSION = 18;
 
@@ -313,6 +323,9 @@ const MIGRATIONS: Record<number, string> = {
     -- Serves the title + length dedup lookup that runs on every index call.
     CREATE INDEX IF NOT EXISTS idx_documents_title ON documents(title);
 
+    -- Records the embedding provider, model and vector size of chunk_embeddings.
+    ${INDEX_META_DDL};
+
     INSERT INTO schema_version (version) VALUES (18);
   `,
 };
@@ -382,20 +395,40 @@ export function runMigrations(db: Database.Database, targetVersion: number = SCH
   }
 }
 
-/** Create the virtual table for vector search (requires sqlite-vec). */
-export function createVectorTable(db: Database.Database, dimensions: number): void {
-  if (!Number.isInteger(dimensions) || dimensions <= 0 || dimensions > 10000) {
-    throw new DatabaseError("Invalid vector dimensions: must be a positive integer <= 10000");
+/**
+ * Create the vector table (requires sqlite-vec) and record which embedding model it is for.
+ * Pass the provider rather than a bare vector size so that a change of provider or model
+ * is detected, not only a change of vector size.
+ *
+ * @throws ConfigError when the existing vector table was built for a different provider,
+ *   model or vector size. The message tells the user to run `libscope reindex --rebuild`.
+ * @throws DatabaseError when the vector size is invalid, or unknown (0) and no table exists.
+ */
+export function createVectorTable(
+  db: Database.Database,
+  source: number | Pick<EmbeddingProvider, "name" | "model" | "dimensions">,
+): void {
+  const configured = toEmbeddingIdentity(source);
+  const dimensions = configured.dimensions ?? 0;
+  // 0 means the provider learns its vector size from its first embedding.
+  if (dimensions !== 0) assertValidVectorDimensions(dimensions);
+
+  const tableDimensions = getVectorTableDimensions(db);
+  if (tableDimensions !== undefined) {
+    checkVectorIndexIdentity(db, configured, tableDimensions);
+    return;
   }
+  if (dimensions === 0) {
+    throw new DatabaseError(
+      "Invalid vector dimensions: the vector size of the embedding model is not known yet. " +
+        "Set embedding.dimensions in the config, or run `libscope reindex --rebuild` to detect it.",
+    );
+  }
+
   const log = getLogger();
   try {
-    // dimensions is validated as a positive integer above, so interpolation is safe here
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
-        chunk_id TEXT PRIMARY KEY,
-        embedding float[${dimensions}]
-      );
-    `);
+    execCreateVectorTable(db, dimensions);
+    writeEmbeddingIdentity(db, configured, true);
     log.info({ dimensions }, "Vector table ready");
   } catch (err) {
     log.warn({ err }, "Could not create vector table — vector search unavailable");

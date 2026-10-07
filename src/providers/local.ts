@@ -19,6 +19,7 @@ type FeatureExtractionPipeline = (
  */
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly name = "local";
+  readonly model = "Xenova/all-MiniLM-L6-v2";
   readonly dimensions = 384;
 
   private pipeline: FeatureExtractionPipeline | null = null;
@@ -38,7 +39,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
       // Cast to the typed interface; @xenova/transformers lacks precise TS generics for pipeline output
       this.pipeline = (await pipeline(
         "feature-extraction",
-        "Xenova/all-MiniLM-L6-v2",
+        this.model,
       )) as unknown as FeatureExtractionPipeline;
       log.info("Local embedding model loaded successfully");
     } catch (err) {

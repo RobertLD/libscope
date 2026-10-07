@@ -5,6 +5,7 @@ export { OpenAIEmbeddingProvider } from "./openai.js";
 
 import type { LibScopeConfig } from "../config.js";
 import { ConfigError } from "../errors.js";
+import { validateDimensionsOverride } from "./dimensions.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import { LocalEmbeddingProvider } from "./local.js";
 import { OllamaEmbeddingProvider } from "./ollama.js";
@@ -41,7 +42,11 @@ export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvid
           "Ollama model is required. Set LIBSCOPE_OLLAMA_MODEL or configure in ~/.libscope/config.json",
         );
       }
-      return new OllamaEmbeddingProvider(config.embedding.ollamaUrl, config.embedding.ollamaModel);
+      return new OllamaEmbeddingProvider(
+        config.embedding.ollamaUrl,
+        config.embedding.ollamaModel,
+        validateDimensionsOverride(config.embedding.dimensions),
+      );
     }
     case "openai": {
       const apiKey = config.embedding.openaiApiKey;
@@ -50,7 +55,11 @@ export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvid
           "OpenAI API key is required. Set LIBSCOPE_OPENAI_API_KEY or configure in ~/.libscope/config.json",
         );
       }
-      return new OpenAIEmbeddingProvider(apiKey, config.embedding.openaiModel);
+      return new OpenAIEmbeddingProvider(
+        apiKey,
+        config.embedding.openaiModel,
+        validateDimensionsOverride(config.embedding.dimensions),
+      );
     }
     default:
       throw new ConfigError(`Unknown embedding provider: ${String(config.embedding.provider)}`);

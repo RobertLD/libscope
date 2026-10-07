@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { EmbeddingError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import { withRetry } from "../utils/retry.js";
+import { EmbeddingDimensions } from "./dimensions.js";
 import type { EmbeddingProvider } from "./embedding.js";
 
 /**
@@ -10,15 +11,30 @@ import type { EmbeddingProvider } from "./embedding.js";
  */
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly name = "openai";
-  readonly dimensions = 1536;
 
   private readonly client: OpenAI;
+  private readonly expectedDimensions: EmbeddingDimensions;
+  /** Sent as the API `dimensions` parameter (text-embedding-3 models can shorten vectors). */
+  private readonly requestDimensions: { dimensions?: number };
 
+  /**
+   * @param dimensions - Override for the vector size. For text-embedding-3 models it is also
+   *   sent to the API to request shortened vectors.
+   */
   constructor(
     apiKey: string,
-    private readonly model: string = "text-embedding-3-small",
+    readonly model: string = "text-embedding-3-small",
+    dimensions?: number,
   ) {
     this.client = new OpenAI({ apiKey, timeout: 30_000 });
+    this.expectedDimensions = new EmbeddingDimensions(model, dimensions);
+    this.requestDimensions =
+      dimensions !== undefined && model.startsWith("text-embedding-3") ? { dimensions } : {};
+  }
+
+  /** Vector size, or 0 until the first embedding of an unknown model. */
+  get dimensions(): number {
+    return this.expectedDimensions.value;
   }
 
   async embed(text: string): Promise<number[]> {
@@ -31,16 +47,13 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         const response = await this.client.embeddings.create({
           model: this.model,
           input: text,
+          ...this.requestDimensions,
         });
         const embedding = response.data[0]?.embedding;
         if (!embedding) {
           throw new EmbeddingError("OpenAI returned empty embedding");
         }
-        if (embedding.length !== this.dimensions) {
-          throw new EmbeddingError(
-            `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
-          );
-        }
+        this.expectedDimensions.check([embedding]);
         return embedding;
       });
     } catch (err) {
@@ -67,6 +80,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         const response = await this.client.embeddings.create({
           model: this.model,
           input: texts,
+          ...this.requestDimensions,
         });
         if (response.data.length !== texts.length) {
           throw new EmbeddingError(
@@ -74,13 +88,7 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
           );
         }
         const embeddings = response.data.map((d) => d.embedding);
-        for (const emb of embeddings) {
-          if (emb.length !== this.dimensions) {
-            throw new EmbeddingError(
-              `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
-            );
-          }
-        }
+        this.expectedDimensions.check(embeddings);
         return embeddings;
       });
     } catch (err) {

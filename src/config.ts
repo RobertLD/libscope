@@ -11,6 +11,8 @@ export interface LibScopeConfig {
     ollamaModel?: string;
     openaiApiKey?: string;
     openaiModel?: string;
+    /** Vector size override for models whose dimension is not built in. */
+    dimensions?: number;
   };
   llm?: {
     provider?: "openai" | "ollama" | "anthropic" | "passthrough";

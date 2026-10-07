@@ -21,6 +21,7 @@ Complete reference for all configuration options.
 | `embedding.ollamaUrl`   | string | `"http://localhost:11434"` | Ollama server URL              |
 | `embedding.ollamaModel` | string | `"nomic-embed-text"`       | Ollama embedding model         |
 | `embedding.openaiModel` | string | `"text-embedding-3-small"` | OpenAI embedding model         |
+| `embedding.dimensions`  | number | —                          | Vector size of the Ollama or OpenAI model. Needed only for models whose size LibScope does not know. For `text-embedding-3-*`, it also requests shorter vectors. After you change it, run `libscope reindex --rebuild`. |
 
 ### LLM (for RAG)
 

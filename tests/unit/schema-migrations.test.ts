@@ -190,4 +190,16 @@ describe("schema migrations", () => {
       expect(plan.map((p) => p.detail).join(" ")).toContain("idx_documents_title");
     });
   });
+
+  describe("migration 18: index_meta table", () => {
+    it("creates an empty index_meta table on upgrade", () => {
+      const db = newDb();
+      runMigrations(db, 17);
+      seedChunks(db, 1, 1);
+
+      runMigrations(db);
+
+      expect(count(db, "index_meta")).toBe(0);
+    });
+  });
 });

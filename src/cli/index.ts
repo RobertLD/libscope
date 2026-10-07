@@ -1705,6 +1705,14 @@ program
   });
 
 // reindex
+interface ReindexCliOptions {
+  doc?: string[];
+  since?: string;
+  before?: string;
+  batchSize: string;
+  rebuild?: boolean;
+}
+
 program
   .command("reindex")
   .description("Re-embed all chunks with the current embedding provider")
@@ -1712,10 +1720,28 @@ program
   .option("--since <date>", "Only reindex documents created on or after this ISO-8601 date")
   .option("--before <date>", "Only reindex documents created on or before this ISO-8601 date")
   .option("--batch-size <n>", "Chunks per embedding batch", "50")
-  .action(async (opts: { doc?: string[]; since?: string; before?: string; batchSize: string }) => {
+  .option(
+    "--rebuild",
+    "Drop and recreate the vector table for the configured embedding model, then re-embed every chunk (use after changing provider, model or dimensions)",
+  )
+  .action(async (opts: ReindexCliOptions) => {
+    if (opts.rebuild && (opts.doc ?? opts.since ?? opts.before)) {
+      console.error(
+        "Error: --rebuild re-embeds every chunk; it cannot be combined with --doc, --since or --before.",
+      );
+      process.exit(1);
+    }
     const { reindex } = await import("../core/reindex.js");
-    const { db, provider } = initializeAppWithEmbedding();
+    const { rebuildVectorTable, describeEmbeddingIdentity } = await import("../db/index-meta.js");
+    const { config, db } = initializeApp();
     try {
+      const provider = createEmbeddingProvider(config);
+      if (opts.rebuild) {
+        const identity = await rebuildVectorTable(db, provider);
+        console.log(`✓ Vector table recreated (${describeEmbeddingIdentity(identity)})`);
+      } else {
+        createVectorTable(db, provider);
+      }
       console.log("Re-embedding chunks...");
       const startTime = Date.now();
 
