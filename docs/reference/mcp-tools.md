@@ -1,337 +1,284 @@
 # MCP Tools
 
-LibScope exposes the following tools over the Model Context Protocol. Any MCP-compatible client (Claude, Cursor, VS Code, etc.) can call these directly.
+LibScope exposes its knowledge base over the Model Context Protocol. Any MCP client (Claude, Cursor, VS Code, and others) can call these tools. See [MCP Setup](/guide/mcp-setup) to connect a client.
 
-## search-docs
+The server has 11 core tools. Four admin tools are available when you enable the admin toolset. Each tool is generated from a LibScope operation, so its parameters, defaults and validation are the same as in the CLI, the REST API and the SDK.
 
-Semantic search across your knowledge base.
+## Workflow
 
-| Parameter   | Type   | Required | Description                  |
-| ----------- | ------ | -------- | ---------------------------- |
-| `query`     | string | ✅       | Search query                 |
-| `library`   | string |          | Filter by library name       |
-| `topic`     | string |          | Filter by topic              |
-| `version`   | string |          | Filter by library version    |
-| `minRating` | number |          | Minimum average rating (1–5) |
-| `limit`     | number |          | Max results (default: 10)    |
-| `offset`    | number |          | Pagination offset            |
+1. `search` finds chunks. Each result shows a `documentId` and a `chunkId`.
+2. `get-document` reads a document with its tags, links and ratings. For a long document, set `maxLength`, then pass the `offset` that the output shows as "next page".
+3. `rate-document` records whether a document was useful, wrong or out of date.
 
-Each result shows a `**Document ID:** … | **Chunk ID:** …` line. Pass these IDs to `get-document`, `rate-document`, `get-related`, and `link-documents`.
+The server sends these steps to the client as its `instructions`, so the assistant knows the workflow without extra prompting.
 
-**Search results** include a `scoreExplanation` object on each result:
+## Output
 
-```typescript
+Tools return compact text. Each line that names a document, chunk, link or task includes its ID (`documentId`, `chunkId`, `linkId`, `taskId`), so the assistant can pass the ID to the next tool. Lists show their position, for example `Documents 1-50 of 120 — next page: offset 50`.
+
+Errors return `isError: true` with a message. Invalid parameters fail with an input validation error that names the parameter.
+
+## Background tasks
+
+`submit-document`, `sync`, `install-pack` and `reindex-documents` accept `async: true`. With it, the tool starts a background task and returns a `taskId` immediately. Then:
+
+- `task {"action": "status", "taskId": "..."}` shows the status (`pending`, `running`, `completed`, `failed` or `cancelled`), the progress and, when the task is done, the same output that the tool returns without `async`.
+- `task {"action": "cancel", "taskId": "..."}` asks the task to stop.
+- `task {"action": "list"}` lists the tasks from the last hour.
+
+Tasks are kept in memory for one hour after they finish. They are lost when the server stops.
+
+## ask and passthrough
+
+`ask` is registered only when it can answer:
+
+- With `llm.provider` set to `auto` (the default) or `passthrough`, the MCP server does not call an LLM. `ask` returns the retrieved context and its sources. The calling assistant writes the answer.
+- With `llm.provider` set to `openai`, `anthropic` or `ollama` and the provider configured, `ask` returns the LLM's answer and its sources.
+- When an LLM provider is selected but cannot be created (for example, an API key is missing), the server does not register `ask`.
+
+## Admin toolset
+
+Set `LIBSCOPE_MCP_TOOLSETS` in the server's environment to enable optional toolsets. The value is a comma-separated list. `admin` enables `sync`, `install-pack`, `list-packs` and `reindex-documents`. `all` enables every optional toolset.
+
+```json
 {
-  method: "hybrid" | "vector" | "fts5" | "keyword",
-  rawScore: number,       // raw score before boosts
-  boostFactors: string[], // e.g. ["title_match:x1.5"]
-  details: string         // human-readable scoring breakdown
+  "mcpServers": {
+    "libscope": {
+      "command": "npx",
+      "args": ["-y", "libscope", "serve"],
+      "env": { "LIBSCOPE_MCP_TOOLSETS": "admin" }
+    }
+  }
 }
 ```
 
-## get-document
+`sync` uses connections saved with `libscope connect`. It does not accept tokens or other credentials as parameters.
+
+## Core tools
+
+### search
+
+Search the knowledge base by meaning and keywords (query), or find content similar to a document or chunk (relatedTo). Results carry documentId and chunkId.
+
+Annotations: read-only.
+
+| Parameter              | Type                                                  | Required | Description                                                               |
+| ---------------------- | ----------------------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `query`                | string                                                |          | What to search for                                                        |
+| `relatedTo`            | string                                                |          | Document or chunk ID: return similar content instead of running a query   |
+| `topic`                | string                                                |          | Topic ID or name                                                          |
+| `library`              | string                                                |          | Library name                                                              |
+| `version`              | string                                                |          | Library version                                                           |
+| `sourceType`           | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                                                      |
+| `tags`                 | string[]                                              |          | Only documents carrying all of these tags                                 |
+| `minRating`            | number                                                |          | Minimum average rating                                                    |
+| `limit`                | integer                                               |          | Maximum results (default 10, max 100)                                     |
+| `offset`               | integer                                               |          | Results to skip (paging) Default: `0`.                                    |
+| `maxChunksPerDocument` | integer                                               |          | At most this many chunks per document (default: no limit)                 |
+| `contextChunks`        | integer                                               |          | Neighbouring chunks to include before and after each result Default: `0`. |
+
+### ask
+
+Retrieve the knowledge-base context for a question (passthrough: no LLM is called; answer from the returned context yourself)
+
+Annotations: read-only.
+
+| Parameter    | Type                                                  | Required | Description                                 |
+| ------------ | ----------------------------------------------------- | -------- | ------------------------------------------- |
+| `question`   | string                                                | yes      | The question                                |
+| `topic`      | string                                                |          | Topic ID or name                            |
+| `library`    | string                                                |          | Library name                                |
+| `version`    | string                                                |          | Library version                             |
+| `sourceType` | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                        |
+| `tags`       | string[]                                              |          | Only documents carrying all of these tags   |
+| `minRating`  | number                                                |          | Minimum average rating                      |
+| `topK`       | integer                                               |          | Chunks to retrieve as context Default: `5`. |
 
-Retrieve a document by its ID, including ratings and metadata.
+### get-document
 
-| Parameter    | Type   | Required | Description     |
-| ------------ | ------ | -------- | --------------- |
-| `documentId` | string | ✅       | The document ID |
+Get a document with its tags, links and rating summary; long content can be paged
 
-## delete-document
+Annotations: read-only.
 
-Delete a document from the knowledge base.
+| Parameter    | Type    | Required | Description                                            |
+| ------------ | ------- | -------- | ------------------------------------------------------ |
+| `documentId` | string  | yes      | Document ID                                            |
+| `offset`     | integer |          | Character offset into the content Default: `0`.        |
+| `maxLength`  | integer |          | Maximum characters of content to return (default: all) |
 
-| Parameter    | Type   | Required | Description               |
-| ------------ | ------ | -------- | ------------------------- |
-| `documentId` | string | ✅       | The document ID to delete |
+### list-documents
 
-## submit-document
+List documents (newest first) with optional filters
 
-Index a new document. You can provide content directly, or a URL to fetch automatically.
+Annotations: read-only.
 
-| Parameter    | Type   | Required | Description                                          |
-| ------------ | ------ | -------- | ---------------------------------------------------- |
-| `title`      | string |          | Document title (auto-detected from URL if omitted)   |
-| `content`    | string |          | Document content in markdown (omit if providing URL) |
-| `url`        | string |          | URL to fetch and index                               |
-| `library`    | string |          | Library name                                         |
-| `version`    | string |          | Library version                                      |
-| `topic`      | string |          | Topic to categorize under                            |
-| `sourceType` | string |          | `library`, `topic`, `manual`, or `model-generated`   |
-| `dedup`      | string |          | Duplicate detection behaviour (see below)             |
-| `dedupOptions` | object |        | Fine-tune duplicate detection (see below)             |
+| Parameter    | Type                                                  | Required | Description                               |
+| ------------ | ----------------------------------------------------- | -------- | ----------------------------------------- |
+| `topic`      | string                                                |          | Topic ID or name                          |
+| `library`    | string                                                |          | Library name                              |
+| `version`    | string                                                |          | Library version                           |
+| `sourceType` | `library` \| `topic` \| `manual` \| `model-generated` |          | Document source type                      |
+| `tags`       | string[]                                              |          | Only documents carrying all of these tags |
+| `limit`      | integer                                               |          | Maximum results (default 50, max 1000)    |
+| `offset`     | integer                                               |          | Results to skip (paging) Default: `0`.    |
 
-**`dedup`** *(optional)*: Controls duplicate detection behaviour.
-- `"skip"` — If a duplicate is detected, return the existing document without re-indexing
-- `"warn"` — Log a warning about the duplicate but index anyway
-- `"force"` — Skip duplicate checking entirely and always index
-- *(omitted)* — Default behaviour: reject exact duplicates by title+content-length, allow similar content
+### overview
 
-**`dedupOptions`** *(optional)*: Fine-tune duplicate detection.
-- `threshold` *(number, 0–1)*: Similarity threshold for semantic dedup (default 0.95)
-- `strategy` *(string)*: `"exact"` (hash-based) or `"semantic"` (embedding-based)
+Knowledge base overview: counts, topics, installed packs, embedding model of the index, and health
 
-## update-document
+Annotations: read-only.
 
-Update an existing document's title, content, or metadata. Changing content triggers re-chunking and re-embedding. Changing the title, library, or version re-embeds the existing chunks, because these fields are part of the embedded text.
+No parameters.
 
-| Parameter    | Type   | Required | Description                             |
-| ------------ | ------ | -------- | --------------------------------------- |
-| `documentId` | string | ✅       | The document ID to update               |
-| `title`      | string |          | New title                               |
-| `content`    | string |          | New content (triggers re-chunking)      |
-| `library`    | string |          | New library name (pass `null` to clear) |
-| `version`    | string |          | New version (pass `null` to clear)      |
-| `url`        | string |          | New source URL (pass `null` to clear)   |
-| `topicId`    | string |          | New topic ID (pass `null` to clear)     |
+### submit-document
 
-## get-related
+Add to the knowledge base: inline content (with title), a web page (url), a site crawl (url + spider: true) or a public GitHub/GitLab repository URL. Local file paths are not accepted.
 
-Find document chunks that are semantically similar to a given chunk (more-like-this).
+Annotations: not destructive.
 
-| Parameter   | Type   | Required | Description                        |
-| ----------- | ------ | -------- | ---------------------------------- |
-| `chunkId`   | string | ✅       | The source chunk ID                |
-| `limit`     | number |          | Max results (default: 10)          |
-| `library`   | string |          | Filter results by library          |
-| `topic`     | string |          | Filter results by topic            |
+| Parameter         | Type                                                  | Required | Description                                                                                              |
+| ----------------- | ----------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `content`         | string                                                |          | Inline document content (markdown)                                                                       |
+| `title`           | string                                                |          | Title (required with content; detected for files and URLs)                                               |
+| `url`             | string                                                |          | Source URL. Without content, the URL is fetched; with content, it is stored                              |
+| `topic`           | string                                                |          | Topic ID or name                                                                                         |
+| `library`         | string                                                |          | Library name                                                                                             |
+| `version`         | string                                                |          | Library version                                                                                          |
+| `sourceType`      | `library` \| `topic` \| `manual` \| `model-generated` |          | Source type (default: library if library is set, topic if topic is set, else manual)                     |
+| `tags`            | string[]                                              |          | Tags to add to every new document                                                                        |
+| `expiresAt`       | string                                                |          | ISO 8601 time after which the document is pruned                                                         |
+| `dedup`           | `skip` \| `warn` \| `force`                           |          | Duplicate handling: skip returns the existing document, warn indexes anyway, force skips the check       |
+| `spider`          | boolean                                               |          | URL: also crawl linked pages Default: `false`.                                                           |
+| `maxPages`        | integer                                               |          | Crawl: page limit (default 25, max 200)                                                                  |
+| `maxDepth`        | integer                                               |          | Crawl: link depth (default 2, max 5)                                                                     |
+| `sameDomain`      | boolean                                               |          | Crawl: stay on the seed domain (default true)                                                            |
+| `pathPrefix`      | string                                                |          | Crawl: only follow links under this path                                                                 |
+| `excludePatterns` | string[]                                              |          | Crawl: globs of URLs to skip                                                                             |
+| `branch`          | string                                                |          | Repository: branch (default: from URL, else main)                                                        |
+| `paths`           | string[]                                              |          | Repository: only these subdirectories                                                                    |
+| `extensions`      | string[]                                              |          | Repository: file extensions (default .md, .mdx, .txt, .rst)                                              |
+| `dryRun`          | boolean                                               |          | List what would be added without adding it Default: `false`.                                             |
+| `async`           | boolean                                               |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
 
-## rate-document
+### update-document
 
-Rate a document and optionally suggest corrections.
+Update a document's title, content, metadata or tags (content changes are re-indexed)
 
-| Parameter             | Type   | Required | Description                           |
-| --------------------- | ------ | -------- | ------------------------------------- |
-| `documentId`          | string | ✅       | The document ID                       |
-| `rating`              | number | ✅       | Rating from 1 (poor) to 5 (excellent) |
-| `chunkId`             | string |          | Rate a specific chunk                 |
-| `feedback`            | string |          | Text feedback                         |
-| `suggestedCorrection` | string |          | Suggested replacement content         |
+Annotations: not destructive, idempotent.
 
-## list-documents
+| Parameter    | Type           | Required | Description                              |
+| ------------ | -------------- | -------- | ---------------------------------------- |
+| `documentId` | string         | yes      | Document ID                              |
+| `title`      | string         |          | New title                                |
+| `content`    | string         |          | New content (re-chunked and re-embedded) |
+| `library`    | string \| null |          | New library (null clears it)             |
+| `version`    | string \| null |          | New version (null clears it)             |
+| `url`        | string \| null |          | New URL (null clears it)                 |
+| `topic`      | string \| null |          | New topic ID or name (null clears it)    |
+| `tags`       | string[]       |          | Replace the document's tags with these   |
 
-List documents with optional filters.
+### delete-document
 
-| Parameter    | Type   | Required | Description               |
-| ------------ | ------ | -------- | ------------------------- |
-| `library`    | string |          | Filter by library         |
-| `topic`      | string |          | Filter by topic           |
-| `sourceType` | string |          | Filter by source type     |
-| `limit`      | number |          | Max results (default: 50) |
+Delete a document with its chunks, vectors, tags, links and ratings
 
-## list-topics
+Annotations: destructive.
 
-List available topics.
+| Parameter    | Type   | Required | Description |
+| ------------ | ------ | -------- | ----------- |
+| `documentId` | string | yes      | Document ID |
 
-| Parameter  | Type   | Required | Description                            |
-| ---------- | ------ | -------- | -------------------------------------- |
-| `parentId` | string |          | Filter by parent topic (for subtopics) |
+### rate-document
 
-## ask-question
+Rate a document (1-5), optionally with feedback or a suggested correction
 
-RAG question-answering. Retrieves relevant chunks and synthesizes an answer using your configured LLM.
+Annotations: not destructive.
 
-| Parameter  | Type   | Required | Description                               |
-| ---------- | ------ | -------- | ----------------------------------------- |
-| `question` | string | ✅       | The question to answer                    |
-| `library`  | string |          | Filter source docs by library             |
-| `topic`    | string |          | Filter source docs by topic               |
-| `topK`     | number |          | Number of chunks to retrieve (default: 5) |
+| Parameter             | Type    | Required | Description                              |
+| --------------------- | ------- | -------- | ---------------------------------------- |
+| `documentId`          | string  | yes      | Document ID                              |
+| `chunkId`             | string  |          | Rate one chunk of the document           |
+| `rating`              | integer | yes      | 1 (poor) to 5 (excellent)                |
+| `feedback`            | string  |          | What is good or wrong                    |
+| `suggestedCorrection` | string  |          | Replacement text if the content is wrong |
 
-## health-check
+### link-documents
 
-Check database connectivity, document/chunk counts, and FTS5 index status. Takes no parameters.
+Create a typed link from one document to another (action: create), or delete a link by linkId (action: delete). get-document lists a document's links.
 
-## reindex-documents
+Annotations: destructive.
 
-Re-embed all document chunks with the current embedding provider. Use after switching providers.
+| Parameter          | Type                                                                      | Required | Description                                                                                 |
+| ------------------ | ------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------- |
+| `action`           | `create` \| `delete`                                                      | yes      | What to do: create, delete                                                                  |
+| `documentId`       | string                                                                    |          | Source document ID (action: create)                                                         |
+| `targetDocumentId` | string                                                                    |          | Target document ID (action: create)                                                         |
+| `linkType`         | `see_also` \| `prerequisite` \| `supersedes` \| `related` \| `references` |          | Relationship type: see_also, prerequisite, supersedes, related, references (action: create) |
+| `label`            | string                                                                    |          | Short description of the relationship (action: create)                                      |
+| `linkId`           | string                                                                    |          | Link ID (action: delete)                                                                    |
 
-| Parameter     | Type     | Required | Description                                         |
-| ------------- | -------- | -------- | --------------------------------------------------- |
-| `batchSize`   | number   |          | Chunks per batch (default: 50)                      |
-| `since`       | string   |          | Only reindex docs created after this ISO-8601 date  |
-| `before`      | string   |          | Only reindex docs created before this ISO-8601 date |
-| `documentIds` | string[] |          | Only reindex specific documents                     |
+### task
 
-## Connector sync tools
+Background tasks started with async: true. status: progress and result of a task; cancel: stop it; list: tasks from the last hour.
 
-The five `sync-*` tools share these behaviors:
+Annotations: not destructive, idempotent.
 
-- `name` (string, optional) selects a saved connector config (default: the connector type). Configs are saved by `libscope connect <type>`. Any parameter you omit, including tokens, comes from that config, so an agent does not need secrets in its context. Parameters you pass apply to that call only and are not saved.
-- `async` (boolean, optional) runs the sync in the background and returns a task ID. `cancel-task` stops the sync between pages or items, and the run is recorded as failed.
-- Each call writes one entry to the connector sync history under `name`.
+| Parameter | Type                           | Required | Description                                                              |
+| --------- | ------------------------------ | -------- | ------------------------------------------------------------------------ |
+| `action`  | `status` \| `cancel` \| `list` | yes      | What to do: status, cancel, list                                         |
+| `taskId`  | string                         |          | Task ID returned when a background task started (action: status, cancel) |
 
-## sync-obsidian-vault
+## Admin tools
 
-Sync an Obsidian vault into the knowledge base. Parses wikilinks, frontmatter, embeds, and tags.
+These tools are registered only when `LIBSCOPE_MCP_TOOLSETS` contains `admin` or `all`.
 
-| Parameter   | Type   | Required        | Description                          |
-| ----------- | ------ | --------------- | ------------------------------------ |
-| `vaultPath` | string | unless saved    | Absolute path to the vault directory |
-| `name`      | string |                 | Saved config name (default: `obsidian`) |
+### sync
 
-## sync-notion
+Sync one saved connector connection (name) or all of them (all: true) with the settings saved by 'libscope connect'
 
-Sync Notion pages and databases.
+Annotations: not destructive.
 
-| Parameter      | Type     | Required     | Description                             |
-| -------------- | -------- | ------------ | --------------------------------------- |
-| `token`        | string   | unless saved | Notion integration token                |
-| `excludePages` | string[] |              | Page/database IDs to exclude            |
-| `lastSync`     | string   |              | ISO-8601 timestamp for incremental sync |
-| `name`         | string   |              | Saved config name (default: `notion`)   |
+| Parameter | Type    | Required | Description                                                                                              |
+| --------- | ------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `name`    | string  |          | Saved connection name (see `libscope connections`)                                                       |
+| `all`     | boolean |          | Sync every saved connection Default: `false`.                                                            |
+| `async`   | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
 
-## sync-confluence
+### install-pack
 
-Sync Confluence spaces and pages.
+Install a knowledge pack from the registry or a local .json/.json.gz file
 
-| Parameter       | Type     | Required     | Description                             |
-| --------------- | -------- | ------------ | --------------------------------------- |
-| `baseUrl`       | string   | unless saved | Confluence base URL                     |
-| `email`         | string   | Cloud only   | User email                              |
-| `token`         | string   | unless saved | API token or PAT                        |
-| `spaces`        | string[] |              | Space keys to sync (default: all)       |
-| `excludeSpaces` | string[] |              | Space keys to exclude                   |
-| `name`          | string   |              | Saved config name (default: `confluence`) |
+Annotations: not destructive, idempotent.
 
-## sync-slack
+| Parameter     | Type    | Required | Description                                                                                              |
+| ------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `pack`        | string  | yes      | Pack name from the registry, or a local .json/.json.gz file                                              |
+| `registryUrl` | string  |          | Registry URL (default: the public pack registry)                                                         |
+| `batchSize`   | integer |          | Documents per batch (default 10)                                                                         |
+| `concurrency` | integer |          | Batches embedded in parallel (default 4)                                                                 |
+| `async`       | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
 
-Sync Slack channel messages and threads.
+### list-packs
 
-| Parameter         | Type     | Required     | Description                                  |
-| ----------------- | -------- | ------------ | -------------------------------------------- |
-| `token`           | string   | unless saved | Slack bot token                              |
-| `channels`        | string[] |              | Channel names/IDs, or `["all"]` (default: all) |
-| `excludeChannels` | string[] |              | Channels to exclude                          |
-| `threadMode`      | string   |              | `aggregate` (default) or `separate`          |
-| `name`            | string   |              | Saved config name (default: `slack`)         |
+List installed packs, or packs available in the registry
 
-## sync-onenote
+Annotations: read-only.
 
-Sync OneNote notebooks via Microsoft Graph API.
+| Parameter     | Type    | Required | Description                                                     |
+| ------------- | ------- | -------- | --------------------------------------------------------------- |
+| `available`   | boolean |          | List registry packs instead of installed ones Default: `false`. |
+| `registryUrl` | string  |          | Registry URL (default: the public pack registry)                |
 
-| Parameter      | Type   | Required     | Description                                                              |
-| -------------- | ------ | ------------ | ------------------------------------------------------------------------ |
-| `accessToken`  | string | unless saved | Microsoft Graph API access token, used as given                          |
-| `notebookName` | string |              | Specific notebook (default: all)                                         |
-| `name`         | string |              | Saved config name (default: `onenote`)                                   |
+### reindex-documents
 
-Without `accessToken`, the saved config's refresh token is used to get a new access token when needed, and the new tokens are saved.
+Re-embed chunks with the configured embedding model (rebuild after changing models)
 
-## install-pack
+Annotations: not destructive, idempotent.
 
-Install a knowledge pack from the registry or a local file.
-
-| Parameter     | Type   | Required | Description                  |
-| ------------- | ------ | -------- | ---------------------------- |
-| `nameOrPath`  | string | ✅       | Pack name or local file path |
-| `registryUrl` | string |          | Custom registry URL          |
-
-## list-packs
-
-List installed or available knowledge packs.
-
-| Parameter     | Type    | Required | Description                                      |
-| ------------- | ------- | -------- | ------------------------------------------------ |
-| `available`   | boolean |          | If true, list from registry instead of installed |
-| `registryUrl` | string  |          | Custom registry URL                              |
-
-## suggest-tags
-
-Suggest tags for a document based on content analysis (compares against existing tags in the knowledge base).
-
-| Parameter        | Type   | Required | Description                          |
-| ---------------- | ------ | -------- | ------------------------------------ |
-| `documentId`     | string | ✅       | The document ID                      |
-| `maxSuggestions` | number |          | Maximum suggestions to return (1–20, default: 5) |
-
-## link-documents
-
-Create a typed cross-reference relationship between two documents.
-
-| Parameter  | Type   | Required | Description                                                          |
-| ---------- | ------ | -------- | -------------------------------------------------------------------- |
-| `sourceId` | string | ✅       | The source document ID                                               |
-| `targetId` | string | ✅       | The target document ID                                               |
-| `linkType` | string | ✅       | Relationship type: `see_also`, `prerequisite`, `supersedes`, `related`, `references` |
-| `label`    | string |          | Optional human-readable description of the relationship              |
-
-The output includes a `Link ID:` line. Pass this ID to `delete-link`.
-
-## get-document-links
-
-Get all cross-reference links for a document, both outgoing and incoming. Each line ends with `[link ID: …]`, which you can pass to `delete-link`.
-
-| Parameter    | Type   | Required | Description     |
-| ------------ | ------ | -------- | --------------- |
-| `documentId` | string | ✅       | The document ID |
-
-## delete-link
-
-Remove a cross-reference link between documents.
-
-| Parameter | Type   | Required | Description              |
-| --------- | ------ | -------- | ------------------------ |
-| `linkId`  | string | ✅       | The link ID to delete    |
-
-## save-search
-
-Save a search query with optional filters for later re-use.
-
-| Parameter   | Type     | Required | Description                       |
-| ----------- | -------- | -------- | --------------------------------- |
-| `name`      | string   | ✅       | Unique name for this saved search |
-| `query`     | string   | ✅       | The search query                  |
-| `topic`     | string   |          | Filter by topic ID                |
-| `library`   | string   |          | Filter by library name            |
-| `version`   | string   |          | Filter by library version         |
-| `source`    | string   |          | Filter by source type             |
-| `minRating` | number   |          | Minimum average rating filter     |
-| `limit`     | number   |          | Maximum results to return         |
-| `tags`      | string[] |          | Filter by tags                    |
-
-## list-saved-searches
-
-List all saved searches.
-
-_No parameters._
-
-## run-saved-search
-
-Execute a saved search by name or ID and return results.
-
-| Parameter  | Type   | Required | Description                               |
-| ---------- | ------ | -------- | ----------------------------------------- |
-| `nameOrId` | string | ✅       | The name or ID of the saved search to run |
-
-## delete-saved-search
-
-Delete a saved search by name or ID.
-
-| Parameter  | Type   | Required | Description                                  |
-| ---------- | ------ | -------- | -------------------------------------------- |
-| `nameOrId` | string | ✅       | The name or ID of the saved search to delete |
-
-## get-task
-
-Get the status, progress, and result of a background task. Tools called with `async: true` return a task ID.
-
-| Parameter | Type   | Required | Description                              |
-| --------- | ------ | -------- | ---------------------------------------- |
-| `taskId`  | string | ✅       | Task ID returned by an async tool call   |
-
-The task `type` is one of `index_document`, `reindex_documents`, `sync_connector`, or `install_pack`.
-
-## cancel-task
-
-Request cancellation of a pending or running background task.
-
-| Parameter | Type   | Required | Description        |
-| --------- | ------ | -------- | ------------------ |
-| `taskId`  | string | ✅       | Task ID to cancel  |
-
-`submit-document` (including spider mode), `reindex-documents`, and `install-pack` stop at the next page or batch. A cancelled `install-pack` removes the documents it already inserted. The final status is:
-
-- `cancelled` — the task stopped because of the cancellation.
-- `completed` — the task finished before it could stop. The result is kept.
-- `failed` — the task stopped because of a different error.
+| Parameter     | Type                                | Required | Description                                                                                              |
+| ------------- | ----------------------------------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `documentIds` | string[]                            |          | Only these documents                                                                                     |
+| `since`       | string (ISO 8601 date or date-time) |          | Only documents created on or after                                                                       |
+| `before`      | string (ISO 8601 date or date-time) |          | Only documents created on or before                                                                      |
+| `batchSize`   | integer                             |          | Chunks per embedding call (default 50)                                                                   |
+| `rebuild`     | boolean                             |          | Drop and recreate the vector table for the configured model, then re-embed everything Default: `false`.  |
+| `async`       | boolean                             |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
