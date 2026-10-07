@@ -249,12 +249,19 @@ function configType(type) {
   return list ? `list of ${choices}` : choices;
 }
 
+/** A single value in code; in a sentence, only the URLs (a bare URL would become a link). */
+function defaultCell(value) {
+  if (value === "") return "—";
+  if (!/\s/.test(value)) return code(value);
+  return text(value).replaceAll(/https?:\/\/[^\s,;]+/g, (url) => `\`${url}\``);
+}
+
 async function configBlocks() {
   const { getConfigKeyTable } = await fromDist("config-schema.js");
   const rows = getConfigKeyTable().map((row) => [
     code(row.key),
     configType(row.type),
-    row.default === "" ? "—" : text(row.default),
+    defaultCell(row.default),
     row.env.map(code).join(", "),
     row.secret ? "yes" : "",
     sentence(row.description, false),
@@ -361,7 +368,8 @@ async function main() {
         continue;
       }
       seen.add(name);
-      const body = await formatBlock(generators[kind].render(name), file);
+      // Blank lines around the markers, as prettier writes them.
+      const body = `\n${await formatBlock(generators[kind].render(name), file)}\n`;
       if (current !== body) {
         if (check) problems.push(`${relPath}: block "${name}" is out of date`);
         const block = `<!-- generated:start ${name} -->\n${body}<!-- generated:end ${name} -->`;

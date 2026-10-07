@@ -59,6 +59,7 @@ The `mcp.toolsets` config key enables optional toolsets (`libscope config set mc
 The tool descriptions and parameter tables below are generated from the server code (`npm run docs:gen`).
 
 <!-- generated:start mcp:core -->
+
 ### search
 
 Search the knowledge base by meaning and keywords (query), or find content similar to a document or chunk (relatedTo). Results carry documentId and chunkId.
@@ -231,6 +232,7 @@ Annotations: not destructive, idempotent.
 | --------- | ------------------------------ | -------- | ------------------------------------------------------------------------ |
 | `action`  | `status` \| `cancel` \| `list` | yes      | What to do: status, cancel, list                                         |
 | `taskId`  | string                         |          | Task ID returned when a background task started (action: status, cancel) |
+
 <!-- generated:end mcp:core -->
 
 ## Admin tools
@@ -238,6 +240,7 @@ Annotations: not destructive, idempotent.
 These tools are registered only when `mcp.toolsets` contains `admin` or `all`.
 
 <!-- generated:start mcp:admin -->
+
 ### sync
 
 Sync one saved connector connection (name) or all of them (all: true) with the settings saved by 'libscope connect'
@@ -290,4 +293,5 @@ Annotations: not destructive, idempotent.
 | `batchSize`   | integer                             |          | Chunks per embedding call (default 50)                                                                    |
 | `rebuild`     | boolean                             |          | Drop and recreate the vector table for the configured model, then re-embed everything. Default: `false`.  |
 | `async`       | boolean                             |          | Run in the background and return a taskId at once; poll with task {"action": "status"}. Default: `false`. |
+
 <!-- generated:end mcp:admin -->

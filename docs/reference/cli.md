@@ -26,6 +26,7 @@ The usage lines and option tables on this page are generated from the CLI code (
 These go before or after the command name.
 
 <!-- generated:start cli:global -->
+
 Usage: `libscope [options] <command>`
 
 | Option                | Description                                                                     |
@@ -37,6 +38,7 @@ Usage: `libscope [options] <command>`
 | `--workspace <name>`  | Use this workspace instead of the active one                                    |
 
 `-h, --help` shows the help of the program or of any command.
+
 <!-- generated:end cli:global -->
 
 Every result shows document IDs (and chunk IDs for search hits), so you can pass them to the next command.
@@ -53,7 +55,7 @@ Commands that select documents (`search`, `ask`, `docs list`, `searches save`, `
 | ---------------------- | -------------------------------------------------------------- |
 | `--topic <topic>`      | Topic ID or name                                               |
 | `--library <name>`     | Library name                                                   |
-| `--lib-version <ver>`  | Library version (not on `bulk`)                                |
+| `--lib-version <version>` | Library version (not on `bulk`)                              |
 | `--source-type <type>` | `library`, `topic`, `manual` or `model-generated`              |
 | `--tags <a,b>`         | Only documents with all these tags                             |
 | `-n, --limit <n>`      | Maximum results (`ask`: chunks used as context; not on `bulk`) |
@@ -73,6 +75,7 @@ libscope add ./docs --dry-run                    # list what would be added
 ```
 
 <!-- generated:start cli:add -->
+
 Usage: `libscope add <sources...>`
 
 Add files, directories, URLs or GitHub/GitLab repository URLs to the knowledge base.
@@ -102,6 +105,7 @@ Add files, directories, URLs or GitHub/GitLab repository URLs to the knowledge b
 | `--extensions <exts>`     | Repository: file extensions (default .md,.mdx,.txt,.rst)      |
 | `--token <token>`         | Repository: access token for a private repository             |
 | `--dry-run`               | List what would be added without adding it                    |
+
 <!-- generated:end cli:add -->
 
 With `--json`, `add` prints one result per source: `{ kind, documents: [{ documentId, title, chunkCount, source }], errors, skipped, planned?, crawl? }`.
@@ -116,6 +120,7 @@ libscope search                                  # interactive search (on a term
 ```
 
 <!-- generated:start cli:search -->
+
 Usage: `libscope search [query]`
 
 Search by meaning and keywords. With no query on a terminal, start interactive search.
@@ -133,6 +138,7 @@ Search by meaning and keywords. With no query on a terminal, start interactive s
 | `--min-rating <n>`        | Only documents rated at least this (1-5)                        |
 | `--max-per-doc <n>`       | At most this many chunks per document                           |
 | `--context <n>`           | Neighbouring chunks to show around each result (0-2)            |
+
 <!-- generated:end cli:search -->
 
 With no query and no `--related`, on a terminal, `search` starts interactive mode: type a query, see results, repeat. Type `quit`, `exit` or press Ctrl+D to leave. The filters given on the command line apply to every query.
@@ -145,6 +151,7 @@ libscope ask "What changed in v2?" --model gpt-4o-mini
 ```
 
 <!-- generated:start cli:ask -->
+
 Usage: `libscope ask <question>`
 
 Answer a question from the knowledge base with the configured LLM.
@@ -159,6 +166,7 @@ Answer a question from the knowledge base with the configured LLM.
 | `-n, --limit <n>`         | Chunks to use as context (default 5)                            |
 | `--min-rating <n>`        | Only documents rated at least this (1-5)                        |
 | `--model <model>`         | LLM model for this question (default: llm.model)                |
+
 <!-- generated:end cli:ask -->
 
 `ask` needs an LLM. With `llm.provider` set to `auto` (the default), LibScope uses OpenAI when an OpenAI API key is set, else Anthropic when an Anthropic key is set, else Ollama when `llm.url` is set or the embedding provider is Ollama. Without an LLM, `ask` fails with a hint; `libscope doctor` shows what is resolved. With `llm.provider passthrough`, `ask` prints the retrieved context instead of an answer.
@@ -166,6 +174,7 @@ Answer a question from the knowledge base with the configured LLM.
 ## `libscope docs`
 
 <!-- generated:start cli:docs -->
+
 ### `libscope docs list`
 
 List documents, newest first.
@@ -270,6 +279,7 @@ Suggest tags from a document's content.
 | Option            | Description         |
 | ----------------- | ------------------- |
 | `-n, --limit <n>` | Maximum suggestions |
+
 <!-- generated:end cli:docs -->
 
 `docs update --tags` replaces all tags. Changing the content re-chunks and re-embeds the document.
@@ -282,6 +292,7 @@ libscope docs update <documentId> --content-file ./updated.md
 ## Topics and tags
 
 <!-- generated:start cli:topics,tags -->
+
 ### `libscope topics list`
 
 List topics with their document counts.
@@ -311,6 +322,7 @@ Delete a topic (its documents are kept without a topic).
 ### `libscope tags list`
 
 List all tags with their document counts.
+
 <!-- generated:end cli:topics,tags -->
 
 `<topic>` is a topic ID or name everywhere.
@@ -318,6 +330,7 @@ List all tags with their document counts.
 ## `libscope searches`
 
 <!-- generated:start cli:searches -->
+
 ### `libscope searches save <name> <query>`
 
 Save a query and its filters.
@@ -348,6 +361,7 @@ Run a saved search (name or ID).
 ### `libscope searches delete <search>`
 
 Delete a saved search (name or ID).
+
 <!-- generated:end cli:searches -->
 
 ## `libscope bulk`
@@ -361,6 +375,7 @@ libscope bulk move --library react --since 2024-01-01 --to frontend -y
 ```
 
 <!-- generated:start cli:bulk -->
+
 ### `libscope bulk delete`
 
 Delete matching documents.
@@ -408,6 +423,7 @@ Move matching documents to another topic.
 | `--dry-run`            | List the matching documents without changing them               |
 | `-y, --yes`            | Do not ask for confirmation                                     |
 | `--to <topic>`         | Destination topic (ID or name). Required.                       |
+
 <!-- generated:end cli:bulk -->
 
 ## Connectors
@@ -429,6 +445,7 @@ libscope connect notion --name work --schedule "0 */6 * * *"  # second Notion co
 Running `connect` again for a saved connection changes only the settings you give and keeps the rest. For example, `libscope connect notion --schedule off --no-sync` removes the schedule.
 
 <!-- generated:start cli:connect,sync,disconnect,connections -->
+
 ### `libscope connect <type> [source]`
 
 Save a connection and sync it. Types: notion, slack, confluence, obsidian, onenote, docs. [source] is the vault path (obsidian) or the URL (confluence, docs). Running it again for a saved connection changes only the given settings.
@@ -477,6 +494,7 @@ Delete a connection's documents and its saved settings (including credentials).
 ### `libscope connections`
 
 List saved connections with their schedule and last sync.
+
 <!-- generated:end cli:connect,sync,disconnect,connections -->
 
 ## Knowledge packs
@@ -493,6 +511,7 @@ libscope pack create --name react-docs --from ./react/docs --exclude "*.min.js"
 Pack names are looked up in the local copies of the registries; run `libscope registry sync` to update them. When more than one registry has the pack, the command fails and names the registries: choose one with `--registry`.
 
 <!-- generated:start cli:pack -->
+
 ### `libscope pack install <pack>`
 
 Install a pack from the configured registries (name or name@version) or a local .json/.json.gz file.
@@ -538,6 +557,7 @@ Create a pack from indexed documents, or from files, folders and URLs (--from).
 | `--extensions <exts>`      | With --from: file extensions to include (comma-separated)                    |
 | `--exclude <globs...>`     | With --from: globs to skip                                                   |
 | `--no-recursive`           | With --from: do not walk subdirectories                                      |
+
 <!-- generated:end cli:pack -->
 
 ## Pack registries
@@ -557,6 +577,7 @@ libscope registry unpublish my-pack@1.0.0 --registry my-registry
 Registry URLs can use `https://`, `ssh://`, `git@host:path` or `file:///`. `libscope registry create ./my-registry` creates a git repository with the registry folder structure. See the [Registry Reference](/reference/registry).
 
 <!-- generated:start cli:registry -->
+
 ### `libscope registry add <url>`
 
 Add a git repository as a pack registry and clone it.
@@ -614,6 +635,7 @@ Remove one version of a pack from a registry (&lt;name&gt;@&lt;version&gt;).
 | `--registry <name>`   | Target registry. Required.  |
 | `-m, --message <msg>` | Git commit message          |
 | `-y, --yes`           | Do not ask for confirmation |
+
 <!-- generated:end cli:registry -->
 
 ## `libscope serve`
@@ -625,6 +647,7 @@ libscope serve dashboard --port 8080 # web dashboard (default port 3377)
 ```
 
 <!-- generated:start cli:serve -->
+
 Usage: `libscope serve [mode]`
 
 Start the MCP server on stdio (mcp, default), the REST API (api, port 3378) or the web dashboard (dashboard, port 3377).
@@ -633,6 +656,7 @@ Start the MCP server on stdio (mcp, default), the REST API (api, port 3378) or t
 | --------------- | ------------------------------------- |
 | `--port <n>`    | Port (api and dashboard)              |
 | `--host <host>` | Host to listen on (default localhost) |
+
 <!-- generated:end cli:serve -->
 
 Connection schedules (`connect --schedule`) run while `serve api` runs.
@@ -640,6 +664,7 @@ Connection schedules (`connect --schedule`) run while `serve api` runs.
 ## `libscope config`
 
 <!-- generated:start cli:config -->
+
 ### `libscope config show`
 
 Show the effective configuration (API keys are masked).
@@ -659,6 +684,7 @@ Remove a key from the user config file (or secrets file for API keys).
 ### `libscope config path`
 
 Print the path of the user config file.
+
 <!-- generated:end cli:config -->
 
 `openai.apiKey` and `anthropic.apiKey` are written to `~/.libscope/secrets.json` (mode `0600`), never to `config.json`; the `LIBSCOPE_OPENAI_API_KEY` / `OPENAI_API_KEY` and `LIBSCOPE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` environment variables take precedence. See the [configuration reference](/reference/configuration) for every key.
@@ -668,6 +694,7 @@ Print the path of the user config file.
 A workspace is a separate knowledge base with its own database (`~/.libscope/workspaces/<name>/libscope.db`). The global `--workspace <name>` option and the `LIBSCOPE_WORKSPACE` environment variable select one for a single command.
 
 <!-- generated:start cli:workspace -->
+
 ### `libscope workspace create <name>`
 
 Create a workspace.
@@ -687,11 +714,13 @@ Delete a workspace and its database.
 | Option      | Description                 |
 | ----------- | --------------------------- |
 | `-y, --yes` | Do not ask for confirmation |
+
 <!-- generated:end cli:workspace -->
 
 ## `libscope webhooks`
 
 <!-- generated:start cli:webhooks -->
+
 ### `libscope webhooks list`
 
 List webhooks (secrets are never shown).
@@ -712,6 +741,7 @@ Delete a webhook.
 ### `libscope webhooks test <webhookId>`
 
 Send a test event and show the HTTP status.
+
 <!-- generated:end cli:webhooks -->
 
 Events: `document.created`, `document.updated`, `document.deleted`, `document.rated`, `search.executed`. A secret signs each POST with HMAC-SHA256; storing it needs `LIBSCOPE_SECRET_KEY`.
@@ -719,6 +749,7 @@ Events: `document.created`, `document.updated`, `document.deleted`, `document.ra
 ## `libscope admin`
 
 <!-- generated:start cli:admin -->
+
 ### `libscope admin reindex`
 
 Re-embed chunks with the configured embedding model.
@@ -763,6 +794,7 @@ Counts, index, most returned and stale documents, and search analytics.
 | Option       | Description                                             |
 | ------------ | ------------------------------------------------------- |
 | `--days <n>` | Look-back days for stale documents and search analytics |
+
 <!-- generated:end cli:admin -->
 
 `admin reindex --rebuild` recreates the vector index for a new embedding model or vector size, then re-embeds every chunk. The other `admin reindex` filters do not apply with `--rebuild`.
@@ -775,6 +807,7 @@ libscope doctor --fix    # also create the database and vector index
 ```
 
 <!-- generated:start cli:doctor -->
+
 Usage: `libscope doctor`
 
 Check the setup: config, workspace, database, embedding model, index and LLM.
@@ -782,6 +815,7 @@ Check the setup: config, workspace, database, embedding model, index and LLM.
 | Option  | Description                                        |
 | ------- | -------------------------------------------------- |
 | `--fix` | Create what is missing (database and vector index) |
+
 <!-- generated:end cli:doctor -->
 
 `doctor` shows the config and secrets files, the active workspace and database path, the configured embedding model and the model the vector index was built with, and which LLM `ask` will use. It then lists checks with a fix for each warning or error, for example `libscope admin reindex --rebuild` when the index was built with a different embedding model. It exits with code 1 when a check fails.

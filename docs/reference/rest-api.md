@@ -40,6 +40,7 @@ Every route under `/api/v1` runs one LibScope operation: the same operation, wit
 This list is generated from the routes (`npm run docs:gen`). The parameters of each route are in the OpenAPI document (`GET /openapi.json`). Routes with status `202` start a [background task](#conventions).
 
 <!-- generated:start rest:routes -->
+
 ### Meta
 
 | Method | Path             | Operation | Status | Description                                                           |
@@ -158,6 +159,7 @@ This list is generated from the routes (`npm run docs:gen`). The parameters of e
 | `GET`  | `/api/v1/tasks/:taskId`        | `get-task`    | `200`  | Status, progress and result of a background task             |
 | `POST` | `/api/v1/tasks/:taskId/cancel` | `cancel-task` | `200`  | Request cancellation of a pending or running background task |
 | `GET`  | `/api/v1/tasks`                | `list-tasks`  | `200`  | List background tasks from the last hour, newest first       |
+
 <!-- generated:end rest:routes -->
 
 Registries are read from the local copies under `~/.libscope/registries/`. Adding, removing, syncing and publishing to registries is done with the CLI or the SDK.
