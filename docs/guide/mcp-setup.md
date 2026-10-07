@@ -78,44 +78,64 @@ If you're using [workspaces](/guide/configuration#workspaces), pass the workspac
 }
 ```
 
+## Admin Tools
+
+The server starts with 11 core tools. To also give the assistant `sync`, `install-pack`, `list-packs` and `reindex-documents`, set `LIBSCOPE_MCP_TOOLSETS` in the server's environment:
+
+```json
+{
+  "mcpServers": {
+    "libscope": {
+      "command": "npx",
+      "args": ["-y", "libscope", "serve"],
+      "env": { "LIBSCOPE_MCP_TOOLSETS": "admin" }
+    }
+  }
+}
+```
+
 ## Available Tools
 
-Once connected, your AI assistant gets access to all 31 of LibScope's MCP tools. See the [MCP Tools Reference](/reference/mcp-tools) for full parameter details.
+See the [MCP Tools Reference](/reference/mcp-tools) for all parameters.
 
-**Search & Q&A**
-- **`search-docs`** — semantic search with topic/library/version/rating filters
-- **`ask-question`** — RAG Q&A with synthesized answers and source citations
+**Core tools**
 
-**Document Management**
-- **`submit-document`** — index new content by text or URL
-- **`update-document`** — update title, content, or metadata
-- **`get-document`** — retrieve a document by ID
-- **`list-documents`** — list docs with filters
-- **`delete-document`** — remove a document
-- **`rate-document`** — rate 1–5 with feedback
-- **`suggest-tags`** — auto-suggest tags based on content
+- **`search`**: search by meaning and keywords, or find content related to a document or chunk (`relatedTo`). Filters: topic, library, version, source type, tags, minimum rating.
+- **`ask`**: answer a question from the knowledge base. By default (`llm.provider: auto`) the server returns the retrieved context and your assistant writes the answer. Registered only when an answer is possible.
+- **`get-document`**: read a document with its tags, links and ratings. Long content is paged.
+- **`list-documents`**: list documents with filters, `offset` and a total count.
+- **`overview`**: document, chunk and topic counts, topics, installed packs, the embedding model of the index, and health.
+- **`submit-document`**: add inline content, a web page, a site crawl (`spider: true`) or a public repository URL.
+- **`update-document`**: change the title, content, metadata or tags.
+- **`delete-document`**: delete a document.
+- **`rate-document`**: rate a document 1-5, with optional feedback or a correction.
+- **`link-documents`**: create (`action: "create"`) or delete (`action: "delete"`) a link between documents.
+- **`task`**: status, cancel or list of background tasks started with `async: true`.
 
-**Organization**
-- **`list-topics`** — browse the topic hierarchy
-- **`link-documents`** — create cross-references between docs
-- **`get-document-links`** — list a document's incoming and outgoing links
-- **`delete-link`** — remove a cross-reference
+**Admin tools** (with `LIBSCOPE_MCP_TOOLSETS=admin`)
 
-**Saved Searches**
-- **`save-search`** — save a named query with filters
-- **`list-saved-searches`** — list saved searches
-- **`run-saved-search`** — execute a saved search
-- **`delete-saved-search`** — delete a saved search
+- **`sync`**: sync one saved connector connection, or all of them. Set up connections with `libscope connect`; the tool does not accept credentials.
+- **`install-pack`**, **`list-packs`**: manage knowledge packs.
+- **`reindex-documents`**: re-embed chunks after you change the embedding model.
 
-**Similar Content**
-- **`get-related`** — find chunks semantically similar to a given chunk
+Your AI assistant calls these tools when it needs information from your docs. The server also sends the assistant short instructions that describe the search, read and rate workflow.
 
-**Connectors** — trigger syncs directly from your AI assistant:
-- **`sync-obsidian-vault`**, **`sync-notion`**, **`sync-confluence`**, **`sync-slack`**, **`sync-onenote`**
+## Logs
 
-**Packs & Maintenance**
-- **`install-pack`**, **`list-packs`** — manage knowledge packs
-- **`reindex-documents`** — re-embed after switching providers
-- **`health-check`** — DB status and doc/chunk counts
+The MCP server writes JSON-RPC messages to stdout and its logs to stderr. Set the log level with `logging.level` in the config file or `LIBSCOPE_LOGGING_LEVEL`.
 
-Your AI assistant will call these tools automatically when it needs information from your docs.
+## Embedding the Server
+
+`libscope/mcp` exports `createMcpServer()`. Importing the module does not start a server.
+
+```ts
+import { createMcpServer, runStdioServer } from "libscope/mcp";
+
+// Build a server and connect your own transport.
+const { server, tools, close } = createMcpServer({ workspace: "my-project", toolsets: ["admin"] });
+
+// Or serve over stdio, the same as `libscope serve`.
+await runStdioServer({ workspace: "my-project" });
+```
+
+`createMcpServer` accepts the same options as LibScope's startup (`workspace`, `dbPath`, `config`, `provider`) or an existing operation context (`ctx`). `close()` closes the server and the database that it opened.

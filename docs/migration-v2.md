@@ -69,3 +69,54 @@ Every "not found" error is now a `NotFoundError` (`DocumentNotFoundError`, `Chun
 | `getVersion`, `rollbackToVersion` with an unknown version                          | `DocumentNotFoundError` | `NotFoundError` (`VERSION_NOT_FOUND`)      |
 | `removePack` for a pack that is not installed                                      | `ValidationError`       | `NotFoundError` (`PACK_NOT_FOUND`)         |
 | `getRelatedChunks` with an unknown chunk ID                                        | `Error`                 | `ChunkNotFoundError` (`CHUNK_NOT_FOUND`)   |
+
+## MCP
+
+The MCP server now has 11 core tools and an optional admin toolset. Old tool names do not work in 2.0. Update prompts, agent configs and allow-lists that name MCP tools.
+
+### Server
+
+| 1.x                                                        | 2.0                                                                                                                                           |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import "libscope/mcp"` started a stdio server.            | Importing `libscope/mcp` starts nothing. Call `runStdioServer()`, or `createMcpServer()` and connect your own transport.                      |
+| `npm run serve` ran `dist/mcp/server.js`.                  | `npm run serve` runs `dist/mcp/main.js`. `node dist/mcp/server.js` exits without serving.                                                     |
+| The server reported version `0.1.0`.                       | The server reports the package version.                                                                                                       |
+| Every tool was always registered.                          | `ask` is registered only with passthrough or a configured LLM. Admin tools are registered only with `LIBSCOPE_MCP_TOOLSETS=admin` (or `all`). |
+| Most tools returned markdown or pretty-printed JSON.       | Tools return compact text. Every document, chunk, link and task line includes its ID.                                                         |
+| Long-running tools accepted `async` and polled `get-task`. | Same `async: true`, then `task {"action": "status", "taskId"}`. A finished task shows the same output as the tool run without `async`.        |
+
+### Renamed and merged tools
+
+| 1.x tool                                                                              | 2.0 tool                                            | Parameter changes                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search-docs`                                                                         | `search`                                            | `source` -> `sourceType` (enum). Added `tags`, `relatedTo`. `limit` max 100. `maxChunksPerDocument` minimum is 1.                                                                                          |
+| `get-related`                                                                         | `search` with `relatedTo`                           | `chunkId` -> `relatedTo` (a chunk ID or a document ID). `minScore` and `includeLinkedDocuments` are removed. Use `version`, `sourceType`, `minRating` as filters.                                          |
+| `ask-question`                                                                        | `ask`                                               | Added `version`, `sourceType`, `tags`, `minRating`.                                                                                                                                                        |
+| `health-check`, `list-topics`                                                         | `overview`                                          | `list-topics` `parentId` is removed; `overview` lists every topic with its document count.                                                                                                                 |
+| `list-packs`                                                                          | `overview` (installed packs), or admin `list-packs` | Admin `list-packs` keeps `available` and `registryUrl`.                                                                                                                                                    |
+| `get-document`                                                                        | `get-document`                                      | Added `offset` and `maxLength` for paging. The output includes tags, links (with `linkId`) and ratings.                                                                                                    |
+| `get-document-links`                                                                  | `get-document`                                      | Links are part of the document output.                                                                                                                                                                     |
+| `list-documents`                                                                      | `list-documents`                                    | Added `version`, `tags`, `offset`. `limit` max 1000. The output shows the total.                                                                                                                           |
+| `submit-document`                                                                     | `submit-document`                                   | Added `tags`, `expiresAt`, `dedup`, `dryRun` and repository fields (`branch`, `paths`, `extensions`). A GitHub/GitLab repository URL indexes the repository. `topic` must be an existing topic ID or name. |
+| `update-document`                                                                     | `update-document`                                   | `topicId` -> `topic` (ID or name). Added `tags` (replaces the document's tags).                                                                                                                            |
+| `link-documents`                                                                      | `link-documents` with `action: "create"`            | `sourceId` -> `documentId`, `targetId` -> `targetDocumentId`.                                                                                                                                              |
+| `delete-link`                                                                         | `link-documents` with `action: "delete"`            | `linkId` unchanged.                                                                                                                                                                                        |
+| `get-task`                                                                            | `task` with `action: "status"`                      | `taskId` unchanged. An unknown task is an error.                                                                                                                                                           |
+| `cancel-task`                                                                         | `task` with `action: "cancel"`                      | `taskId` unchanged. An unknown task is an error.                                                                                                                                                           |
+| —                                                                                     | `task` with `action: "list"`                        | New.                                                                                                                                                                                                       |
+| `install-pack` (always on)                                                            | `install-pack` (admin toolset)                      | `nameOrPath` -> `pack`. Added `batchSize`, `concurrency`.                                                                                                                                                  |
+| `reindex-documents` (always on)                                                       | `reindex-documents` (admin toolset)                 | Added `rebuild`.                                                                                                                                                                                           |
+| `sync-slack`, `sync-notion`, `sync-confluence`, `sync-onenote`, `sync-obsidian-vault` | `sync` (admin toolset)                              | `{ "name": "<saved connection>" }` or `{ "all": true }`. Credentials and connector settings are no longer tool parameters: save them with `libscope connect <type>`.                                       |
+
+`delete-document` and `rate-document` keep their names and parameters.
+
+### Removed tools
+
+These operations are available from the CLI, the REST API and the SDK, not over MCP:
+
+| 1.x tool                                                                        | Operation (REST path under `/api/v1`)                                                         |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `save-search`, `list-saved-searches`, `run-saved-search`, `delete-saved-search` | `save-search`, `list-saved-searches`, `run-saved-search`, `delete-saved-search` (`/searches`) |
+| `create-webhook`, `list-webhooks`, `delete-webhook`                             | `create-webhook`, `list-webhooks`, `delete-webhook` (`/webhooks`)                             |
+| `search-analytics`                                                              | `search-analytics` (`/analytics/searches`)                                                    |
+| `suggest-tags`                                                                  | `suggest-tags` (`/documents/:documentId/suggested-tags`)                                      |
