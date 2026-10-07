@@ -381,7 +381,7 @@ Creates a git repo with the canonical registry folder structure. See the [Regist
 | `libscope config show`              | Show current configuration (secrets masked)   |
 | `libscope config path`              | Print the user config file path               |
 
-Supported config keys: `embedding.provider`, `embedding.ollamaUrl`, `embedding.ollamaModel`, `embedding.openaiModel`, `embedding.dimensions`, `llm.provider`, `llm.model`, `llm.ollamaUrl`, `database.path`, `indexing.maxDocumentSize`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`, `logging.level`. API keys cannot be set with `config set`; use the `LIBSCOPE_OPENAI_API_KEY` / `OPENAI_API_KEY` and `LIBSCOPE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` environment variables.
+Supported config keys: `embedding.provider`, `embedding.model`, `embedding.url`, `embedding.dimensions`, `llm.provider`, `llm.model`, `llm.url`, `openai.apiKey`, `anthropic.apiKey`, `database.path`, `indexing.maxDocumentSize`, `indexing.allowPrivateUrls`, `indexing.allowSelfSignedCerts`, `logging.level`. `openai.apiKey` and `anthropic.apiKey` are written to `~/.libscope/secrets.json` (mode `0600`), never to `config.json`; the `LIBSCOPE_OPENAI_API_KEY` / `OPENAI_API_KEY` and `LIBSCOPE_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY` environment variables take precedence.
 
 ## Global Options
 
