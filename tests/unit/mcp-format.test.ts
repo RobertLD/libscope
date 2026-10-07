@@ -268,9 +268,18 @@ describe("MCP output formatting", () => {
   });
 
   it("pack list formats registry packs", () => {
-    expect(
-      formatPackList({ items: [{ name: "p", version: "1", description: "desc", docCount: 3 }] }),
-    ).toBe("- p v1 (3 docs): desc");
+    const pack = {
+      name: "p",
+      description: "desc",
+      tags: [],
+      latestVersion: "1",
+      author: "a",
+      updatedAt: "2026-01-01",
+      registry: "team",
+    };
+    expect(formatPackList({ items: [pack], warnings: ['Registry "x" was never synced'] })).toBe(
+      '- p v1 (registry team): desc\nWarning: Registry "x" was never synced',
+    );
   });
 
   it("reindex reports failures and a rebuilt index", () => {

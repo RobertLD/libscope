@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync, existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -18,13 +18,8 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-const {
-  syncRegistry,
-  syncAllRegistries,
-  syncStaleRegistries,
-  syncRegistryByName,
-  getRegistryIndex,
-} = await import("../../../src/registry/sync.js");
+const { syncRegistry, syncAllRegistries, localPackCount } =
+  await import("../../../src/registry/sync.js");
 const { loadRegistries, saveRegistries } = await import("../../../src/registry/config.js");
 
 function makeEntry(
@@ -32,15 +27,17 @@ function makeEntry(
   url: string,
   overrides: Partial<RegistryEntry> = {},
 ): RegistryEntry {
-  return {
-    name,
-    url,
-    syncInterval: 3600,
-    priority: 1,
-    lastSyncedAt: null,
-    ...overrides,
-  };
+  return { name, url, lastSyncedAt: null, ...overrides };
 }
+
+const PACK: PackSummary = {
+  name: "test-pack",
+  description: "Test",
+  tags: [],
+  latestVersion: "1.0.0",
+  author: "a",
+  updatedAt: "2026-01-01",
+};
 
 function addTestRegistry(entry: RegistryEntry): void {
   const registries = loadRegistries();
@@ -80,18 +77,33 @@ describe("registry sync functions", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe("syncRegistryByName", () => {
-    it("should return error for non-existent registry name", async () => {
-      const status = await syncRegistryByName("nonexistent");
-      expect(status.status).toBe("error");
-      expect(status.error).toContain("not found");
+  describe("syncRegistry", () => {
+    it("clones the registry and reports its pack count", async () => {
+      const bareRepo = createBareRepo(tempDir, [PACK]);
+      addTestRegistry(makeEntry("by-name", bareRepo));
+      expect(localPackCount("by-name")).toBeNull();
+
+      const status = await syncRegistry(makeEntry("by-name", bareRepo));
+      expect(status).toMatchObject({ registry: "by-name", status: "success", packs: 1 });
+      expect(loadRegistries()[0]!.lastSyncedAt).not.toBeNull();
     });
 
-    it("should sync an existing registry by name", async () => {
-      const bareRepo = createBareRepo(tempDir);
-      addTestRegistry(makeEntry("by-name", bareRepo));
-      const status = await syncRegistryByName("by-name");
-      expect(status.status).toBe("success");
+    it("keeps the local copy when the remote is unreachable (offline)", async () => {
+      const repo = createBareRepo(tempDir, [PACK]);
+      const entry = makeEntry("offline-idx", repo);
+      addTestRegistry(entry);
+      await syncRegistry(entry);
+
+      renameSync(repo, repo + ".broken");
+      const status = await syncRegistry(entry);
+      expect(status).toMatchObject({ status: "offline", packs: 1 });
+      expect(status.error).toBeTruthy();
+    });
+
+    it("reports error when the registry was never cloned and cannot be reached", async () => {
+      const entry = makeEntry("never", join(tempDir, "missing.git"));
+      addTestRegistry(entry);
+      expect(await syncRegistry(entry)).toMatchObject({ status: "error", packs: null });
     });
   });
 
@@ -110,102 +122,6 @@ describe("registry sync functions", () => {
       const results = await syncAllRegistries();
       expect(results).toHaveLength(2);
       expect(results.every((r) => r.status === "success")).toBe(true);
-    });
-  });
-
-  describe("syncStaleRegistries", () => {
-    it("should return empty array when no registries are stale", async () => {
-      const repo = createBareRepo(tempDir);
-      addTestRegistry(
-        makeEntry("fresh", repo, {
-          syncInterval: 99999,
-          lastSyncedAt: new Date().toISOString(),
-        }),
-      );
-      const results = await syncStaleRegistries();
-      expect(results).toEqual([]);
-    });
-
-    it("should sync registries that are stale", async () => {
-      const repo = createBareRepo(tempDir);
-      addTestRegistry(
-        makeEntry("stale-one", repo, {
-          syncInterval: 1,
-          lastSyncedAt: "2020-01-01T00:00:00.000Z", // very old
-        }),
-      );
-      const results = await syncStaleRegistries();
-      expect(results).toHaveLength(1);
-      expect(results[0]!.status).toBe("success");
-    });
-
-    it("should return empty when all registries have syncInterval=0 (manual)", async () => {
-      const repo = createBareRepo(tempDir);
-      addTestRegistry(makeEntry("manual", repo, { syncInterval: 0 }));
-      const results = await syncStaleRegistries();
-      expect(results).toEqual([]);
-    });
-  });
-
-  describe("getRegistryIndex", () => {
-    it("should return packs from a synced registry", async () => {
-      const packs: PackSummary[] = [
-        {
-          name: "test-pack",
-          description: "Test",
-          tags: [],
-          latestVersion: "1.0.0",
-          author: "a",
-          updatedAt: "2026-01-01",
-        },
-      ];
-      const repo = createBareRepo(tempDir, packs);
-      addTestRegistry(makeEntry("idx-test", repo));
-      await syncRegistry(makeEntry("idx-test", repo));
-
-      const entry = makeEntry("idx-test", repo, {
-        syncInterval: 0, // manual, won't auto-sync
-        lastSyncedAt: new Date().toISOString(),
-      });
-      const { packs: result, warning } = await getRegistryIndex(entry);
-      expect(result).toHaveLength(1);
-      expect(result[0]!.name).toBe("test-pack");
-      expect(warning).toBeUndefined();
-    });
-
-    it("should return warning when remote unreachable and has stale cache", async () => {
-      const packs: PackSummary[] = [
-        {
-          name: "offline-pack",
-          description: "Offline",
-          tags: [],
-          latestVersion: "1.0.0",
-          author: "a",
-          updatedAt: "2026-01-01",
-        },
-      ];
-      const repo = createBareRepo(tempDir, packs);
-      const entry = makeEntry("offline-idx", repo, {
-        syncInterval: 1,
-        lastSyncedAt: "2020-01-01T00:00:00.000Z",
-      });
-      addTestRegistry(entry);
-
-      // Sync once to populate cache
-      await syncRegistry(entry);
-
-      // Break the remote
-      const { renameSync } = await import("node:fs");
-      renameSync(repo, repo + ".broken");
-
-      // getRegistryIndex should fall back to cache with warning
-      const staleEntry = makeEntry("offline-idx", repo, {
-        syncInterval: 1,
-        lastSyncedAt: "2020-01-01T00:00:00.000Z",
-      });
-      const { packs: result, warning } = await getRegistryIndex(staleEntry);
-      expect(result).toHaveLength(1);
-      expect(warning).toContain("unreachable");
     });
   });
 

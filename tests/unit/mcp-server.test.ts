@@ -25,6 +25,8 @@ const { createMcpServer, parseToolsets, buildInstructions } =
   await import("../../src/mcp/server.js");
 const { saveConnectorSettings } = await import("../../src/connectors/saved-config.js");
 const { taskRegistry } = await import("../../src/core/tasks.js");
+const { saveRegistries } = await import("../../src/registry/config.js");
+const { getPackDataPath, getRegistryCacheDir } = await import("../../src/registry/types.js");
 
 initLogger("silent");
 
@@ -541,29 +543,46 @@ describe("MCP server: tool calls", () => {
     await callError(client, "sync", { name: "bad name!" });
   });
 
-  it("install-pack and list-packs (admin): install from a file and list", async () => {
-    const path = join(tempHome, "demo.json");
+  it("install-pack and list-packs (admin): install from a registry and list", async () => {
+    // A synced registry "team" holding pack "demo" (local copy only, no git needed).
+    saveRegistries([{ name: "team", url: "https://example.com/team.git", lastSyncedAt: null }]);
+    const dataPath = getPackDataPath("team", "demo", "1.0.0");
+    mkdirSync(join(dataPath, ".."), { recursive: true });
+    const pack = {
+      name: "demo",
+      version: "1.0.0",
+      description: "Test pack",
+      documents: [{ title: "Pack doc", content: "Content from a pack", source: "test" }],
+      metadata: { author: "tests", license: "MIT", createdAt: new Date().toISOString() },
+    };
+    writeFileSync(dataPath, JSON.stringify(pack));
+    const summary = { name: "demo", description: "Test pack", tags: [], latestVersion: "1.0.0" };
     writeFileSync(
-      path,
-      JSON.stringify({
-        name: "demo",
-        version: "1.0.0",
-        description: "Test pack",
-        documents: [{ title: "Pack doc", content: "Content from a pack", source: "test" }],
-        metadata: { author: "tests", license: "MIT", createdAt: new Date().toISOString() },
-      }),
+      join(getRegistryCacheDir("team"), "index.json"),
+      JSON.stringify([{ ...summary, author: "tests", updatedAt: "2026-01-01" }]),
     );
+
     expect(await callOk(client, "list-packs")).toBe("No packs found.");
-    expect(await callOk(client, "install-pack", { pack: path })).toBe(
+    expect(await callOk(client, "list-packs", { available: true })).toBe(
+      "- demo v1.0.0 (registry team): Test pack",
+    );
+    expect(await callOk(client, "install-pack", { pack: "demo" })).toBe(
       "Installed pack demo: 1 documents.",
     );
-    expect(await callOk(client, "install-pack", { pack: path })).toBe(
+    expect(await callOk(client, "install-pack", { pack: "demo@1.0.0", registry: "team" })).toBe(
       "Pack demo is already installed.",
     );
     expect(await callOk(client, "list-packs")).toMatch(/^- demo v1\.0\.0 \(1 docs, installed /);
     expect(await callOk(client, "overview")).toContain("Packs:\n- demo v1.0.0");
 
+    // Local files are not read over MCP.
+    const file = join(tempHome, "demo.json");
+    writeFileSync(file, JSON.stringify(pack));
+    expect(await callError(client, "install-pack", { pack: file })).toContain(
+      "only available from the CLI",
+    );
     await callError(client, "install-pack", {});
+    await callError(client, "install-pack", { pack: "missing" });
     await callError(client, "list-packs", { available: "yes" });
   });
 

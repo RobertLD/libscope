@@ -211,6 +211,15 @@ const CASES: Record<string, RouteCases> = {
   "GET /api/v1/packs": {
     ok: () => ({ path: `${V}/packs` }),
     bad: () => ({ path: `${V}/packs`, query: { available: "maybe" } }),
+    missing: () => ({ path: `${V}/packs`, query: { available: "true", registry: "nope" } }),
+  },
+  "GET /api/v1/registries": {
+    ok: () => ({ path: `${V}/registries` }),
+  },
+  "GET /api/v1/registries/search": {
+    ok: () => ({ path: `${V}/registries/search`, query: { query: "react" } }),
+    bad: () => ({ path: `${V}/registries/search` }),
+    missing: () => ({ path: `${V}/registries/search`, query: { query: "x", registry: "nope" } }),
   },
 
   "GET /api/v1/connections": { ok: () => ({ path: `${V}/connections` }) },

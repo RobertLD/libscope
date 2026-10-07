@@ -227,11 +227,52 @@ const SINGLE: Array<[string[], string, Record<string, unknown>]> = [
     { pack: "./p.json", batchSize: 5, resumeFrom: 2, concurrency: 3 },
   ],
   [["pack", "remove", "p", "-y"], "remove-pack", { pack: "p" }],
+  [
+    ["pack", "install", "react-docs@1.2.0", "--registry", "official"],
+    "install-pack",
+    { pack: "react-docs@1.2.0", registry: "official" },
+  ],
   [["pack", "list"], "list-packs", {}],
   [
-    ["pack", "list", "--available", "--registry", "https://r.example"],
+    ["pack", "list", "--available", "--registry", "official"],
     "list-packs",
-    { available: true, registryUrl: "https://r.example" },
+    { available: true, registry: "official" },
+  ],
+  [
+    ["registry", "add", "https://g.example/org/packs.git", "--name", "team", "--no-sync"],
+    "add-registry",
+    { url: "https://g.example/org/packs.git", name: "team", sync: false },
+  ],
+  [["registry", "remove", "team", "-y"], "remove-registry", { name: "team" }],
+  [["registry", "list"], "list-registries", {}],
+  [["registry", "sync"], "sync-registries", {}],
+  [["registry", "sync", "team"], "sync-registries", { name: "team" }],
+  [
+    ["registry", "search", "react", "--registry", "team"],
+    "search-registries",
+    { query: "react", registry: "team" },
+  ],
+  [["registry", "create", "./reg"], "create-registry", { path: "./reg" }],
+  [
+    [
+      "registry",
+      "publish",
+      "p.json.gz",
+      "--registry",
+      "team",
+      "--pack-version",
+      "2.0.0",
+      "-m",
+      "msg",
+      "--submit",
+    ],
+    "publish-pack",
+    { file: "p.json.gz", registry: "team", version: "2.0.0", message: "msg", submit: true },
+  ],
+  [
+    ["registry", "unpublish", "p@1.0.0", "--registry", "team", "-y"],
+    "unpublish-pack",
+    { pack: "p@1.0.0", registry: "team" },
   ],
   [
     ["pack", "create", "--name", "p", "--from", "./src", "--exclude", "*.min.js"],
@@ -393,7 +434,7 @@ function commandPath(argv: string[]): string {
 }
 
 describe("CLI command set", () => {
-  /** Commands not covered above: they do not call operations (files, servers, registries). */
+  /** Commands not covered above: they do not call operations (config files, servers). */
   const NOT_OPERATIONS = new Set([
     "serve",
     "doctor",
@@ -408,7 +449,7 @@ describe("CLI command set", () => {
     "workspace delete",
   ]);
 
-  it("covers every command with a contract test (registry commands are tested elsewhere)", () => {
+  it("covers every command with a contract test", () => {
     const tested = new Set([
       ...SINGLE.map(([argv]) => commandPath(argv)),
       "docs delete",
@@ -418,9 +459,7 @@ describe("CLI command set", () => {
       "admin stats",
       "connect",
     ]);
-    const missing = leafCommands(program).filter(
-      (c) => !c.startsWith("registry ") && !NOT_OPERATIONS.has(c) && !tested.has(c),
-    );
+    const missing = leafCommands(program).filter((c) => !NOT_OPERATIONS.has(c) && !tested.has(c));
     expect(missing).toEqual([]);
   });
 

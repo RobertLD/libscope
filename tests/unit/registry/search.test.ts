@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { initLogger } from "../../../src/logger.js";
+import { NotFoundError } from "../../../src/errors.js";
 import type { RegistryEntry, PackSummary } from "../../../src/registry/types.js";
 
-// Mock homedir before importing any registry modules — REGISTRIES_DIR is module-level
+// Registry paths follow homedir(): point it at a temp directory.
 let tempHome: string = join(tmpdir(), `libscope-search-test-${process.pid}`);
 mkdirSync(tempHome, { recursive: true });
 
@@ -19,7 +20,7 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 // Import AFTER mock is set up — getRegistryCacheDir picks up mocked homedir
-const { searchRegistries } = await import("../../../src/registry/search.js");
+const { searchRegistries, listRegistryPacks } = await import("../../../src/registry/search.js");
 const { saveRegistries } = await import("../../../src/registry/config.js");
 const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
 const { clearIndexCache } = await import("../../../src/registry/git.js");
@@ -28,8 +29,6 @@ function makeEntry(name: string, overrides: Partial<RegistryEntry> = {}): Regist
   return {
     name,
     url: "https://github.com/org/registry.git",
-    syncInterval: 3600,
-    priority: 1,
     lastSyncedAt: new Date().toISOString(),
     ...overrides,
   };
@@ -88,7 +87,7 @@ describe("registry search", () => {
 
     const { results } = searchRegistries("react-docs");
     expect(results).toHaveLength(1);
-    expect(results[0]!.pack.name).toBe("react-docs");
+    expect(results[0]!.name).toBe("react-docs");
     // 100 (exact name) + 20 (description contains "react-docs" via default desc)
     expect(results[0]!.score).toBeGreaterThanOrEqual(100);
   });
@@ -144,7 +143,7 @@ describe("registry search", () => {
 
     const { results } = searchRegistries("docs");
     expect(results).toHaveLength(2);
-    expect(results.map((r) => r.pack.name).sort((a, b) => a.localeCompare(b))).toEqual([
+    expect(results.map((r) => r.name).sort((a, b) => a.localeCompare(b))).toEqual([
       "react-docs",
       "vue-docs",
     ]);
@@ -160,7 +159,7 @@ describe("registry search", () => {
     const { results } = searchRegistries("react");
     // "react" has exact name match (100) + more → higher score
     // "react-docs" has partial name match (50) + less
-    expect(results[0]!.pack.name).toBe("react");
+    expect(results[0]!.name).toBe("react");
     expect(results[0]!.score).toBeGreaterThan(results[1]!.score);
   });
 
@@ -179,14 +178,21 @@ describe("registry search", () => {
 
     const { results } = searchRegistries("docs", { registryName: "reg1" });
     expect(results).toHaveLength(1);
-    expect(results[0]!.registryName).toBe("reg1");
+    expect(results[0]!.registry).toBe("reg1");
   });
 
-  it("should warn when specified registryName does not exist", () => {
-    const { results, warnings } = searchRegistries("test", { registryName: "nonexistent" });
-    expect(results).toEqual([]);
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("not found");
+  it("throws NotFoundError when the named registry does not exist", () => {
+    expect(() => searchRegistries("test", { registryName: "nonexistent" })).toThrow(NotFoundError);
+  });
+
+  it("lists every pack of every registry with listRegistryPacks", () => {
+    saveRegistries([makeEntry("reg1"), makeEntry("reg2")]);
+    setupRegistry("reg1", [makePack("a"), makePack("b")]);
+    setupRegistry("reg2", [makePack("c")]);
+    const { packs, warnings } = listRegistryPacks();
+    expect(packs.map((p) => `${p.registry}/${p.name}`)).toEqual(["reg1/a", "reg1/b", "reg2/c"]);
+    expect(warnings).toEqual([]);
+    expect(listRegistryPacks("reg2").packs).toHaveLength(1);
   });
 
   it("should include registryName in results", () => {
@@ -194,7 +200,7 @@ describe("registry search", () => {
     setupRegistry("my-registry", [makePack("test-pack")]);
 
     const { results } = searchRegistries("test");
-    expect(results[0]!.registryName).toBe("my-registry");
+    expect(results[0]!.registry).toBe("my-registry");
   });
 
   it("should handle corrupted index.json gracefully", () => {

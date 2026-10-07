@@ -116,7 +116,7 @@ src/
 │   ├── types.ts              # RegistryEntry, PackSummary, PackManifest
 │   ├── config.ts             # registry list in ~/.libscope/config.json
 │   ├── git.ts                # git clone/pull/commit/push
-│   ├── sync.ts               # registry syncing with auto-sync intervals
+│   ├── sync.ts               # registry syncing (on request only)
 │   ├── search.ts             # pack search across registries
 │   ├── resolve.ts            # pack resolution (version conflicts)
 │   ├── publish.ts            # publishing packs to registries

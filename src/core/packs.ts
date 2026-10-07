@@ -12,7 +12,7 @@ import {
 } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ValidationError, FetchError, NotFoundError } from "../errors.js";
+import { ValidationError, NotFoundError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import {
   buildEmbeddingText,
@@ -46,13 +46,6 @@ export interface KnowledgePack {
   };
 }
 
-export interface PackInfo {
-  name: string;
-  version: string;
-  description: string;
-  docCount: number;
-}
-
 export interface InstalledPack {
   name: string;
   version: string;
@@ -69,7 +62,6 @@ export interface InstallResult {
 }
 
 export interface InstallOptions {
-  registryUrl?: string | undefined;
   /** Number of documents to embed and insert per batch. Default: 10. */
   batchSize?: number | undefined;
   /** Skip the first N documents (for resuming a partial install). Default: 0. */
@@ -115,8 +107,6 @@ export interface CreatePackFromSourceOptions {
   onProgress?: ((info: { file: string; index: number; total: number }) => void) | undefined;
 }
 
-const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/libscope/packs/main/registry.json";
-
 /** Gzip magic number: first two bytes of a gzip stream. */
 const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 
@@ -142,31 +132,6 @@ export function readPackFile(filePath: string): string {
     return gunzipSync(raw).toString("utf-8");
   }
   return raw.toString("utf-8");
-}
-
-/** Validate that a registry URL uses https and is not a private IP. */
-function validateRegistryUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new ValidationError("Invalid registry URL");
-  }
-  if (parsed.protocol !== "https:") {
-    throw new ValidationError("Registry URL must use https");
-  }
-  const host = parsed.hostname;
-  if (
-    host === "localhost" ||
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host.startsWith("169.254.")
-  ) {
-    throw new ValidationError("Registry URL must not point to a private/internal address");
-  }
 }
 
 /** Validate that a value is a non-empty string, throwing with the given message if not. */
@@ -230,49 +195,10 @@ function validatePack(data: unknown): KnowledgePack {
   return data as KnowledgePack;
 }
 
-/** List available packs from a remote registry. */
-export async function listAvailablePacks(registryUrl?: string): Promise<PackInfo[]> {
-  const url = registryUrl ?? DEFAULT_REGISTRY_URL;
-  const log = getLogger();
-
-  validateRegistryUrl(url);
-
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) {
-      throw new FetchError(`Registry returned ${response.status}: ${response.statusText}`);
-    }
-    const data: unknown = await response.json();
-    if (!Array.isArray(data)) {
-      throw new ValidationError("Registry response is not an array");
-    }
-
-    return (data as Array<Record<string, unknown>>).map((entry) => {
-      const name = entry["name"];
-      const version = entry["version"];
-      const description = entry["description"];
-      const docCount = entry["docCount"] ?? entry["doc_count"];
-      return {
-        name: typeof name === "string" ? name : "",
-        version: typeof version === "string" ? version : "",
-        description: typeof description === "string" ? description : "",
-        docCount: typeof docCount === "number" ? docCount : 0,
-      };
-    });
-  } catch (err) {
-    log.error({ err, url }, "Failed to fetch pack registry");
-    if (err instanceof ValidationError) throw err;
-    if (err instanceof FetchError) throw err;
-    throw new FetchError(
-      `Failed to fetch pack registry: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
 /** Load a pack from a local file path. */
-function loadPackFromFile(packNameOrPath: string): KnowledgePack {
-  const resolved = pathResolve(packNameOrPath);
-  if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
+function loadPackFromFile(packPath: string): KnowledgePack {
+  const resolved = pathResolve(packPath);
+  if (!pathIsAbsolute(packPath) && !resolved.startsWith(process.cwd())) {
     throw new ValidationError("Pack file path must be within the current working directory");
   }
   try {
@@ -282,31 +208,7 @@ function loadPackFromFile(packNameOrPath: string): KnowledgePack {
   } catch (err) {
     if (err instanceof ValidationError) throw err;
     throw new ValidationError(
-      `Failed to read pack file "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/** Load a pack from a remote registry. */
-async function loadPackFromRegistry(
-  packNameOrPath: string,
-  registryUrl: string,
-): Promise<KnowledgePack> {
-  validateRegistryUrl(registryUrl);
-  const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
-  const packUrl = `${baseUrl}/${packNameOrPath}.json`;
-  try {
-    const response = await fetch(packUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) {
-      throw new FetchError(`Pack fetch returned ${response.status}: ${response.statusText}`);
-    }
-    const data: unknown = await response.json();
-    return validatePack(data);
-  } catch (err) {
-    if (err instanceof ValidationError) throw err;
-    if (err instanceof FetchError) throw err;
-    throw new FetchError(
-      `Failed to fetch pack "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to read pack file "${packPath}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -464,19 +366,18 @@ function runBatchesConcurrently(
   });
 }
 
-/** Install a pack from a local JSON file path or registry name. */
+/**
+ * Install a pack from a .json or .json.gz file (gzip is detected by magic bytes). Packs in
+ * registries are resolved to a file with `resolveRegistryPack` first.
+ */
 export async function installPack(
   db: Database.Database,
   provider: EmbeddingProvider,
-  packNameOrPath: string,
+  packPath: string,
   options?: InstallOptions,
 ): Promise<InstallResult> {
   const log = getLogger();
-
-  const isLocalFile = packNameOrPath.endsWith(".json") || packNameOrPath.endsWith(".json.gz");
-  const pack = isLocalFile
-    ? loadPackFromFile(packNameOrPath)
-    : await loadPackFromRegistry(packNameOrPath, options?.registryUrl ?? DEFAULT_REGISTRY_URL);
+  const pack = loadPackFromFile(packPath);
 
   // Check if already installed
   const existing = db.prepare("SELECT name FROM packs WHERE name = ?").get(pack.name) as

@@ -64,8 +64,6 @@ function makeEntry(
   return {
     name,
     url,
-    syncInterval: 3600,
-    priority: 1,
     lastSyncedAt: null,
     ...overrides,
   };

@@ -382,3 +382,59 @@ New in 2.0: `doctor`, `docs rate`, `topics delete`, `admin prune`, `connect docs
 | `connect <type>` always started from scratch.                          | `connect <type>` creates or updates a saved connection (only the given settings change) and syncs it.                   |
 | `import-backup` did not ask for confirmation.                          | `admin restore` asks; add `-y` to skip the question.                                                                    |
 | Import progress was printed on stdout.                                 | Progress is one line on stderr, only on a terminal.                                                                     |
+
+## Packs and registries
+
+LibScope 1.x had two pack registry systems: a URL registry (one JSON file, by default `https://raw.githubusercontent.com/libscope/packs/main/registry.json`) and git registries (`libscope registry add`). LibScope 2.0 keeps only the git registries. `--registry <name>` (`registry` in the SDK, REST and MCP) always means the name of a configured git registry. See the [Pack Registries guide](guide/pack-registries.md).
+
+### Removed: the URL registry
+
+| 1.x                                                                                      | 2.0                                                                                              |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `pack install <name> --registry <url>`                                                   | `registry add <git-url>`, then `pack install <name>`                                             |
+| `pack list --available --registry <url>`                                                 | `pack list --available [--registry <name>]` (packs in the configured git registries)             |
+| `pack install <name>` without git registries fetched `<name>.json` from the URL registry | Fails with "no pack registries are configured"; add a registry first                             |
+| `install-pack` and `list-packs` input `registryUrl` (MCP, REST, SDK)                     | `registry` (a registry name)                                                                     |
+| `listAvailablePacks(registryUrl)`, `PackInfo` (`src/core/packs.ts`)                      | `listRegistryPacks(registryName?)` (`src/registry/search.ts`), `RegistryPack`                    |
+| `installPack(db, provider, nameOrPath, { registryUrl })`                                 | `installPack(db, provider, packFile)`; resolve names with `resolveRegistryPack(spec, registry?)` |
+
+### Removed and renamed options
+
+| 1.x option                                                                                | 2.0                                                                                        |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `pack install --from-registry <name>`                                                     | `pack install --registry <name>`                                                           |
+| `pack install --pack-version <v>`                                                         | `pack install <name>@<v>`                                                                  |
+| `pack install -y` (with several registries, use the highest priority)                     | Removed. A pack in several registries is an error that names them; use `--registry <name>` |
+| Interactive registry choice in `pack install`                                             | Removed (same error)                                                                       |
+| `registry add --priority <n>`, config field `registries[].priority`                       | Removed (no priority order; the field is ignored)                                          |
+| `registry add --sync-interval <s>`, config field `registries[].syncInterval`              | Removed. It never triggered a sync; run `registry sync`                                    |
+| `registry search -r <name>`, `registry publish -r <name>`, `registry unpublish -r <name>` | `--registry <name>`                                                                        |
+| `registry unpublish <pack> --pack-version <v>`                                            | `registry unpublish <pack>@<v>`                                                            |
+
+### Behavior changes
+
+| 1.x                                                                     | 2.0                                                                                                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| MCP `install-pack` accepted a local `.json`/`.json.gz` path.            | Local pack files are installed only from the CLI and the SDK (MCP and REST refuse them). MCP and REST install by name.   |
+| A pack in several registries was resolved by priority or a prompt.      | It is a `ValidationError` that names the registries.                                                                     |
+| An unknown registry, pack or version was a `ValidationError` or `null`. | It is a `NotFoundError` (404 over REST).                                                                                 |
+| `registry add` accepted only `https://`, `ssh://` and `git@host:path`.  | `file:///` URLs (a repository on a local or shared disk) are also accepted.                                              |
+| `registry` commands exited with their own messages.                     | They call the registry operations and print errors like every other command.                                             |
+| `pack list --available` read the URL registry over the network.         | It reads the local copies of the git registries. Only `registry add`, `sync`, `publish` and `unpublish` use the network. |
+
+### New operations
+
+`list-registries`, `add-registry`, `remove-registry`, `sync-registries`, `search-registries`, `create-registry`, `publish-pack` and `unpublish-pack`. In the SDK they are `scope.registries.list()`, `.add()`, `.remove()`, `.sync()`, `.search()`, `.create()`, `.publish()` and `.unpublish()`. Over REST, only the read-only ones have routes: `GET /api/v1/registries` and `GET /api/v1/registries/search`. They are not MCP tools.
+
+### Library code
+
+| 1.x                                                                                                         | 2.0                                                                                 |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `findPackInRegistries`, `resolvePackFromRegistries` (`src/registry/resolve.ts`)                             | `findRegistryPack(spec, registry?)`, `resolveRegistryPack(spec, registry?)`         |
+| `RegistryConflict`, `ConflictResolution`, `RegistryConfigBlock` types                                       | Removed                                                                             |
+| `syncRegistryByName`, `syncStaleRegistries`, `getRegistryIndex`, `isRegistryStale` (`src/registry/sync.ts`) | `syncRegistry(requireRegistry(name))`, `syncAllRegistries()`, `listRegistryPacks()` |
+| `checkGitAvailable` (`src/registry/git.ts`)                                                                 | Removed: a missing git binary is a `ConfigError` from any git call                  |
+| `REGISTRIES_DIR` constant                                                                                   | `getRegistriesDir()` (follows the current home directory)                           |
+| `RegistrySearchResult` `{ registryName, pack, score }`                                                      | `{ ...pack, registry, score }`                                                      |
+| `RegistrySyncStatus.registryName`, status `"syncing"`                                                       | `registry`; statuses `success`, `offline`, `error`; new field `packs`               |
+| `ResolvedPack` `{ registryName, registryUrl, packName, version, dataPath }`                                 | `{ registry, name, version, dataPath }`                                             |

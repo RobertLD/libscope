@@ -1,89 +1,22 @@
 /** `libscope pack install|remove|list|create`, over the pack operations. */
 import type { Command } from "commander";
-import { createInterface } from "node:readline/promises";
 import {
   createPackOperation,
   installPackOperation,
   listPacksOperation,
   removePackOperation,
 } from "../../core/operations/index.js";
-import type { InstallResult } from "../../core/packs.js";
-import { loadRegistries } from "../../registry/config.js";
-import {
-  parsePackSpecifier,
-  resolvePackFromRegistries,
-  verifyResolvedPackChecksum,
-  type ResolvedPack,
-} from "../../registry/resolve.js";
-import { ValidationError } from "../../errors.js";
+import type { InstallResult, InstalledPack } from "../../core/packs.js";
+import type { RegistryPack } from "../../registry/types.js";
 import { confirmOrCancel } from "../confirm.js";
 import { defined, splitList, toNumber } from "../options.js";
 import { call, plural, print, printList, run } from "../run.js";
 
 interface InstallFlags {
   registry?: string;
-  fromRegistry?: string;
-  packVersion?: string;
-  yes?: boolean;
   batchSize?: number;
   resumeFrom?: number;
   concurrency?: number;
-}
-
-/** Ask which registry to use when a pack is in several. */
-async function chooseRegistry(
-  packName: string,
-  sources: Array<{ registryName: string; version: string; priority: number }>,
-): Promise<string> {
-  console.log(`Pack "${packName}" is in several registries:`);
-  sources.forEach((s, i) =>
-    console.log(`  [${i + 1}] ${s.registryName} (v${s.version}, priority ${s.priority})`),
-  );
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await rl.question("Select registry [1]: ")).trim() || "1";
-    const chosen = sources[Number.parseInt(answer, 10) - 1];
-    if (!chosen) throw new ValidationError(`Invalid selection: ${answer}`);
-    return chosen.registryName;
-  } finally {
-    rl.close();
-  }
-}
-
-/**
- * Find `nameOrPath` in the git registries. Returns the resolved pack (checksum verified), or
- * undefined for a local file, when no git registry is configured, or when none has the pack.
- */
-async function resolveFromGitRegistries(
-  nameOrPath: string,
-  flags: InstallFlags,
-): Promise<ResolvedPack | undefined> {
-  const isFile = nameOrPath.endsWith(".json") || nameOrPath.endsWith(".json.gz");
-  if (isFile || loadRegistries().length === 0) return undefined;
-
-  const { name, version: specVersion } = parsePackSpecifier(nameOrPath);
-  const version = flags.packVersion ?? specVersion;
-  const resolve = (
-    registryName: string | undefined,
-  ): ReturnType<typeof resolvePackFromRegistries> =>
-    resolvePackFromRegistries(name, {
-      version,
-      registryName,
-      conflictResolution: registryName
-        ? { strategy: "explicit", registryName }
-        : flags.yes
-          ? { strategy: "priority" }
-          : undefined,
-    });
-
-  let result = resolve(flags.fromRegistry);
-  for (const w of result.warnings) console.error(`⚠ ${w}`);
-  if (result.conflict && !result.resolved) {
-    result = resolve(await chooseRegistry(name, result.conflict.sources));
-  }
-  if (!result.resolved) return undefined;
-  await verifyResolvedPackChecksum(result.resolved);
-  return result.resolved;
 }
 
 function printInstall(result: InstallResult): void {
@@ -94,6 +27,25 @@ function printInstall(result: InstallResult): void {
   const errors = result.errors > 0 ? ` (${plural(result.errors, "error")})` : "";
   console.log(
     `✓ Installed pack "${result.packName}": ${plural(result.documentsInstalled, "document")}${errors}`,
+  );
+}
+
+/** Print registry warnings (e.g. a registry that was never synced) to stderr. */
+export function printWarnings(warnings: readonly string[] | undefined): void {
+  for (const warning of warnings ?? []) console.error(`⚠ ${warning}`);
+}
+
+function printPacks(result: {
+  items: Array<InstalledPack | RegistryPack>;
+  warnings?: string[] | undefined;
+}): void {
+  printWarnings(result.warnings);
+  printList(result.items, "No packs found.", (p) =>
+    console.log(
+      "installedAt" in p
+        ? `${p.name} v${p.version} — ${p.description ?? ""} (${plural(p.docCount, "document")})`
+        : `${p.name} v${p.latestVersion} — ${p.description} (registry ${p.registry})`,
+    ),
   );
 }
 
@@ -135,22 +87,18 @@ export function register(program: Command): void {
     .description("Install, remove, list and create knowledge packs");
 
   pack
-    .command("install <nameOrPath>")
+    .command("install <pack>")
     .description(
-      "Install a pack from a git registry, the pack registry URL, or a local .json/.json.gz file (name@version works)",
+      "Install a pack from the configured registries (name or name@version) or a local .json/.json.gz file",
     )
-    .option("--registry <url>", "Pack registry URL (URL registries)")
-    .option("--from-registry <name>", "Use this git registry")
-    .option("--pack-version <semver>", "Version to install (git registries)")
-    .option("-y, --yes", "Do not prompt: with several registries, use the highest priority")
+    .option("--registry <name>", "Look only in this registry")
     .option("--batch-size <n>", "Documents embedded per batch (default 10)", toNumber)
     .option("--resume-from <n>", "Skip the first N documents (resume a partial install)", toNumber)
     .option("--concurrency <n>", "Batches embedded in parallel (default 4)", toNumber)
-    .action(async (nameOrPath: string, flags: InstallFlags) => {
-      const resolved = await resolveFromGitRegistries(nameOrPath, flags);
+    .action(async (name: string, flags: InstallFlags) => {
       const input = defined({
-        pack: resolved?.dataPath ?? nameOrPath,
-        registryUrl: resolved ? undefined : flags.registry,
+        pack: name,
+        registry: flags.registry,
         batchSize: flags.batchSize,
         resumeFrom: flags.resumeFrom,
         concurrency: flags.concurrency,
@@ -170,21 +118,12 @@ export function register(program: Command): void {
 
   pack
     .command("list")
-    .description("List installed packs, or packs in the registry with --available")
-    .option("--available", "List packs available in the registry")
-    .option("--registry <url>", "Pack registry URL")
+    .description("List installed packs, or the packs in the configured registries (--available)")
+    .option("--available", "List the packs in the configured registries")
+    .option("--registry <name>", "With --available: only this registry")
     .action(async (flags: { available?: boolean; registry?: string }) => {
-      const input = defined({ available: flags.available, registryUrl: flags.registry });
-      await run(listPacksOperation, input, (r) =>
-        printList<{ name: string; version: string; description: string | null; docCount: number }>(
-          r.items,
-          flags.available ? "No packs available." : "No packs installed.",
-          (p) =>
-            console.log(
-              `${p.name} v${p.version} — ${p.description ?? ""} (${plural(p.docCount, "document")})`,
-            ),
-        ),
-      );
+      const input = defined({ available: flags.available, registry: flags.registry });
+      await run(listPacksOperation, input, printPacks);
     });
 
   pack

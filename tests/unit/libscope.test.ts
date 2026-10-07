@@ -174,6 +174,9 @@ describe("LibScope", () => {
 
   it("packs, tasks, webhooks, analytics", async () => {
     expect((await scope.packs.list()).items).toEqual([]);
+    await expect(
+      scope.registries.search({ query: "x", registry: "no-such-registry-for-tests" }),
+    ).rejects.toBeInstanceOf(NotFoundError);
     expect(Array.isArray((await scope.tasks.list()).items)).toBe(true);
     await expect(scope.tasks.get({ taskId: "missing" })).rejects.toBeInstanceOf(NotFoundError);
     expect((await scope.webhooks.list()).items).toEqual([]);

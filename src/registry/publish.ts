@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLogger } from "../logger.js";
-import { ValidationError } from "../errors.js";
+import { NotFoundError, ValidationError } from "../errors.js";
 import type {
   PublishOptions,
   PublishResult,
@@ -21,7 +21,7 @@ import {
   INDEX_FILE,
   getRegistryCacheDir,
 } from "./types.js";
-import { getRegistry } from "./config.js";
+import { requireRegistry } from "./config.js";
 import { commitAndPush, fetchRegistry, git, clearIndexCache } from "./git.js";
 import { computeChecksum, writeChecksumFile } from "./checksum.js";
 import { readPackFile, type KnowledgePack } from "../core/packs.js";
@@ -109,10 +109,7 @@ function readPackJson(filePath: string): KnowledgePack {
 
 /** Validate that the registry exists and has a local cache; return the cache directory. */
 function validateRegistryCache(registryName: string): string {
-  const entry = getRegistry(registryName);
-  if (!entry) {
-    throw new ValidationError(`Registry "${registryName}" not found. Add it first.`);
-  }
+  requireRegistry(registryName);
   const cacheDir = getRegistryCacheDir(registryName);
   if (!existsSync(cacheDir)) {
     throw new ValidationError(
@@ -183,7 +180,7 @@ function resolveVersionAndManifest(
   if (manifest.versions.some((v) => v.version === version)) {
     throw new ValidationError(
       `Version ${version} of "${pack.name}" already exists in "${registryName}". ` +
-        "Use --pack-version to specify a different version.",
+        "Publish it with a different version.",
     );
   }
 
@@ -386,13 +383,13 @@ export async function unpublishPack(options: UnpublishOptions): Promise<void> {
   const manifestPath = join(packDir, PACK_MANIFEST_FILE);
 
   if (!existsSync(manifestPath)) {
-    throw new ValidationError(`Pack "${packName}" not found in registry "${registryName}".`);
+    throw new NotFoundError(`Pack "${packName}" not found in registry "${registryName}".`);
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PackManifest;
   const versionIdx = manifest.versions.findIndex((v) => v.version === version);
   if (versionIdx === -1) {
-    throw new ValidationError(
+    throw new NotFoundError(
       `Version ${version} of "${packName}" not found in registry "${registryName}".`,
     );
   }

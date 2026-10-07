@@ -245,28 +245,30 @@ Annotations: not destructive.
 
 ### install-pack
 
-Install a knowledge pack from the registry or a local .json/.json.gz file
+Install a knowledge pack from a registry (name or name@version) or a local file
+
+Packs are looked up in the local copies of the configured registries (run sync-registries to update them). Local .json/.json.gz files are accepted from the CLI and the Node.js API only.
 
 Annotations: not destructive, idempotent.
 
 | Parameter     | Type    | Required | Description                                                                                              |
 | ------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `pack`        | string  | yes      | Pack name from the registry, or a local .json/.json.gz file                                              |
-| `registryUrl` | string  |          | Registry URL (default: the public pack registry)                                                         |
+| `pack`        | string  | yes      | Pack name or name@version from a registry, or a local .json/.json.gz file                                |
+| `registry`    | string  |          | Look only in this registry (needed when several registries have the pack)                                |
 | `batchSize`   | integer |          | Documents per batch (default 10)                                                                         |
 | `concurrency` | integer |          | Batches embedded in parallel (default 4)                                                                 |
 | `async`       | boolean |          | Run in the background and return a taskId at once; poll with task {"action": "status"} Default: `false`. |
 
 ### list-packs
 
-List installed packs, or packs available in the registry
+List installed packs, or the packs available in the configured registries
 
 Annotations: read-only.
 
-| Parameter     | Type    | Required | Description                                                     |
-| ------------- | ------- | -------- | --------------------------------------------------------------- |
-| `available`   | boolean |          | List registry packs instead of installed ones Default: `false`. |
-| `registryUrl` | string  |          | Registry URL (default: the public pack registry)                |
+| Parameter   | Type    | Required | Description                                                                             |
+| ----------- | ------- | -------- | --------------------------------------------------------------------------------------- |
+| `available` | boolean |          | List the packs in the configured registries instead of installed ones Default: `false`. |
+| `registry`  | string  |          | With available: only this registry                                                      |
 
 ### reindex-documents
 
