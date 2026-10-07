@@ -34,15 +34,23 @@ If you're on an unsupported platform, LibScope will fall back to keyword-only se
 
 ### Embedding dimension mismatch after switching providers
 
-**Symptom:** Error like `expected N dimensions, got M` when searching after changing the embedding provider.
+**Symptom:** LibScope stops with `The vector index (<old model>) does not match the configured embedding model (<new model>)`. Or search logs `Vector index does not match the embedding model, falling back to keyword search`.
 
-**Cause:** Changing embedding providers produces vectors of different dimensions. Existing embeddings in the database are incompatible.
+**Cause:** LibScope records the provider, model, and vector size that built the vector index. Different models produce different vectors, so the existing vectors cannot be used with the new model.
 
-**Fix:** Re-index all documents after switching providers:
+**Fix:** Rebuild the vector index with the configured model:
 ```bash
-libscope db reset          # clears all indexed content
-libscope pack install ...  # re-install packs
+libscope reindex --rebuild
 ```
+This command drops and recreates the vector table with the size of the new model. Then it re-embeds every chunk. Your documents, topics, and tags are kept.
+
+### `Expected embedding dimension N, got M`
+
+**Symptom:** Indexing or search fails with `Expected embedding dimension N, got M from model "<model>"`.
+
+**Cause:** The model returns vectors of a different size than LibScope expects. LibScope knows the size of common OpenAI and Ollama models. For other models, it uses `embedding.dimensions` from the config, or the size of the first vector the model returns.
+
+**Fix:** Set `embedding.dimensions` to M in `~/.libscope/config.json` or `.libscope.json`, then run `libscope reindex --rebuild`.
 
 ---
 
@@ -87,9 +95,14 @@ LibScope uses SQLite WAL mode which supports concurrent reads but only one write
 
 ### How to reset the database
 
+There is no reset command. To remove all indexed content and keep your config, stop all libscope processes (CLI, MCP server, API server). Then delete the database files of the workspace:
+
 ```bash
-libscope db reset    # removes all indexed content (keeps config)
+rm ~/.libscope/workspaces/default/libscope.db*   # replace "default" with your workspace name
+libscope init
 ```
+
+To replace only the vectors (for example, after you change the embedding model), use `libscope reindex --rebuild`.
 
 ---
 

@@ -120,7 +120,7 @@ Always use the appropriate error subclass. MCP tool handlers must be wrapped wit
 ## Database
 
 - **Engine:** better-sqlite3 + sqlite-vec for vector search
-- **Schema version:** 17 (migrations in `src/db/schema.ts`)
+- **Schema version:** 18 (migrations in `src/db/schema.ts`)
 - **Adding migrations:** Increment `SCHEMA_VERSION`, add entry to `MIGRATIONS` object with the new version number as key
 - **Key tables:** documents, chunks, chunks_fts (FTS5), chunk_embeddings (vector), topics, ratings, schema_version
 

@@ -3,7 +3,13 @@ import { randomUUID } from "node:crypto";
 import { ValidationError, TopicNotFoundError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import { validateRow } from "../utils/db-validation.js";
-import { DOC_COLUMNS, rowToDocument, type Document, type DocumentRow } from "./documents.js";
+import {
+  DOC_COLUMNS,
+  deleteChunkEmbeddings,
+  rowToDocument,
+  type Document,
+  type DocumentRow,
+} from "./documents.js";
 
 export interface Topic {
   id: string;
@@ -145,7 +151,10 @@ export interface TopicStats {
   documentCount: number;
 }
 
-/** Delete a topic and optionally its document associations. */
+/** Documents per DELETE statement when removing a topic's vectors (bounds SQL variables). */
+const EMBEDDING_DELETE_BATCH = 500;
+
+/** Delete a topic and optionally its documents (with their chunks and vectors). */
 export function deleteTopic(
   db: Database.Database,
   topicId: string,
@@ -155,6 +164,20 @@ export function deleteTopic(
   getTopic(db, topicId);
   const run = db.transaction(() => {
     if (options?.deleteDocuments) {
+      // chunk_embeddings is a virtual table with no foreign key, so remove vectors explicitly.
+      const docIds = (
+        db.prepare("SELECT id FROM documents WHERE topic_id = ?").all(topicId) as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id);
+      try {
+        for (let i = 0; i < docIds.length; i += EMBEDDING_DELETE_BATCH) {
+          deleteChunkEmbeddings(db, docIds.slice(i, i + EMBEDDING_DELETE_BATCH));
+        }
+      } catch (err: unknown) {
+        const tableMissing = err instanceof Error && err.message.includes("no such table");
+        log[tableMissing ? "debug" : "warn"]({ err, topicId }, "Skipped chunk_embeddings cleanup");
+      }
       db.prepare("DELETE FROM documents WHERE topic_id = ?").run(topicId);
     }
     db.prepare("DELETE FROM topics WHERE id = ?").run(topicId);

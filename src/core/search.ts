@@ -4,6 +4,7 @@ import { z } from "zod";
 import { withCorrelationId, createChildLogger } from "../logger.js";
 import { validateCountRow } from "../utils/db-validation.js";
 import { validateRow, validateRows } from "../db/validate.js";
+import { REBUILD_VECTOR_INDEX_HINT } from "../db/index-meta.js";
 import { logSearch, recordSearchQuery } from "./analytics.js";
 import { performance } from "node:perf_hooks";
 
@@ -35,6 +36,15 @@ const VECTOR_TABLE_MISSING_PATTERNS = [
 function isVectorTableError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return VECTOR_TABLE_MISSING_PATTERNS.some((p) => msg.includes(p));
+}
+
+/**
+ * sqlite-vec error raised when the query vector size differs from the vector table's
+ * (the embedding model changed after the index was built). Both spellings occur in sqlite-vec.
+ */
+function isVectorDimensionError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes("dimension mismatch") || msg.includes("dimension mistmatch");
 }
 
 /** Escape LIKE special characters so user input is treated literally. */
@@ -555,9 +565,17 @@ export async function searchDocuments(
     recordAnalytics(db, options, response, searchMethod, startTime, analyticsEnabled);
     return finalizeResponse(db, response, options);
   } catch (err) {
-    if (!isVectorTableError(err)) throw err;
+    const dimensionMismatch = isVectorDimensionError(err);
+    if (!dimensionMismatch && !isVectorTableError(err)) throw err;
 
-    log.warn({ err }, "Vector table missing, falling back to keyword search");
+    if (dimensionMismatch) {
+      log.warn(
+        { err },
+        `Vector index does not match the embedding model, falling back to keyword search. ${REBUILD_VECTOR_INDEX_HINT}`,
+      );
+    } else {
+      log.warn({ err }, "Vector table missing, falling back to keyword search");
+    }
     const response = keywordSearch(db, options, limit, offset);
     response.results = postProcessResults(response.results, options);
 

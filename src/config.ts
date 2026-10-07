@@ -19,6 +19,8 @@ export interface LibScopeConfig {
     ollamaModel?: string;
     openaiApiKey?: string;
     openaiModel?: string;
+    /** Vector size override for models whose dimension is not built in. */
+    dimensions?: number;
   };
   llm?: {
     provider?: "openai" | "ollama" | "anthropic" | "passthrough";
@@ -223,6 +225,7 @@ const CONFIG_KEYS: Record<ConfigKey, ConfigKeySpec> = {
   "embedding.ollamaModel": { type: "string" },
   "embedding.openaiApiKey": { type: "string", secretEnv: "LIBSCOPE_OPENAI_API_KEY" },
   "embedding.openaiModel": { type: "string" },
+  "embedding.dimensions": { type: "positiveInt" },
   "llm.provider": { type: LLM_PROVIDERS },
   "llm.model": { type: "string" },
   "llm.ollamaUrl": { type: "string" },

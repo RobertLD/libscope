@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb } from "../fixtures/test-db.js";
+import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
 import {
   createTopic,
   listTopics,
@@ -139,6 +139,43 @@ describe("topics", () => {
       deleteTopic(db, "cleanup", { deleteDocuments: true });
       const doc = db.prepare("SELECT id FROM documents WHERE id = ?").get("doc-2");
       expect(doc).toBeUndefined();
+    });
+
+    it("should delete vectors of deleted documents when deleteDocuments is true", () => {
+      const vdb = createTestDbWithVec();
+      createTopic(vdb, { name: "Vectors" });
+      const insertDoc = vdb.prepare(
+        "INSERT INTO documents (id, source_type, title, content, topic_id) VALUES (?, 'topic', ?, 'c', ?)",
+      );
+      insertDoc.run("doc-in", "In topic", "vectors");
+      insertDoc.run("doc-out", "Other", null);
+      const insertChunk = vdb.prepare(
+        "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, 'text', 0)",
+      );
+      insertChunk.run("chunk-in", "doc-in");
+      insertChunk.run("chunk-out", "doc-out");
+      const insertVec = vdb.prepare(
+        "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, x'00')",
+      );
+      insertVec.run("chunk-in");
+      insertVec.run("chunk-out");
+
+      deleteTopic(vdb, "vectors", { deleteDocuments: true });
+
+      const remaining = vdb.prepare("SELECT chunk_id FROM chunk_embeddings").all();
+      expect(remaining).toEqual([{ chunk_id: "chunk-out" }]);
+      vdb.close();
+    });
+
+    it("should delete documents when the vector table is missing", () => {
+      createTopic(db, { name: "NoVec" });
+      db.prepare(
+        "INSERT INTO documents (id, source_type, title, content, topic_id) VALUES ('d', 'topic', 'D', 'c', 'novec')",
+      ).run();
+
+      deleteTopic(db, "novec", { deleteDocuments: true });
+
+      expect(db.prepare("SELECT id FROM documents WHERE id = 'd'").get()).toBeUndefined();
     });
 
     it("should set child topic parent_id to null on deletion", () => {

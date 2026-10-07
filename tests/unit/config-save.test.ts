@@ -175,6 +175,7 @@ describe("setUserConfigValue", () => {
     expect([...CONFIG_KEY_NAMES].sort()).toEqual(
       [
         "database.path",
+        "embedding.dimensions",
         "embedding.ollamaModel",
         "embedding.ollamaUrl",
         "embedding.openaiApiKey",
@@ -196,6 +197,7 @@ describe("setUserConfigValue", () => {
   it.each([
     ["embedding.ollamaModel", "mxbai-embed-large", "mxbai-embed-large"],
     ["embedding.openaiModel", "text-embedding-3-large", "text-embedding-3-large"],
+    ["embedding.dimensions", "1024", 1024],
     ["llm.provider", "anthropic", "anthropic"],
     ["llm.model", "gpt-4o", "gpt-4o"],
     ["llm.ollamaUrl", "http://localhost:11434", "http://localhost:11434"],

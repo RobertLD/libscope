@@ -78,7 +78,13 @@ libscope config set embedding.provider ollama
 libscope config set embedding.provider openai
 ```
 
-If you switch providers after indexing documents, run `libscope reindex` to re-embed existing chunks with the new model.
+LibScope records the provider, model, and vector size that built the vector index. If you change the provider, the model, or `embedding.dimensions` after you index documents, LibScope stops with an error that names the old and the new model. To rebuild the vector index with the new model, run:
+
+```bash
+libscope reindex --rebuild
+```
+
+LibScope knows the vector size of common models (for example `nomic-embed-text`, `mxbai-embed-large`, `all-minilm`, `text-embedding-3-small`, and `text-embedding-3-large`). For a different Ollama or OpenAI model, set `embedding.dimensions` to the vector size of the model. If you do not set it, `libscope reindex --rebuild` embeds one probe text to find the size. For `text-embedding-3-*` models, `embedding.dimensions` also asks OpenAI for shorter vectors.
 
 ## LLM Configuration
 

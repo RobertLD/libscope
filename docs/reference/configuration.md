@@ -15,28 +15,29 @@ Complete reference for all configuration options.
 
 ### Embedding
 
-| Key                     | Type   | Default                    | Description                    |
-| ----------------------- | ------ | -------------------------- | ------------------------------ |
-| `embedding.provider`    | string | `"local"`                  | `local`, `ollama`, or `openai` |
-| `embedding.ollamaUrl`   | string | `"http://localhost:11434"` | Ollama server URL              |
-| `embedding.ollamaModel` | string | `"nomic-embed-text"`       | Ollama embedding model         |
-| `embedding.openaiModel` | string | `"text-embedding-3-small"` | OpenAI embedding model         |
-| `embedding.openaiApiKey` | string | —                         | OpenAI API key (env vars take precedence, see [API keys](#api-keys)) |
+| Key                      | Type   | Default                    | Description                                                                                                                                                                                                             |
+| ------------------------ | ------ | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `embedding.provider`     | string | `"local"`                  | `local`, `ollama`, or `openai`                                                                                                                                                                                          |
+| `embedding.ollamaUrl`    | string | `"http://localhost:11434"` | Ollama server URL                                                                                                                                                                                                       |
+| `embedding.ollamaModel`  | string | `"nomic-embed-text"`       | Ollama embedding model                                                                                                                                                                                                  |
+| `embedding.openaiModel`  | string | `"text-embedding-3-small"` | OpenAI embedding model                                                                                                                                                                                                  |
+| `embedding.openaiApiKey` | string | —                          | OpenAI API key (env vars take precedence, see [API keys](#api-keys))                                                                                                                                                    |
+| `embedding.dimensions`   | number | —                          | Vector size of the Ollama or OpenAI model. Needed only for models whose size LibScope does not know. For `text-embedding-3-*`, it also requests shorter vectors. After you change it, run `libscope reindex --rebuild`. |
 
 ### LLM (for RAG)
 
-| Key               | Type   | Default | Description                                    |
-| ----------------- | ------ | ------- | ---------------------------------------------- |
-| `llm.provider`        | string | —       | `openai`, `ollama`, `anthropic`, or `passthrough` |
-| `llm.model`           | string | —       | Model name override                               |
-| `llm.ollamaUrl`       | string | —       | Ollama server URL (overrides embedding URL)       |
+| Key                   | Type   | Default | Description                                                                      |
+| --------------------- | ------ | ------- | -------------------------------------------------------------------------------- |
+| `llm.provider`        | string | —       | `openai`, `ollama`, `anthropic`, or `passthrough`                                |
+| `llm.model`           | string | —       | Model name override                                                              |
+| `llm.ollamaUrl`       | string | —       | Ollama server URL (overrides embedding URL)                                      |
 | `llm.openaiApiKey`    | string | —       | OpenAI API key for the LLM (env vars take precedence, see [API keys](#api-keys)) |
-| `llm.anthropicApiKey` | string | —       | Anthropic API key (env vars take precedence, see [API keys](#api-keys)) |
+| `llm.anthropicApiKey` | string | —       | Anthropic API key (env vars take precedence, see [API keys](#api-keys))          |
 
 ### Database
 
-| Key             | Type   | Default                                              | Description                                                    |
-| --------------- | ------ | ---------------------------------------------------- | -------------------------------------------------------------- |
+| Key             | Type   | Default                                                  | Description                                                           |
+| --------------- | ------ | -------------------------------------------------------- | --------------------------------------------------------------------- |
 | `database.path` | string | unset (`~/.libscope/workspaces/<workspace>/libscope.db`) | SQLite file to use instead of the workspace database. `~` is expanded |
 
 ### Logging
@@ -47,37 +48,37 @@ Complete reference for all configuration options.
 
 ### Indexing
 
-| Key                             | Type    | Default | Description                                       |
-| ------------------------------- | ------- | ------- | ------------------------------------------------- |
-| `indexing.maxDocumentSize`      | number  | `104857600` | Maximum document size in bytes (100 MB)       |
-| `indexing.allowPrivateUrls`     | boolean | `false` | Allow fetching from private/internal IP addresses |
-| `indexing.allowSelfSignedCerts` | boolean | `false` | Accept self-signed or untrusted TLS certificates  |
+| Key                             | Type    | Default     | Description                                       |
+| ------------------------------- | ------- | ----------- | ------------------------------------------------- |
+| `indexing.maxDocumentSize`      | number  | `104857600` | Maximum document size in bytes (100 MB)           |
+| `indexing.allowPrivateUrls`     | boolean | `false`     | Allow fetching from private/internal IP addresses |
+| `indexing.allowSelfSignedCerts` | boolean | `false`     | Accept self-signed or untrusted TLS certificates  |
 
 ## Environment Variables
 
-| Variable                           | Maps to                                    | Default                  |
-| ---------------------------------- | ------------------------------------------ | ------------------------ |
-| `LIBSCOPE_EMBEDDING_PROVIDER`      | `embedding.provider`                       | `local`                  |
-| `LIBSCOPE_OPENAI_API_KEY`          | `embedding.openaiApiKey`, `llm.openaiApiKey` | —                      |
-| `OPENAI_API_KEY`                   | Same as above, used when `LIBSCOPE_OPENAI_API_KEY` is not set | — |
-| `LIBSCOPE_OLLAMA_URL`              | `embedding.ollamaUrl`                      | `http://localhost:11434` |
-| `LIBSCOPE_OLLAMA_MODEL`            | `embedding.ollamaModel`                    | `nomic-embed-text`       |
-| `LIBSCOPE_LLM_PROVIDER`            | `llm.provider`                             | —                        |
-| `LIBSCOPE_LLM_MODEL`               | `llm.model`                                | —                        |
-| `LIBSCOPE_ANTHROPIC_API_KEY`       | `llm.anthropicApiKey`                      | —                        |
-| `ANTHROPIC_API_KEY`                | Same as above, used when `LIBSCOPE_ANTHROPIC_API_KEY` is not set | — |
-| `LIBSCOPE_ALLOW_PRIVATE_URLS`      | `indexing.allowPrivateUrls`                | `false`                  |
-| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | `indexing.allowSelfSignedCerts`            | `false`                  |
-| `LIBSCOPE_WORKSPACE`               | Active workspace (overrides `libscope workspace use`) | `default`     |
-| `LIBSCOPE_API_KEY`                 | REST API key. When set, requests must send `Authorization: Bearer <key>` | — |
-| `LIBSCOPE_SECRET_KEY`              | Key used to encrypt stored webhook secrets | —                        |
-| `LIBSCOPE_VERBOSE`                 | `1` prints structured JSON logs (to stderr) in the CLI | —            |
-| `ONENOTE_CLIENT_ID`                | OneNote app client ID                      | —                        |
-| `ONENOTE_TENANT_ID`                | OneNote tenant ID                          | `common`                 |
-| `NOTION_TOKEN`                     | Notion integration token                   | —                        |
-| `CONFLUENCE_URL`                   | Confluence base URL                        | —                        |
-| `CONFLUENCE_EMAIL`                 | Confluence user email                      | —                        |
-| `CONFLUENCE_TOKEN`                 | Confluence API token                       | —                        |
+| Variable                           | Maps to                                                                  | Default                  |
+| ---------------------------------- | ------------------------------------------------------------------------ | ------------------------ |
+| `LIBSCOPE_EMBEDDING_PROVIDER`      | `embedding.provider`                                                     | `local`                  |
+| `LIBSCOPE_OPENAI_API_KEY`          | `embedding.openaiApiKey`, `llm.openaiApiKey`                             | —                        |
+| `OPENAI_API_KEY`                   | Same as above, used when `LIBSCOPE_OPENAI_API_KEY` is not set            | —                        |
+| `LIBSCOPE_OLLAMA_URL`              | `embedding.ollamaUrl`                                                    | `http://localhost:11434` |
+| `LIBSCOPE_OLLAMA_MODEL`            | `embedding.ollamaModel`                                                  | `nomic-embed-text`       |
+| `LIBSCOPE_LLM_PROVIDER`            | `llm.provider`                                                           | —                        |
+| `LIBSCOPE_LLM_MODEL`               | `llm.model`                                                              | —                        |
+| `LIBSCOPE_ANTHROPIC_API_KEY`       | `llm.anthropicApiKey`                                                    | —                        |
+| `ANTHROPIC_API_KEY`                | Same as above, used when `LIBSCOPE_ANTHROPIC_API_KEY` is not set         | —                        |
+| `LIBSCOPE_ALLOW_PRIVATE_URLS`      | `indexing.allowPrivateUrls`                                              | `false`                  |
+| `LIBSCOPE_ALLOW_SELF_SIGNED_CERTS` | `indexing.allowSelfSignedCerts`                                          | `false`                  |
+| `LIBSCOPE_WORKSPACE`               | Active workspace (overrides `libscope workspace use`)                    | `default`                |
+| `LIBSCOPE_API_KEY`                 | REST API key. When set, requests must send `Authorization: Bearer <key>` | —                        |
+| `LIBSCOPE_SECRET_KEY`              | Key used to encrypt stored webhook secrets                               | —                        |
+| `LIBSCOPE_VERBOSE`                 | `1` prints structured JSON logs (to stderr) in the CLI                   | —                        |
+| `ONENOTE_CLIENT_ID`                | OneNote app client ID                                                    | —                        |
+| `ONENOTE_TENANT_ID`                | OneNote tenant ID                                                        | `common`                 |
+| `NOTION_TOKEN`                     | Notion integration token                                                 | —                        |
+| `CONFLUENCE_URL`                   | Confluence base URL                                                      | —                        |
+| `CONFLUENCE_EMAIL`                 | Confluence user email                                                    | —                        |
+| `CONFLUENCE_TOKEN`                 | Confluence API token                                                     | —                        |
 
 ### API keys
 

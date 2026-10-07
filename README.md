@@ -301,6 +301,8 @@ export LIBSCOPE_EMBEDDING_PROVIDER=openai
 export LIBSCOPE_OPENAI_API_KEY=sk-...
 ```
 
+The vector index is tied to the model that built it. After you change the provider or model, run `libscope reindex --rebuild`. For a model whose vector size LibScope does not know, set `embedding.dimensions` in the config file.
+
 ### LLM for RAG
 
 The `ask` command and `ask-question` MCP tool need an LLM. Configure one with:
@@ -417,8 +419,8 @@ LibScope ships with a few more utilities beyond the core index-and-search loop:
 # Watch a directory and auto-reindex on changes
 libscope watch ./docs/
 
-# Re-embed everything after switching embedding providers
-libscope reindex
+# Rebuild the vector index after switching embedding provider or model
+libscope reindex --rebuild
 
 # Find duplicate documents
 libscope dedupe
