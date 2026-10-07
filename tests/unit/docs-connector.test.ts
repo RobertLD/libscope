@@ -796,6 +796,30 @@ describe("syncDocSite — mocked fetch", () => {
     expect(result2.pagesUpdated).toBe(0);
   });
 
+  it("recognises existing pages beyond the first 50 documents", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root
+      .mockResolvedValueOnce(notFoundResponse()); // sitemap.xml
+    await syncDocSite(db, provider, { url: "https://docs.example.com/docs/" });
+
+    // Make the root doc the oldest of 61 docs-connector documents.
+    db.prepare("UPDATE documents SET updated_at = '2000-01-01 00:00:00'").run();
+    const insert = db.prepare(
+      "INSERT INTO documents (id, source_type, title, content, url, updated_at) VALUES (?, 'library', 'T', 'B', ?, '2030-01-01 00:00:00')",
+    );
+    for (let i = 0; i < 60; i++) {
+      insert.run(`filler-${i}`, `https://docs.example.com/docs/filler-${i}`);
+    }
+
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root (unchanged)
+      .mockResolvedValueOnce(notFoundResponse()); // sitemap.xml
+    const result = await syncDocSite(db, provider, { url: "https://docs.example.com/docs/" });
+
+    expect(result.pagesSkipped).toBe(1);
+    expect(result.pagesIndexed).toBe(0);
+  });
+
   it("records sync history in the connector_syncs table", async () => {
     mockFetch
       .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root

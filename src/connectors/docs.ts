@@ -12,7 +12,7 @@ import { getLogger } from "../logger.js";
 import { fetchRaw } from "../core/url-fetcher.js";
 import type { FetchOptions } from "../core/url-fetcher.js";
 import { indexDocument } from "../core/indexing.js";
-import { listDocuments, deleteDocument } from "../core/documents.js";
+import { deleteDocument } from "../core/documents.js";
 import { startSync, completeSync, failSync } from "./sync-tracker.js";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 
@@ -576,6 +576,21 @@ function validateDocSiteConfig(config: DocSiteConfig): URL {
   return baseUrl;
 }
 
+/**
+ * Normalised URLs of every docs-connector document (optionally scoped to one library).
+ * Reads only the url column and applies no row limit, so large sites are tracked fully.
+ */
+function loadExistingDocUrls(db: Database.Database, library: string | undefined): Set<string> {
+  let sql = "SELECT id, url FROM documents WHERE source_type = ? AND url IS NOT NULL";
+  const params: string[] = [SOURCE_TYPE];
+  if (library) {
+    sql += " AND library = ?";
+    params.push(library);
+  }
+  const rows = db.prepare(sql).all(...params) as Array<{ id: string; url: string }>;
+  return new Set(rows.map((r) => normalizeUrl(r.url)));
+}
+
 /** Discover URLs via sitemap.xml and root page links, populating the BFS queue. */
 async function discoverUrls(
   config: DocSiteConfig,
@@ -677,12 +692,7 @@ export async function syncDocSite(
     await discoverUrls(config, baseUrl, rootHtml, pathPrefix, fetchOptions, visited, queue);
 
     // --- Build existing-URL index for update tracking ---
-    const existingDocs = listDocuments(db, { sourceType: SOURCE_TYPE, library: config.library });
-    const existingUrls = new Set<string>(
-      existingDocs
-        .filter((d): d is typeof d & { url: string } => d.url !== null)
-        .map((d) => normalizeUrl(d.url)),
-    );
+    const existingUrls = loadExistingDocUrls(db, config.library);
 
     const ctx: PageContext = {
       siteType: result.detectedType,
