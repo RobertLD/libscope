@@ -12,6 +12,7 @@ import {
 } from "./indexing.js";
 import { getLogger } from "../logger.js";
 import { saveVersion } from "./versioning.js";
+import { emitEvent } from "./events.js";
 
 export interface Document {
   id: string;
@@ -113,6 +114,7 @@ export function deleteDocument(db: Database.Database, documentId: string): void 
   if (result.changes === 0) {
     throw new DocumentNotFoundError(documentId);
   }
+  emitEvent(db, "document.deleted", { documentId });
 }
 
 /** List documents with optional filters. */
@@ -270,6 +272,12 @@ export async function updateDocument(
     transaction();
   }
 
+  emitEvent(db, "document.updated", {
+    documentId,
+    title: newTitle,
+    library: newLibrary,
+    version: newVersion,
+  });
   return getDocument(db, documentId);
 }
 

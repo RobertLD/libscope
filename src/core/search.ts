@@ -6,6 +6,7 @@ import { validateCountRow } from "../utils/db-validation.js";
 import { validateRow, validateRows } from "../db/validate.js";
 import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-meta.js";
 import { logSearch, recordSearchQuery } from "./analytics.js";
+import { emitEvent } from "./events.js";
 import { performance } from "node:perf_hooks";
 
 /** Build SQL clause and params for AND-logic tag filtering on a document alias. */
@@ -502,6 +503,11 @@ function finalizeResponse(
   if (options.contextChunks) {
     response.results = attachContext(db, response.results, options.contextChunks);
   }
+  emitEvent(db, "search.executed", {
+    query: options.query,
+    resultCount: response.totalCount,
+    topicId: options.topic,
+  });
   return response;
 }
 

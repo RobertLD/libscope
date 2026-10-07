@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ConfigError } from "../errors.js";
@@ -108,20 +108,30 @@ export function deleteDbConnectorConfig(db: Database.Database, type: string): bo
   return result.changes > 0;
 }
 
-const CONNECTORS_DIR = join(homedir(), ".libscope", "connectors");
+/** Directory holding named connector configs (~/.libscope/connectors). */
+export function getConnectorsDir(): string {
+  return join(homedir(), ".libscope", "connectors");
+}
 
-function ensureConnectorsDir(): void {
-  if (existsSync(CONNECTORS_DIR)) {
+function ensureConnectorsDir(): string {
+  const dir = getConnectorsDir();
+  if (existsSync(dir)) {
     // Remediate existing directories that may have permissive permissions
-    restrictPermissions(CONNECTORS_DIR, 0o700);
+    restrictPermissions(dir, 0o700);
   } else {
-    mkdirSync(CONNECTORS_DIR, { recursive: true, mode: 0o700 });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
   try {
-    chmodSync(CONNECTORS_DIR, 0o700);
+    chmodSync(dir, 0o700);
   } catch {
     // chmod may fail in test environments or non-POSIX systems
   }
+  return dir;
+}
+
+function namedConfigPath(name: string): string {
+  validateConnectorName(name);
+  return join(getConnectorsDir(), `${name}.json`);
 }
 
 function validateConnectorName(name: string): void {
@@ -133,16 +143,14 @@ function validateConnectorName(name: string): void {
 /** Save a named connector config to ~/.libscope/connectors/<name>.json */
 export function saveNamedConnectorConfig(name: string, config: object): void {
   validateConnectorName(name);
-  ensureConnectorsDir();
-  const filePath = join(CONNECTORS_DIR, `${name}.json`);
+  const filePath = join(ensureConnectorsDir(), `${name}.json`);
   writeRestrictedFile(filePath, JSON.stringify(config, null, 2));
   getLogger().info({ connector: name }, "Connector config saved");
 }
 
 /** Load a named connector config from ~/.libscope/connectors/<name>.json */
 export function loadNamedConnectorConfig<T>(name: string): T {
-  validateConnectorName(name);
-  const filePath = join(CONNECTORS_DIR, `${name}.json`);
+  const filePath = namedConfigPath(name);
   if (!existsSync(filePath)) {
     throw new ConfigError(
       `No connector config found for "${name}". Run 'libscope connect ${name}' first.`,
@@ -158,9 +166,16 @@ export function loadNamedConnectorConfig<T>(name: string): T {
 
 /** Check if a named connector config exists */
 export function hasNamedConnectorConfig(name: string): boolean {
-  validateConnectorName(name);
-  const filePath = join(CONNECTORS_DIR, `${name}.json`);
-  return existsSync(filePath);
+  return existsSync(namedConfigPath(name));
+}
+
+/** Delete a named connector config. Returns false when none existed. */
+export function deleteNamedConnectorConfig(name: string): boolean {
+  const filePath = namedConfigPath(name);
+  if (!existsSync(filePath)) return false;
+  unlinkSync(filePath);
+  getLogger().info({ connector: name }, "Connector config deleted");
+  return true;
 }
 
 /**
@@ -216,8 +231,9 @@ export {
   failSync,
   getConnectorStatus,
   getSyncHistory,
+  trackSync,
 } from "./sync-tracker.js";
-export type { SyncStats, ConnectorSyncRow } from "./sync-tracker.js";
+export type { SyncStats, ConnectorSyncRow, ConnectorSyncOptions } from "./sync-tracker.js";
 
 export { syncNotion, convertNotionBlocks, disconnectNotion } from "./notion.js";
 export type { NotionConfig, NotionSyncResult, NotionBlock } from "./notion.js";

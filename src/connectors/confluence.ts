@@ -8,7 +8,7 @@ import { deleteDocument } from "../core/documents.js";
 import { getLogger } from "../logger.js";
 import { FetchError, ValidationError } from "../errors.js";
 import { fetchWithRetry } from "./http-utils.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 export interface ConfluenceConfig {
   baseUrl: string;
@@ -112,11 +112,17 @@ async function confluenceFetch<T>(url: string, auth: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function fetchAllPages<T>(initialUrl: string, baseUrl: string, auth: string): Promise<T[]> {
+async function fetchAllPages<T>(
+  initialUrl: string,
+  baseUrl: string,
+  auth: string,
+  signal?: AbortSignal,
+): Promise<T[]> {
   const all: T[] = [];
   let url: string | undefined = initialUrl;
 
   while (url) {
+    signal?.throwIfAborted();
     const resp: PaginatedResponse<T> = await confluenceFetch<PaginatedResponse<T>>(url, auth);
     all.push(...resp.results);
     const next: string | undefined = resp._links?.next;
@@ -449,19 +455,21 @@ interface SyncConfluenceSpaceOptions {
   urls: ApiUrls;
   auth: string;
   result: ConfluenceSyncResult;
+  signal: AbortSignal | undefined;
 }
 
 /** Sync all pages within a single Confluence space. */
 async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise<void> {
-  const { db, provider, space, confluenceType, base, urls, auth, result } = options;
+  const { db, provider, space, confluenceType, base, urls, auth, result, signal } = options;
   const log = getLogger();
   const topic = createTopic(db, { name: space.name });
 
   let pages: ConfluencePage[];
   try {
     const spaceRef = confluenceType === "server" ? space.key : space.id;
-    pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth);
+    pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth, signal);
   } catch (err) {
+    if (signal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
     result.errors.push({ page: `space:${space.key}`, error: msg });
@@ -469,6 +477,7 @@ async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise
   }
 
   for (const page of pages) {
+    signal?.throwIfAborted();
     try {
       const outcome = await indexConfluencePage({
         db,
@@ -509,10 +518,38 @@ function validateConfluenceConfig(config: ConfluenceConfig): void {
   }
 }
 
+/** Strip trailing slashes from a Confluence base URL (loop instead of a regex). */
+function trimBaseUrl(baseUrl: string): string {
+  let base = baseUrl;
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return base;
+}
+
 export async function syncConfluence(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: ConfluenceConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<ConfluenceSyncResult> {
+  return trackSync(
+    db,
+    "confluence",
+    options.syncName ?? trimBaseUrl(config.baseUrl),
+    () => runConfluenceSync(db, provider, config, options.signal),
+    (result) => ({
+      added: result.pagesIndexed,
+      updated: result.pagesUpdated,
+      deleted: 0,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runConfluenceSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: ConfluenceConfig,
+  signal: AbortSignal | undefined,
 ): Promise<ConfluenceSyncResult> {
   const log = getLogger();
 
@@ -520,67 +557,54 @@ export async function syncConfluence(
 
   const confluenceType = config.type ?? "cloud";
   const auth = buildAuthHeader(confluenceType, config.email, config.token);
-  let base = config.baseUrl;
-  while (base.endsWith("/")) base = base.slice(0, -1);
+  const base = trimBaseUrl(config.baseUrl);
   const urls = getApiUrls(base, confluenceType);
-  const syncId = startSync(db, "confluence", base);
 
-  try {
-    const result: ConfluenceSyncResult = {
-      spaces: 0,
-      pagesIndexed: 0,
-      pagesUpdated: 0,
-      errors: [],
-    };
+  const result: ConfluenceSyncResult = {
+    spaces: 0,
+    pagesIndexed: 0,
+    pagesUpdated: 0,
+    errors: [],
+  };
 
-    log.info({ baseUrl: base }, "Starting Confluence sync");
+  log.info({ baseUrl: base }, "Starting Confluence sync");
 
-    const allSpaces = await fetchAllPages<ConfluenceSpace>(urls.spaces, base, auth);
-    const excludeSet = new Set(config.excludeSpaces ?? []);
-    const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
-    const spacesToSync = allSpaces.filter((s) => {
-      if (excludeSet.has(s.key)) return false;
-      return requestedAll || config.spaces.includes(s.key);
+  const allSpaces = await fetchAllPages<ConfluenceSpace>(urls.spaces, base, auth, signal);
+  const excludeSet = new Set(config.excludeSpaces ?? []);
+  const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
+  const spacesToSync = allSpaces.filter((s) => {
+    if (excludeSet.has(s.key)) return false;
+    return requestedAll || config.spaces.includes(s.key);
+  });
+
+  result.spaces = spacesToSync.length;
+  log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
+
+  for (const space of spacesToSync) {
+    await syncConfluenceSpace({
+      db,
+      provider,
+      space,
+      confluenceType,
+      base,
+      urls,
+      auth,
+      result,
+      signal,
     });
-
-    result.spaces = spacesToSync.length;
-    log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
-
-    for (const space of spacesToSync) {
-      await syncConfluenceSpace({
-        db,
-        provider,
-        space,
-        confluenceType,
-        base,
-        urls,
-        auth,
-        result,
-      });
-    }
-
-    log.info(
-      {
-        spaces: result.spaces,
-        indexed: result.pagesIndexed,
-        updated: result.pagesUpdated,
-        errors: result.errors.length,
-      },
-      "Confluence sync complete",
-    );
-
-    completeSync(db, syncId, {
-      added: result.pagesIndexed,
-      updated: result.pagesUpdated,
-      deleted: 0,
-      errored: result.errors.length,
-    });
-
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
   }
+
+  log.info(
+    {
+      spaces: result.spaces,
+      indexed: result.pagesIndexed,
+      updated: result.pagesUpdated,
+      errors: result.errors.length,
+    },
+    "Confluence sync complete",
+  );
+
+  return result;
 }
 
 export function disconnectConfluence(db: Database.Database): number {

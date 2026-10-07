@@ -12,6 +12,7 @@ import type Database from "better-sqlite3";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { isPrivateIP } from "./url-fetcher.js";
+import { LIBSCOPE_EVENTS, onEvent, type LibScopeEvent } from "./events.js";
 
 const lookupAsync = promisify(dnsLookup);
 
@@ -43,15 +44,9 @@ function decryptSecret(stored: string): string {
   return decipher.update(Buffer.from(encHex!, "hex")).toString("utf8") + decipher.final("utf8");
 }
 
-export const WEBHOOK_EVENTS = [
-  "document.created",
-  "document.updated",
-  "document.deleted",
-  "document.rated",
-  "search.executed",
-] as const;
+export const WEBHOOK_EVENTS = LIBSCOPE_EVENTS;
 
-export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+export type WebhookEvent = LibScopeEvent;
 
 export interface Webhook {
   id: string;
@@ -68,8 +63,10 @@ export interface Webhook {
  * Payload sent to webhook subscribers.
  *
  * The `data` field shape varies by event type:
- *  - "document.created" / "document.updated" / "document.deleted":
+ *  - "document.created" / "document.updated":
  *      { documentId: string; title: string; library?: string; version?: string }
+ *  - "document.deleted":
+ *      { documentId: string }
  *  - "document.rated":
  *      { documentId: string; rating: number; feedback?: string }
  *  - "search.executed":
@@ -318,6 +315,60 @@ export function buildPayload(event: WebhookEvent, data: Record<string, unknown>)
   return JSON.stringify(payload);
 }
 
+const DELIVERY_TIMEOUT_MS = 5000;
+
+/** Payload data sent by the CLI and REST "test webhook" commands. */
+export const TEST_PING_DATA: Readonly<Record<string, unknown>> = Object.freeze({
+  test: true,
+  message: "Webhook test ping",
+});
+
+/**
+ * Deliver one event to one webhook: decrypt the stored secret, sign the payload,
+ * re-check the URL against private IPs, and POST it (redirects are refused).
+ * Throws on SSRF rejection or network failure; returns the HTTP response otherwise.
+ */
+export async function deliverWebhook(
+  webhook: Webhook,
+  event: WebhookEvent,
+  data: Record<string, unknown>,
+): Promise<Response> {
+  const body = buildPayload(event, data);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (webhook.secret) {
+    headers["X-LibScope-Signature"] = signPayload(body, decryptSecret(webhook.secret));
+  }
+  await validateWebhookUrlSsrf(webhook.url);
+  return fetch(webhook.url, {
+    method: "POST",
+    headers,
+    body,
+    redirect: "error",
+    signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+  });
+}
+
+/** Record a delivery outcome; skipped when the caller already closed the database. */
+function recordDelivery(
+  db: Database.Database,
+  log: ReturnType<typeof getLogger>,
+  webhookId: string,
+  ok: boolean,
+): void {
+  if (!db.open) return;
+  try {
+    if (ok) {
+      db.prepare(
+        "UPDATE webhooks SET last_triggered_at = datetime('now'), failure_count = 0 WHERE id = ?",
+      ).run(webhookId);
+    } else {
+      recordFailure(db, log, webhookId);
+    }
+  } catch (dbErr: unknown) {
+    log.error({ err: dbErr, webhookId }, "DB error recording webhook delivery");
+  }
+}
+
 /**
  * Fire webhooks for a given event. Sends HTTP POST to all active webhooks
  * subscribed to this event. Fire-and-forget — errors are caught internally.
@@ -334,56 +385,29 @@ export function fireWebhooks(
     )
     .all() as WebhookRow[];
 
-  const body = buildPayload(event, data);
-
   for (const row of rows) {
     const webhook = rowToWebhook(row);
     if (!webhook.events.includes(event)) {
       continue;
     }
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (webhook.secret) {
-      headers["X-LibScope-Signature"] = signPayload(body, decryptSecret(webhook.secret));
-    }
-
-    // SSRF check before firing
-    validateWebhookUrlSsrf(webhook.url)
-      .then(() =>
-        fetch(webhook.url, {
-          method: "POST",
-          headers,
-          body,
-          redirect: "error",
-          signal: AbortSignal.timeout(5000),
-        }),
-      )
-      .then((resp) => {
-        try {
-          if (!resp.ok) {
-            log.warn(
-              { webhookId: webhook.id, url: webhook.url, status: resp.status },
-              "Webhook delivery received non-2xx response",
-            );
-            recordFailure(db, log, webhook.id);
-            return;
-          }
-          db.prepare(
-            "UPDATE webhooks SET last_triggered_at = datetime('now'), failure_count = 0 WHERE id = ?",
-          ).run(webhook.id);
-        } catch (dbErr: unknown) {
-          log.error({ err: dbErr, webhookId: webhook.id }, "DB error recording webhook success");
+    deliverWebhook(webhook, event, data).then(
+      (resp) => {
+        if (!resp.ok) {
+          log.warn(
+            { webhookId: webhook.id, url: webhook.url, status: resp.status },
+            "Webhook delivery received non-2xx response",
+          );
         }
-      })
-      .catch((err: unknown) => {
+        recordDelivery(db, log, webhook.id, resp.ok);
+      },
+      (err: unknown) => {
         log.warn({ err, webhookId: webhook.id, url: webhook.url }, "Webhook delivery failed");
-        try {
-          recordFailure(db, log, webhook.id);
-        } catch (dbErr: unknown) {
-          log.error({ err: dbErr, webhookId: webhook.id }, "DB error recording webhook failure");
-        }
-      });
+        recordDelivery(db, log, webhook.id, false);
+      },
+    );
   }
 }
+
+// Deliver core events (document/search mutations) to registered webhooks.
+onEvent(fireWebhooks);

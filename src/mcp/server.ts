@@ -37,6 +37,11 @@ export { errorResponse, withErrorHandling, type ToolResult } from "./errors.js";
 import { formatDocumentLinks, formatLinkCreated, formatSearchResults } from "./format.js";
 import { taskRegistry } from "./tasks.js";
 import type { TaskType, TaskWork } from "./tasks.js";
+import type { NotionConfig } from "../connectors/notion.js";
+import type { SlackConfig } from "../connectors/slack.js";
+import type { ConfluenceConfig } from "../connectors/confluence.js";
+import type { ObsidianConfig } from "../connectors/obsidian.js";
+import type { OneNoteConfig } from "../connectors/onenote.js";
 
 /** Build SpiderOptions from submit-document params. */
 function buildSpiderOptions(
@@ -786,10 +791,16 @@ async function main(): Promise<void> {
     "sync-slack",
     "Sync Slack channel messages and threads into the knowledge base",
     {
-      token: z.string().describe("Slack bot token (xoxb-...) or user token (xoxp-...)"),
+      token: z
+        .string()
+        .optional()
+        .describe(
+          "Slack bot token (xoxb-...) or user token (xoxp-...). Optional when a saved Slack connector exists.",
+        ),
       channels: z
         .array(z.string())
-        .describe("Channel names or IDs to sync, or ['all'] for all channels"),
+        .optional()
+        .describe("Channel names or IDs to sync, or ['all'] (default: saved config, else ['all'])"),
       excludeChannels: z
         .array(z.string())
         .optional()
@@ -800,6 +811,12 @@ async function main(): Promise<void> {
         .describe(
           "Thread handling: aggregate (default) combines thread into one doc, separate creates one doc per reply",
         ),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Saved connector config name (default: "slack"). Values saved by the CLI connect command fill in any parameter you omit.',
+        ),
       async: z
         .boolean()
         .optional()
@@ -809,16 +826,23 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       const { syncSlack: doSyncSlack } = await import("../connectors/slack.js");
+      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
 
-      const slackConfig = {
-        token: params.token,
-        channels: params.channels,
-        excludeChannels: params.excludeChannels,
-        threadMode: params.threadMode ?? ("aggregate" as const),
-      };
+      const name = params.name ?? "slack";
+      const { config: slackConfig } = resolveSyncConfig<SlackConfig>(
+        "slack",
+        name,
+        {
+          token: params.token,
+          channels: params.channels,
+          excludeChannels: params.excludeChannels,
+          threadMode: params.threadMode,
+        },
+        { defaults: { channels: ["all"], threadMode: "aggregate" }, required: ["token"] },
+      );
 
-      return runMaybeAsync(params.async, "sync_connector", async () => {
-        const result = await doSyncSlack(db, provider, slackConfig);
+      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
+        const result = await doSyncSlack(db, provider, slackConfig, { syncName: name, signal });
         const slackErrorLines = result.errors.map((e) => `  #${e.channel}: ${e.error}`).join("\n");
         const slackErrors = result.errors.length > 0 ? `\nErrors:\n${slackErrorLines}` : "";
         return (
@@ -906,8 +930,19 @@ async function main(): Promise<void> {
     "sync-onenote",
     "Sync OneNote notebooks via Microsoft Graph API",
     {
-      accessToken: z.string().describe("Microsoft Graph API access token"),
+      accessToken: z
+        .string()
+        .optional()
+        .describe(
+          "Microsoft Graph API access token. Optional when a saved OneNote connector exists (its refresh token is used).",
+        ),
       notebookName: z.string().optional().describe("Specific notebook name to sync (default: all)"),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Saved connector config name (default: "onenote"). Values saved by the CLI connect command fill in any parameter you omit.',
+        ),
       async: z
         .boolean()
         .optional()
@@ -917,17 +952,33 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       const { syncOneNote } = await import("../connectors/onenote.js");
+      const { resolveSyncConfig, saveRefreshedOneNoteTokens } =
+        await import("../connectors/saved-config.js");
 
-      const oneNoteConfig = {
-        clientId: "",
-        tenantId: "common",
-        accessToken: params.accessToken,
-        notebooks: params.notebookName ? [params.notebookName] : ["all"],
-        excludeSections: [] as string[],
-      };
+      const name = params.name ?? "onenote";
+      const { config: oneNoteConfig, saved } = resolveSyncConfig<OneNoteConfig>(
+        "onenote",
+        name,
+        {
+          accessToken: params.accessToken,
+          notebooks: params.notebookName ? [params.notebookName] : undefined,
+        },
+        { defaults: { clientId: "", tenantId: "common", notebooks: ["all"], excludeSections: [] } },
+      );
+      if (params.accessToken) {
+        // Use the caller's token as given; never replace it with a refreshed one.
+        oneNoteConfig.refreshToken = undefined;
+        oneNoteConfig.tokenExpiry = undefined;
+      }
+      if (!oneNoteConfig.accessToken && !oneNoteConfig.refreshToken) {
+        throw new ValidationError(
+          `Missing accessToken for onenote sync. Pass it as a parameter, or save a connector named "${name}" with 'libscope connect onenote'.`,
+        );
+      }
 
-      return runMaybeAsync(params.async, "sync_connector", async () => {
-        const result = await syncOneNote(db, provider, oneNoteConfig);
+      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
+        const result = await syncOneNote(db, provider, oneNoteConfig, { syncName: name, signal });
+        saveRefreshedOneNoteTokens(name, saved, oneNoteConfig);
         const oneNoteErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
         const oneNoteErrors = result.errors.length > 0 ? `\nErrors: ${oneNoteErrorLines}` : "";
         return (
@@ -948,7 +999,12 @@ async function main(): Promise<void> {
     "sync-notion",
     "Sync pages and databases from a connected Notion workspace into the knowledge base",
     {
-      token: z.string().describe("Notion integration token (secret_... or ntn_...)"),
+      token: z
+        .string()
+        .optional()
+        .describe(
+          "Notion integration token (secret_... or ntn_...). Optional when a saved Notion connector exists.",
+        ),
       lastSync: z
         .string()
         .optional()
@@ -957,6 +1013,12 @@ async function main(): Promise<void> {
         .array(z.string())
         .optional()
         .describe("List of Notion page/database IDs to exclude from sync"),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Saved connector config name (default: "notion"). Values saved by the CLI connect command fill in any parameter you omit.',
+        ),
       async: z
         .boolean()
         .optional()
@@ -966,15 +1028,18 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       const { syncNotion } = await import("../connectors/notion.js");
+      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
 
-      const notionConfig = {
-        token: params.token,
-        lastSync: params.lastSync,
-        excludePages: params.excludePages,
-      };
+      const name = params.name ?? "notion";
+      const { config: notionConfig } = resolveSyncConfig<NotionConfig>(
+        "notion",
+        name,
+        { token: params.token, lastSync: params.lastSync, excludePages: params.excludePages },
+        { required: ["token"] },
+      );
 
-      return runMaybeAsync(params.async, "sync_connector", async () => {
-        const result = await syncNotion(db, provider, notionConfig);
+      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
+        const result = await syncNotion(db, provider, notionConfig, { syncName: name, signal });
         const notionErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join("; ");
         const notionErrors = result.errors.length > 0 ? `\nErrors: ${notionErrorLines}` : "";
         return (
@@ -992,7 +1057,18 @@ async function main(): Promise<void> {
     "sync-obsidian-vault",
     "Sync an Obsidian vault into the knowledge base. Parses wikilinks, frontmatter, embeds, and tags with incremental sync support.",
     {
-      vaultPath: z.string().describe("Absolute path to the Obsidian vault directory"),
+      vaultPath: z
+        .string()
+        .optional()
+        .describe(
+          "Absolute path to the Obsidian vault directory. Optional when a saved Obsidian connector exists.",
+        ),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Saved connector config name (default: "obsidian"). Values saved by the CLI connect command fill in any parameter you omit.',
+        ),
       async: z
         .boolean()
         .optional()
@@ -1002,15 +1078,21 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       const { syncObsidianVault } = await import("../connectors/obsidian.js");
+      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
 
-      const obsidianConfig = {
-        vaultPath: params.vaultPath,
-        topicMapping: "folder" as const,
-        excludePatterns: [] as string[],
-      };
+      const name = params.name ?? "obsidian";
+      const { config: obsidianConfig } = resolveSyncConfig<ObsidianConfig>(
+        "obsidian",
+        name,
+        { vaultPath: params.vaultPath },
+        { defaults: { topicMapping: "folder", excludePatterns: [] }, required: ["vaultPath"] },
+      );
 
-      return runMaybeAsync(params.async, "sync_connector", async () => {
-        const result = await syncObsidianVault(db, provider, obsidianConfig);
+      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
+        const result = await syncObsidianVault(db, provider, obsidianConfig, {
+          syncName: name,
+          signal,
+        });
         const obsidianErrorLines = result.errors.map((e) => `${e.file}: ${e.error}`).join(", ");
         const obsidianErrors = result.errors.length > 0 ? `\nErrors: ${obsidianErrorLines}` : "";
         return (
@@ -1029,14 +1111,25 @@ async function main(): Promise<void> {
     "sync-confluence",
     "Sync Confluence spaces and pages into the knowledge base",
     {
-      baseUrl: z.string().describe("Confluence base URL (e.g. https://acme.atlassian.net)"),
-      email: z.string().describe("Confluence user email"),
-      token: z.string().describe("API token or PAT"),
+      baseUrl: z
+        .string()
+        .optional()
+        .describe(
+          "Confluence base URL (e.g. https://acme.atlassian.net). Optional when a saved Confluence connector exists.",
+        ),
+      email: z.string().optional().describe("Confluence user email (Cloud). Optional when saved."),
+      token: z.string().optional().describe("API token or PAT. Optional when saved."),
       spaces: z
         .array(z.string())
         .optional()
-        .describe("Space keys to sync, or ['all'] (default: ['all'])"),
+        .describe("Space keys to sync, or ['all'] (default: saved config, else ['all'])"),
       excludeSpaces: z.array(z.string()).optional().describe("Space keys to exclude"),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Saved connector config name (default: "confluence"). Values saved by the CLI connect command fill in any parameter you omit.',
+        ),
       async: z
         .boolean()
         .optional()
@@ -1046,17 +1139,27 @@ async function main(): Promise<void> {
     },
     withErrorHandling(async (params) => {
       const { syncConfluence } = await import("../connectors/confluence.js");
+      const { resolveSyncConfig } = await import("../connectors/saved-config.js");
 
-      const confluenceConfig = {
-        baseUrl: params.baseUrl,
-        email: params.email,
-        token: params.token,
-        spaces: params.spaces ?? ["all"],
-        excludeSpaces: params.excludeSpaces,
-      };
+      const name = params.name ?? "confluence";
+      const { config: confluenceConfig } = resolveSyncConfig<ConfluenceConfig>(
+        "confluence",
+        name,
+        {
+          baseUrl: params.baseUrl,
+          email: params.email,
+          token: params.token,
+          spaces: params.spaces,
+          excludeSpaces: params.excludeSpaces,
+        },
+        { defaults: { spaces: ["all"] }, required: ["baseUrl", "token"] },
+      );
 
-      return runMaybeAsync(params.async, "sync_connector", async () => {
-        const result = await syncConfluence(db, provider, confluenceConfig);
+      return runMaybeAsync(params.async, "sync_connector", async (signal) => {
+        const result = await syncConfluence(db, provider, confluenceConfig, {
+          syncName: name,
+          signal,
+        });
         const confluenceErrorLines = result.errors.map((e) => `${e.page}: ${e.error}`).join(", ");
         const confluenceErrors =
           result.errors.length > 0 ? `\nErrors: ${confluenceErrorLines}` : "";

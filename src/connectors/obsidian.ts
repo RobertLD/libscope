@@ -11,7 +11,7 @@ import { createLink, resolveDocumentByTitle } from "../core/links.js";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 export interface ObsidianConfig {
   vaultPath: string;
@@ -416,19 +416,24 @@ function applyVaultFileOutcome(
   }
 }
 
+interface SyncVaultFilesContext {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  config: ObsidianConfig;
+  vaultFiles: string[];
+  trackedFiles: Record<string, VaultFileEntry>;
+  newTrackedFiles: Record<string, VaultFileEntry>;
+  result: SyncResult;
+  signal: AbortSignal | undefined;
+}
+
 /** Sync all vault files, populating result and newTrackedFiles. */
-async function syncVaultFiles(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  config: ObsidianConfig,
-  vaultFiles: string[],
-  trackedFiles: Record<string, VaultFileEntry>,
-  newTrackedFiles: Record<string, VaultFileEntry>,
-  result: SyncResult,
-): Promise<void> {
+async function syncVaultFiles(ctx: SyncVaultFilesContext): Promise<void> {
+  const { db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result, signal } = ctx;
   const log = getLogger();
   const fileMap = buildVaultFileMap(vaultFiles);
   for (const relPath of vaultFiles) {
+    signal?.throwIfAborted();
     try {
       const outcome = await processVaultFile(
         db,
@@ -456,6 +461,27 @@ export async function syncObsidianVault(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: ObsidianConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<SyncResult> {
+  return trackSync(
+    db,
+    "obsidian",
+    options.syncName ?? config.vaultPath,
+    () => runObsidianSync(db, provider, config, options.signal),
+    (result) => ({
+      added: result.added,
+      updated: result.updated,
+      deleted: result.deleted,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runObsidianSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: ObsidianConfig,
+  signal: AbortSignal | undefined,
 ): Promise<SyncResult> {
   const log = getLogger();
   const result: SyncResult = { added: 0, updated: 0, deleted: 0, errors: [] };
@@ -464,60 +490,52 @@ export async function syncObsidianVault(
     throw new ValidationError("Vault path is required");
   }
 
-  const syncId = startSync(db, "obsidian", config.vaultPath);
+  const excludePatterns = [...DEFAULT_EXCLUDE, ...config.excludePatterns];
+  const vaultFiles = findMarkdownFiles(config.vaultPath, excludePatterns);
 
-  try {
-    const excludePatterns = [...DEFAULT_EXCLUDE, ...config.excludePatterns];
-    const vaultFiles = findMarkdownFiles(config.vaultPath, excludePatterns);
+  log.info({ vaultPath: config.vaultPath, fileCount: vaultFiles.length }, "Syncing Obsidian vault");
 
-    log.info(
-      { vaultPath: config.vaultPath, fileCount: vaultFiles.length },
-      "Syncing Obsidian vault",
-    );
+  const connectorConfig = loadConnectorConfig();
+  const vaultKey = `obsidian:${config.vaultPath}`;
+  const existingState = connectorConfig[vaultKey] as VaultState | undefined;
+  const trackedFiles = existingState?.files ?? {};
+  const newTrackedFiles: Record<string, VaultFileEntry> = {};
+  const currentFileSet = new Set(vaultFiles);
 
-    const connectorConfig = loadConnectorConfig();
-    const vaultKey = `obsidian:${config.vaultPath}`;
-    const existingState = connectorConfig[vaultKey] as VaultState | undefined;
-    const trackedFiles = existingState?.files ?? {};
-    const newTrackedFiles: Record<string, VaultFileEntry> = {};
-    const currentFileSet = new Set(vaultFiles);
+  await syncVaultFiles({
+    db,
+    provider,
+    config,
+    vaultFiles,
+    trackedFiles,
+    newTrackedFiles,
+    result,
+    signal,
+  });
 
-    await syncVaultFiles(db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result);
+  result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
 
-    result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
+  connectorConfig[vaultKey] = {
+    type: "obsidian",
+    vaultPath: config.vaultPath,
+    lastSync: new Date().toISOString(),
+    topicMapping: config.topicMapping,
+    excludePatterns: config.excludePatterns,
+    files: newTrackedFiles,
+  } satisfies VaultState;
+  saveConnectorConfig(connectorConfig);
 
-    connectorConfig[vaultKey] = {
-      type: "obsidian",
-      vaultPath: config.vaultPath,
-      lastSync: new Date().toISOString(),
-      topicMapping: config.topicMapping,
-      excludePatterns: config.excludePatterns,
-      files: newTrackedFiles,
-    } satisfies VaultState;
-    saveConnectorConfig(connectorConfig);
-
-    log.info(
-      {
-        added: result.added,
-        updated: result.updated,
-        deleted: result.deleted,
-        errors: result.errors.length,
-      },
-      "Obsidian vault sync complete",
-    );
-
-    completeSync(db, syncId, {
+  log.info(
+    {
       added: result.added,
       updated: result.updated,
       deleted: result.deleted,
-      errored: result.errors.length,
-    });
+      errors: result.errors.length,
+    },
+    "Obsidian vault sync complete",
+  );
 
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
-  }
+  return result;
 }
 
 export function disconnectVault(db: Database.Database, vaultPath: string): number {

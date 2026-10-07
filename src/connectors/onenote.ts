@@ -8,7 +8,7 @@ import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
 import { createTopic } from "../core/topics.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -441,6 +441,7 @@ interface SyncOneNoteSectionOptions {
   config: OneNoteConfig;
   seenSourceUrls: Set<string>;
   result: OneNoteSyncResult;
+  signal: AbortSignal | undefined;
 }
 
 /** Sync all pages within a single section. */
@@ -455,6 +456,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
     config,
     seenSourceUrls,
     result,
+    signal,
   } = options;
   const log = getLogger();
   const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
@@ -472,6 +474,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
   }
 
   for (const page of pages) {
+    signal?.throwIfAborted();
     const sourceUrl = buildSourceUrl(notebookName, section.displayName, page.title);
     seenSourceUrls.add(sourceUrl);
 
@@ -497,14 +500,11 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
 
 /** Sync all sections within a single notebook. */
 async function syncOneNoteNotebook(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  token: string,
-  notebook: GraphNotebook,
-  config: OneNoteConfig,
-  seenSourceUrls: Set<string>,
-  result: OneNoteSyncResult,
+  options: Omit<SyncOneNoteSectionOptions, "notebookName" | "section" | "notebookTopicId"> & {
+    notebook: GraphNotebook;
+  },
 ): Promise<void> {
+  const { db, provider, token, notebook, config, seenSourceUrls, result, signal } = options;
   const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
 
   let sections: GraphSection[];
@@ -520,6 +520,7 @@ async function syncOneNoteNotebook(
   result.sections += filteredSections.length;
 
   for (const section of filteredSections) {
+    signal?.throwIfAborted();
     await syncOneNoteSection({
       db,
       provider,
@@ -530,6 +531,7 @@ async function syncOneNoteNotebook(
       config,
       seenSourceUrls,
       result,
+      signal,
     });
   }
 }
@@ -549,76 +551,120 @@ function deleteStaleOneNoteDocs(db: Database.Database, seenSourceUrls: Set<strin
   return deleted;
 }
 
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
+
+/** True when the access token is missing, has no known expiry, or expires soon. */
+function accessTokenNeedsRefresh(config: OneNoteConfig): boolean {
+  if (!config.accessToken || !config.tokenExpiry) return true;
+  const expiresAt = Date.parse(config.tokenExpiry);
+  return !Number.isNaN(expiresAt) && expiresAt - Date.now() < TOKEN_REFRESH_MARGIN_MS;
+}
+
+/**
+ * Refresh `config.accessToken` in place when it is missing, has no recorded expiry, or is
+ * about to expire, and the config holds a client ID and refresh token. Updates accessToken,
+ * refreshToken and tokenExpiry on the config object; callers that persist the config should
+ * save it after the sync. Returns true when the tokens were refreshed.
+ */
+export async function ensureOneNoteAccessToken(config: OneNoteConfig): Promise<boolean> {
+  if (!config.clientId || !config.refreshToken || !accessTokenNeedsRefresh(config)) {
+    return false;
+  }
+  const tenantId = config.tenantId === "" ? undefined : config.tenantId;
+  const auth = await refreshAccessToken(config.clientId, config.refreshToken, tenantId);
+  config.accessToken = auth.accessToken;
+  config.refreshToken = auth.refreshToken;
+  config.tokenExpiry = auth.expiresAt;
+  getLogger().info("Refreshed OneNote access token");
+  return true;
+}
+
+/**
+ * Sync OneNote notebooks. Refreshes an expired or missing access token first when the
+ * config carries a refresh token (see ensureOneNoteAccessToken; the config is updated).
+ */
 export async function syncOneNote(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: OneNoteConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<OneNoteSyncResult> {
+  return trackSync(
+    db,
+    "onenote",
+    options.syncName ?? "onenote",
+    () => runOneNoteSync(db, provider, config, options.signal),
+    (result) => ({
+      added: result.pagesAdded,
+      updated: result.pagesUpdated,
+      deleted: result.pagesDeleted,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runOneNoteSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: OneNoteConfig,
+  signal: AbortSignal | undefined,
 ): Promise<OneNoteSyncResult> {
   const log = getLogger();
+  await ensureOneNoteAccessToken(config);
   const token = config.accessToken;
   if (!token) {
     throw new LibScopeError("No access token provided", "ONENOTE_AUTH_ERROR");
   }
 
-  const syncId = startSync(db, "onenote", "onenote");
+  const result: OneNoteSyncResult = {
+    notebooks: 0,
+    sections: 0,
+    pagesAdded: 0,
+    pagesUpdated: 0,
+    pagesDeleted: 0,
+    errors: [],
+  };
 
-  try {
-    const result: OneNoteSyncResult = {
-      notebooks: 0,
-      sections: 0,
-      pagesAdded: 0,
-      pagesUpdated: 0,
-      pagesDeleted: 0,
-      errors: [],
-    };
+  log.info("Starting OneNote sync");
 
-    log.info("Starting OneNote sync");
+  const allNotebooks = await listNotebooks(token);
+  const targetNotebooks =
+    config.notebooks.length === 1 && config.notebooks[0] === "all"
+      ? allNotebooks
+      : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
 
-    const allNotebooks = await listNotebooks(token);
-    const targetNotebooks =
-      config.notebooks.length === 1 && config.notebooks[0] === "all"
-        ? allNotebooks
-        : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
+  result.notebooks = targetNotebooks.length;
+  const seenSourceUrls = new Set<string>();
 
-    result.notebooks = targetNotebooks.length;
-    const seenSourceUrls = new Set<string>();
-
-    for (const notebook of targetNotebooks) {
-      await syncOneNoteNotebook(db, provider, token, notebook, config, seenSourceUrls, result);
-    }
-
-    result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);
-
-    const connConfig = loadConnectorConfig();
-    const onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
-    onenoteConf.lastSync = new Date().toISOString();
-    connConfig.onenote = onenoteConf;
-    saveConnectorConfig(connConfig);
-
-    log.info(
-      {
-        notebooks: result.notebooks,
-        sections: result.sections,
-        pagesAdded: result.pagesAdded,
-        pagesUpdated: result.pagesUpdated,
-        pagesDeleted: result.pagesDeleted,
-        errors: result.errors.length,
-      },
-      "OneNote sync complete",
-    );
-
-    completeSync(db, syncId, {
-      added: result.pagesAdded,
-      updated: result.pagesUpdated,
-      deleted: result.pagesDeleted,
-      errored: result.errors.length,
+  for (const notebook of targetNotebooks) {
+    signal?.throwIfAborted();
+    await syncOneNoteNotebook({
+      db,
+      provider,
+      token,
+      notebook,
+      config,
+      seenSourceUrls,
+      result,
+      signal,
     });
-
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
   }
+
+  result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);
+
+  log.info(
+    {
+      notebooks: result.notebooks,
+      sections: result.sections,
+      pagesAdded: result.pagesAdded,
+      pagesUpdated: result.pagesUpdated,
+      pagesDeleted: result.pagesDeleted,
+      errors: result.errors.length,
+    },
+    "OneNote sync complete",
+  );
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

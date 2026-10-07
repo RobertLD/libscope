@@ -112,10 +112,12 @@ Once connected, your assistant can search docs, submit new documents, rate conte
 
 LibScope can pull documentation from several platforms. Each connector handles incremental syncing so re-runs only process what changed.
 
+Each `connect` command saves its settings, including credentials, to `~/.libscope/connectors/<name>.json` (mode 0600; the name defaults to the connector type, set it with `--name`). `--sync` re-runs a saved config, and `libscope schedule set <name> "<cron>"` syncs it on a schedule while `libscope serve --api` runs.
+
 ```bash
 # Obsidian — parses wikilinks, frontmatter, embeds, tags
 libscope connect obsidian /path/to/vault
-libscope connect obsidian /path/to/vault --sync   # incremental re-sync
+libscope connect obsidian --sync   # re-sync the saved vault config
 
 # Notion
 libscope connect notion --token secret_abc123
@@ -136,22 +138,27 @@ libscope connect onenote
 # GitHub / GitLab repos
 libscope add-repo https://github.com/org/repo --branch main --path docs/
 
-# Remove a connector's data
+# Sync a saved connector every 6 hours (runs inside `libscope serve --api`)
+libscope schedule set notion "0 */6 * * *"
+
+# Remove a connector's data and its saved config
 libscope disconnect obsidian /path/to/vault
 ```
 
 <details>
 <summary>Connector options reference</summary>
 
-**Obsidian:** `--topic-mapping frontmatter`, `--exclude "templates/*" "daily/*"`, `--sync`
+**All connect commands:** `--sync` (re-run the saved config), `--name <name>` (saved config name; default: connector type)
 
-**Notion:** `--exclude page-id-1 db-id-2`, `--sync`
+**Obsidian:** `--topic-mapping frontmatter`, `--exclude "templates/*" "daily/*"`
 
-**Confluence:** `--spaces ENG,DEVOPS`, `--exclude-spaces ARCHIVE`
+**Notion:** `--exclude page-id-1 db-id-2`
 
-**Slack:** `--thread-mode aggregate|separate`, `--sync`
+**Confluence:** `--spaces ENG,DEVOPS`, `--exclude-spaces ARCHIVE`, `--type server`
 
-**OneNote:** `--notebook "Work Notes"`, `--sync`
+**Slack:** `--thread-mode aggregate|separate`, `--exclude random`
+
+**OneNote:** `--notebook "Work Notes"`, `--token <access-token>`
 
 **GitHub/GitLab:** `--token`, `--branch`, `--path`, `--extensions .md,.mdx,.rst`
 
@@ -393,23 +400,25 @@ export LIBSCOPE_ALLOW_SELF_SIGNED_CERTS=true
 
 LibScope can push events to any HTTP endpoint. Useful for triggering CI pipelines, Slack notifications, or custom workflows whenever documents are created or updated.
 
-```bash
-libscope serve --api  # webhooks require the REST API
-```
+Events fire from every surface (CLI, MCP server, REST API, SDK) when that process changes the knowledge base. Delivery runs in the background and never fails or delays the operation that caused it.
 
 ```bash
-# Create a webhook
+# Create a webhook (CLI)
+libscope webhooks create https://hooks.example.com/libscope --events document.created,document.updated
+
+# Or via the REST API
 curl -X POST http://localhost:3378/api/v1/webhooks \
   -H "Content-Type: application/json" \
   -d '{"url": "https://hooks.example.com/libscope", "events": ["document.created", "document.updated"], "secret": "my-hmac-secret"}'
 
 # Send a test ping
+libscope webhooks test <id>
 curl -X POST http://localhost:3378/api/v1/webhooks/<id>/test
 ```
 
-Webhook payloads are signed with HMAC-SHA256 when a secret is set. The signature is in the `X-LibScope-Signature` header.
+Webhook payloads are signed with HMAC-SHA256 when a secret is set (storing a secret requires `LIBSCOPE_SECRET_KEY`). The hex signature is in the `X-LibScope-Signature` header.
 
-Supported events: `document.created`, `document.updated`, `document.deleted`.
+Supported events: `document.created`, `document.updated`, `document.deleted`, `document.rated`, `search.executed`.
 
 ## Other Tools
 
@@ -539,13 +548,14 @@ There's also a web dashboard at `http://localhost:3377` when you run `libscope s
 
 | Command                            | Description                |
 | ---------------------------------- | -------------------------- |
-| `libscope connect obsidian <path>` | Sync Obsidian vault        |
+| `libscope connect obsidian [path]` | Sync Obsidian vault        |
 | `libscope connect onenote`         | Sync OneNote               |
 | `libscope connect notion`          | Sync Notion                |
 | `libscope connect confluence`      | Sync Confluence            |
 | `libscope connect slack`           | Sync Slack                 |
 | `libscope add-repo <url>`          | Index a GitHub/GitLab repo |
 | `libscope disconnect <name>`       | Remove connector data      |
+| `libscope schedule set <name> <cron>` | Schedule a saved connector |
 
 **Registries**
 
