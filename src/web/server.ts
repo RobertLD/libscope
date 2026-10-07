@@ -1,53 +1,182 @@
+/**
+ * Web dashboard server: the dashboard pages plus the small unversioned JSON API their
+ * scripts call. Each API route runs an operation and reshapes the result into the format
+ * the dashboard script expects (src/web/dashboard.ts is not changed).
+ */
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
-import type Database from "better-sqlite3";
-import type { EmbeddingProvider } from "../providers/embedding.js";
-import { searchDocuments } from "../core/search.js";
-import { getDocument, deleteDocument, listDocuments } from "../core/documents.js";
-import { getTopicStats } from "../core/topics.js";
+import type { z } from "zod";
+import { decodeSegment, inputFromParams, sendRequestError } from "../api/adapter.js";
+import {
+  corsMiddleware,
+  rejectForeignWrite,
+  sendError,
+  setSecurityHeaders,
+} from "../api/middleware.js";
+import { listen, rejectRateLimited, type ServerApp } from "../api/server.js";
+import {
+  createOperationContext,
+  deleteDocumentOperation,
+  getDocumentOperation,
+  graphOperation,
+  listDocumentsOperation,
+  listTopicsOperation,
+  overviewOperation,
+  runOperation,
+  searchOperation,
+  type Operation,
+  type OperationContext,
+} from "../core/operations/index.js";
 import { getDashboardHtml, getGraphPageHtml } from "./dashboard.js";
-import { handleGraphRequest } from "./graph-api.js";
-import { DocumentNotFoundError } from "../errors.js";
-import { validateCountRow } from "../utils/db-validation.js";
-import { getLogger } from "../logger.js";
-import { checkRateLimit } from "../api/middleware.js";
 
 export interface WebServerOptions {
-  port?: number;
-  host?: string;
+  port?: number | undefined;
+  host?: string | undefined;
+  /** Other browser origins allowed to call the dashboard API. Default: none (same origin only). */
+  corsOrigins?: string[] | undefined;
+}
+
+interface DashboardRoute<S extends z.ZodObject = z.ZodObject, O = unknown> {
+  method: "GET" | "DELETE";
+  /** Path; a trailing "/:documentId" segment is passed to the operation. */
+  path: string;
+  operation: Operation<S, O>;
+  /** Rename query parameters the dashboard sends under another name. */
+  rename?: Record<string, string>;
+  /** Dashboard response shape. */
+  shape: (result: O) => unknown;
+}
+
+function route<S extends z.ZodObject, O>(r: DashboardRoute<S, O>): DashboardRoute {
+  return r as unknown as DashboardRoute;
+}
+
+/** The JSON routes the dashboard script fetches, each served by one operation. */
+const DASHBOARD_ROUTES: DashboardRoute[] = [
+  route({
+    method: "GET",
+    path: "/api/stats",
+    operation: overviewOperation,
+    shape: ({ stats }) => ({
+      documentCount: stats.totalDocuments,
+      topicCount: stats.totalTopics,
+      chunkCount: stats.totalChunks,
+    }),
+  }),
+  route({
+    method: "GET",
+    path: "/api/topics",
+    operation: listTopicsOperation,
+    shape: (result) => result.items,
+  }),
+  route({
+    method: "GET",
+    path: "/api/documents",
+    operation: listDocumentsOperation,
+    shape: (result) => result.items.map(({ documentId, ...rest }) => ({ id: documentId, ...rest })),
+  }),
+  route({
+    method: "GET",
+    path: "/api/search",
+    operation: searchOperation,
+    rename: { q: "query" },
+    shape: (result) => ({ results: result.items, totalCount: result.total }),
+  }),
+  route({
+    method: "GET",
+    path: "/api/graph",
+    operation: graphOperation,
+    shape: (graph) => graph,
+  }),
+  route({
+    method: "GET",
+    path: "/api/documents/:documentId",
+    operation: getDocumentOperation,
+    shape: (view) => ({
+      id: view.document.documentId,
+      ...view.document,
+      content: view.content,
+      tags: view.tags,
+    }),
+  }),
+  route({
+    method: "DELETE",
+    path: "/api/documents/:documentId",
+    operation: deleteDocumentOperation,
+    shape: () => ({ success: true }),
+  }),
+];
+
+const PAGES: Record<string, () => string> = {
+  "/": getDashboardHtml,
+  "/graph": getGraphPageHtml,
+};
+
+/** The route for a path, with the trailing `:documentId` value when the route has one. */
+function findRoute(
+  method: string,
+  pathname: string,
+): { route: DashboardRoute; params: Record<string, string> } | undefined {
+  for (const r of DASHBOARD_ROUTES) {
+    if (r.method !== method) continue;
+    if (r.path === pathname) return { route: r, params: {} };
+    const [prefix, param] = r.path.split("/:");
+    if (param === undefined || !pathname.startsWith(`${prefix}/`)) continue;
+    const value = pathname.slice((prefix ?? "").length + 1);
+    if (value !== "" && !value.includes("/")) {
+      return { route: r, params: { [param]: decodeSegment(value) } };
+    }
+  }
+  return undefined;
+}
+
+async function handleRequest(
+  ctx: OperationContext,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const method = req.method ?? "GET";
+  try {
+    const page = method === "GET" ? PAGES[url.pathname] : undefined;
+    if (page) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(page());
+      return;
+    }
+    const match = findRoute(method, url.pathname);
+    if (!match) {
+      sendError(res, 404, "NOT_FOUND", "Not found");
+      return;
+    }
+    const { route: r, params } = match;
+    const query = new URLSearchParams();
+    for (const [name, value] of url.searchParams) query.append(r.rename?.[name] ?? name, value);
+    const input = { ...inputFromParams(r.operation, query), ...params };
+    const result = await runOperation(r.operation, ctx, input);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(r.shape(result)));
+  } catch (err) {
+    sendRequestError(res, err, { method, pathname: url.pathname });
+  }
 }
 
 let server: Server | null = null;
 
-/** Start the web UI server. */
-export function startWebServer(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  options?: WebServerOptions,
-): Promise<Server> {
-  const port = options?.port ?? 3377;
-  const host = options?.host ?? "localhost";
-
-  return new Promise((resolve, reject) => {
-    server = createServer((req, res) => {
-      const ip = req.socket.remoteAddress ?? "unknown";
-      if (!checkRateLimit(ip)) {
-        res.writeHead(429, { "Content-Type": "application/json", "Retry-After": "60" });
-        res.end(JSON.stringify({ error: "Too many requests" }));
-        return;
-      }
-      handleRequest(db, provider, req, res).catch((err) => {
-        getLogger().error({ err, url: req.url }, "Unhandled error in web request handler");
-        if (res.headersSent) {
-          req.socket.destroy();
-        } else {
-          sendJson(res, 500, { error: "Internal server error" });
-        }
-      });
-    });
-
-    server.on("error", reject);
-    server.listen(port, host, () => resolve(server!));
+/** Start the web dashboard (default http://localhost:3377). */
+export async function startWebServer(app: ServerApp, options?: WebServerOptions): Promise<Server> {
+  const corsOrigins = options?.corsOrigins ?? [];
+  const ctx = createOperationContext({ ...app, surface: "api" });
+  const httpServer = createServer((req, res) => {
+    // No Content-Security-Policy: the graph page loads d3 from a CDN.
+    setSecurityHeaders(res, false);
+    if (rejectRateLimited(req.socket.remoteAddress, res)) return;
+    if (corsMiddleware(req, res, corsOrigins)) return;
+    if (rejectForeignWrite(req, res, corsOrigins)) return;
+    void handleRequest(ctx, req, res);
   });
+  await listen(httpServer, options?.port ?? 3377, options?.host ?? "localhost");
+  server = httpServer;
+  return httpServer;
 }
 
 /** Gracefully shut down the web server. */
@@ -62,194 +191,4 @@ export function stopWebServer(): Promise<void> {
       resolve();
     });
   });
-}
-
-async function handleRequest(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  req: IncomingMessage,
-  res: ServerResponse,
-): Promise<void> {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-  const pathname = url.pathname;
-  const method = req.method ?? "GET";
-
-  setCorsHeaders(res);
-
-  if (method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
-  if (method === "GET") {
-    const handled = await handleGetRoute(db, provider, pathname, url, res, req);
-    if (handled) return;
-  }
-
-  const docMatch = pathname.match(/^\/api\/documents\/([^/]+)$/);
-  if (docMatch) {
-    const id = decodeURIComponent(docMatch[1]!);
-    const handled = handleDocumentByIdRoute(db, method, id, res);
-    if (handled) return;
-  }
-
-  sendJson(res, 404, { error: "Not found" });
-}
-
-/** Handle all GET routes. Returns true if a route matched. */
-async function handleGetRoute(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  pathname: string,
-  url: URL,
-  res: ServerResponse,
-  req: IncomingMessage,
-): Promise<boolean> {
-  if (pathname === "/") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(getDashboardHtml());
-    return true;
-  }
-
-  if (pathname === "/graph") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(getGraphPageHtml());
-    return true;
-  }
-
-  if (pathname === "/api/graph") {
-    await handleGraphRequest(db, req, res);
-    return true;
-  }
-
-  if (pathname === "/api/search") {
-    await handleSearchRoute(db, provider, url, res);
-    return true;
-  }
-
-  if (pathname === "/api/documents") {
-    handleDocumentsListRoute(db, url, res);
-    return true;
-  }
-
-  if (pathname === "/api/topics") {
-    sendJson(res, 200, getTopicStats(db));
-    return true;
-  }
-
-  if (pathname === "/api/stats") {
-    handleStatsRoute(db, res);
-    return true;
-  }
-
-  return false;
-}
-
-/** Handle GET /api/search */
-async function handleSearchRoute(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  url: URL,
-  res: ServerResponse,
-): Promise<void> {
-  const query = url.searchParams.get("q") ?? "";
-  const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "10", 10);
-  const limit = Number.isNaN(rawLimit) ? 10 : Math.max(1, Math.min(100, rawLimit));
-  const topic = url.searchParams.get("topic") ?? undefined;
-
-  if (!query) {
-    sendJson(res, 400, { error: "Missing query parameter 'q'" });
-    return;
-  }
-
-  const results = await searchDocuments(db, provider, { query, limit, topic });
-  sendJson(res, 200, results);
-}
-
-/** Handle GET /api/documents */
-function handleDocumentsListRoute(db: Database.Database, url: URL, res: ServerResponse): void {
-  const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
-  const limit = Number.isNaN(rawLimit) ? 50 : Math.max(1, Math.min(500, rawLimit));
-  const topic = url.searchParams.get("topic") ?? undefined;
-  const docs = listDocuments(db, { limit, topicId: topic });
-  sendJson(res, 200, docs);
-}
-
-/** Handle GET/DELETE /api/documents/:id. Returns true if method matched. */
-function handleDocumentByIdRoute(
-  db: Database.Database,
-  method: string,
-  id: string,
-  res: ServerResponse,
-): boolean {
-  if (method === "GET") {
-    handleGetDocumentById(db, id, res);
-    return true;
-  }
-  if (method === "DELETE") {
-    handleDeleteDocumentById(db, id, res);
-    return true;
-  }
-  return false;
-}
-
-/** Handle GET /api/documents/:id */
-function handleGetDocumentById(db: Database.Database, id: string, res: ServerResponse): void {
-  try {
-    const doc = getDocument(db, id);
-    sendJson(res, 200, doc);
-  } catch (err) {
-    if (err instanceof DocumentNotFoundError) {
-      sendJson(res, 404, { error: "Document not found" });
-    } else {
-      throw err;
-    }
-  }
-}
-
-/** Handle DELETE /api/documents/:id */
-function handleDeleteDocumentById(db: Database.Database, id: string, res: ServerResponse): void {
-  try {
-    deleteDocument(db, id);
-    sendJson(res, 200, { success: true });
-  } catch (err) {
-    if (err instanceof DocumentNotFoundError) {
-      sendJson(res, 404, { error: "Document not found" });
-    } else {
-      throw err;
-    }
-  }
-}
-
-/** Handle GET /api/stats */
-function handleStatsRoute(db: Database.Database, res: ServerResponse): void {
-  const docCount = validateCountRow(
-    db.prepare("SELECT COUNT(*) AS cnt FROM documents").get(),
-    "document count",
-  );
-  const topicCount = validateCountRow(
-    db.prepare("SELECT COUNT(*) AS cnt FROM topics").get(),
-    "topic count",
-  );
-  const chunkCount = validateCountRow(
-    db.prepare("SELECT COUNT(*) AS cnt FROM chunks").get(),
-    "chunk count",
-  );
-  sendJson(res, 200, { documentCount: docCount, topicCount, chunkCount });
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
-}
-
-function setCorsHeaders(res: ServerResponse): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-XSS-Protection", "1; mode=block");
-  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 }

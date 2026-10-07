@@ -1,23 +1,51 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { LibScopeError } from "../errors.js";
 
-/** Set CORS headers and handle OPTIONS preflight. Returns true if request was handled (preflight). */
+/** An error with its own HTTP status (bad body, payload too large, forbidden origin). */
+export class HttpError extends LibScopeError {
+  constructor(
+    public readonly status: number,
+    code: string,
+    message: string,
+  ) {
+    super(message, code);
+    this.name = "HttpError";
+  }
+}
+
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** True when `origin` is the origin the request was sent to (same scheme-less host and port). */
+function isSameOrigin(req: IncomingMessage, origin: string): boolean {
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set CORS headers and answer OPTIONS preflight. Returns true when the request was handled.
+ * `origins` lists the allowed browser origins. "*" allows any origin to read (GET) only:
+ * write methods are offered only to origins listed by name.
+ */
 export function corsMiddleware(
   req: IncomingMessage,
   res: ServerResponse,
   origins: string[],
 ): boolean {
-  const origin = req.headers["origin"] ?? "*";
-  const allowedOrigin = origins.includes("*") ? "*" : origins.includes(origin) ? origin : "";
-
-  if (allowedOrigin) {
-    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  const origin = req.headers.origin;
+  if (origin !== undefined && origins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
+  } else if (origins.includes("*")) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Max-Age", "86400");
-
-  setSecurityHeaders(res);
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -27,16 +55,39 @@ export function corsMiddleware(
   return false;
 }
 
-/** Set standard security response headers. */
-export function setSecurityHeaders(res: ServerResponse): void {
+/**
+ * Reject a write request (POST, PATCH, PUT, DELETE) sent by a browser page from another origin
+ * that is not listed by name in `origins`. Browsers send such requests without a preflight
+ * when they have no body or a "simple" content type, so CORS headers alone do not stop them.
+ * Returns true when the request was rejected (403 sent).
+ */
+export function rejectForeignWrite(
+  req: IncomingMessage,
+  res: ServerResponse,
+  origins: string[],
+): boolean {
+  const origin = req.headers.origin;
+  if (READ_METHODS.has(req.method ?? "GET") || origin === undefined) return false;
+  if (origins.includes(origin) || isSameOrigin(req, origin)) return false;
+  sendError(res, 403, "FORBIDDEN_ORIGIN", "Write requests from this origin are not allowed");
+  return true;
+}
+
+/**
+ * Set standard security response headers. `contentSecurityPolicy` false leaves CSP unset
+ * (the dashboard loads d3 from a CDN).
+ */
+export function setSecurityHeaders(res: ServerResponse, contentSecurityPolicy = true): void {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader(
-    "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
-  );
+  if (contentSecurityPolicy) {
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
+    );
+  }
 }
 
 /** Maximum request body size in bytes (default 1 MB). */
@@ -138,7 +189,7 @@ export function checkApiKey(req: IncomingMessage, res: ServerResponse): boolean 
   return true;
 }
 
-/** Parse the request body as JSON. Returns the parsed object or null on failure. */
+/** Parse the request body as JSON. Resolves null for an empty body; rejects with HttpError. */
 export async function parseJsonBody(
   req: IncomingMessage,
   maxBytes: number = MAX_BODY_SIZE,
@@ -150,7 +201,9 @@ export async function parseJsonBody(
       received += chunk.length;
       if (received > maxBytes) {
         req.destroy();
-        reject(new Error(`Request body too large (max ${maxBytes} bytes)`));
+        reject(
+          new HttpError(413, "PAYLOAD_TOO_LARGE", `Request body too large (max ${maxBytes} bytes)`),
+        );
         return;
       }
       chunks.push(chunk);
@@ -164,7 +217,7 @@ export async function parseJsonBody(
       try {
         resolve(JSON.parse(raw));
       } catch {
-        reject(new Error("Invalid JSON body"));
+        reject(new HttpError(400, "INVALID_JSON", "Request body contains invalid JSON"));
       }
     });
     req.on("error", reject);

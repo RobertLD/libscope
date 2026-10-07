@@ -5,6 +5,7 @@ import { createTestDb } from "../fixtures/test-db.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 import { insertDoc, insertChunk } from "../fixtures/helpers.js";
 import { startWebServer, stopWebServer } from "../../src/web/server.js";
+import { testConfig } from "./operations/helpers.js";
 
 let db: Database.Database;
 let provider: MockEmbeddingProvider;
@@ -35,7 +36,10 @@ describe("web server", () => {
     insertDoc(db, "doc-2", "Node Guide");
     insertChunk(db, "c2", "doc-2", "Node.js runtime for server-side JavaScript");
 
-    server = await startWebServer(db, provider, { port: 0, host: "127.0.0.1" });
+    server = await startWebServer(
+      { db, provider, config: testConfig() },
+      { port: 0, host: "127.0.0.1" },
+    );
     const addr = server.address();
     const port = typeof addr === "object" && addr ? addr.port : 3377;
     baseUrl = `http://127.0.0.1:${port}`;
@@ -81,7 +85,7 @@ describe("web server", () => {
   it("GET /api/documents/:id returns 404 for missing document", async () => {
     const { status, body } = await fetchJson("/api/documents/nonexistent");
     expect(status).toBe(404);
-    expect(body.error).toBe("Document not found");
+    expect(body.error).toMatchObject({ code: "DOCUMENT_NOT_FOUND" });
   });
 
   it("GET /api/topics returns topic list with stats", async () => {
@@ -105,13 +109,13 @@ describe("web server", () => {
   it("GET /api/search without q returns 400", async () => {
     const { status, body } = await fetchJson("/api/search");
     expect(status).toBe(400);
-    expect(body.error).toContain("Missing");
+    expect(body.error).toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
   it("returns 404 for unknown routes", async () => {
     const { status, body } = await fetchJson("/api/unknown");
     expect(status).toBe(404);
-    expect(body.error).toBe("Not found");
+    expect(body.error).toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("DELETE /api/documents/:id deletes a document", async () => {
@@ -124,8 +128,57 @@ describe("web server", () => {
     expect(s2).toBe(404);
   });
 
-  it("sets CORS headers", async () => {
-    const res = await fetch(`${baseUrl}/api/stats`);
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  it("GET /graph returns the graph page and /api/graph its data", async () => {
+    const page = await fetch(`${baseUrl}/graph`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const { status, body } = await fetchJson("/api/graph?threshold=0.85&maxNodes=200&topic=ts");
+    expect(status).toBe(200);
+    const nodes = (body as { nodes: Array<{ id: string; type: string }> }).nodes;
+    expect(nodes.filter((n) => n.type === "document").map((n) => n.id)).toEqual(["doc-1"]);
+  });
+
+  it("pages and filters the document list the way the dashboard asks", async () => {
+    const { body } = await fetchJson("/api/documents?limit=20&offset=0&topic=ts");
+    const docs = body as unknown as Array<{ id: string; sourceType: string; updatedAt: string }>;
+    expect(docs.map((d) => d.id)).toEqual(["doc-1"]);
+    expect(docs[0]!.updatedAt).toBeDefined();
+    const { body: page2 } = await fetchJson("/api/documents?limit=1&offset=1");
+    expect(page2 as unknown as unknown[]).toHaveLength(1);
+  });
+
+  it("sends no CORS allow-origin to other origins and no CSP", async () => {
+    const res = await fetch(`${baseUrl}/api/stats`, { headers: { Origin: "http://evil.example" } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBeNull();
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+  });
+
+  it("rejects a cross-origin DELETE and its preflight grants nothing", async () => {
+    insertDoc(db, "doc-keep", "Keep me");
+    const preflight = await fetch(`${baseUrl}/api/documents/doc-keep`, {
+      method: "OPTIONS",
+      headers: { Origin: "http://evil.example", "Access-Control-Request-Method": "DELETE" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+
+    const { status, body } = await fetchJson("/api/documents/doc-keep", {
+      method: "DELETE",
+      headers: { Origin: "http://evil.example" },
+    });
+    expect(status).toBe(403);
+    expect(body.error).toMatchObject({ code: "FORBIDDEN_ORIGIN" });
+    expect((await fetchJson("/api/documents/doc-keep")).status).toBe(200);
+  });
+
+  it("allows a same-origin DELETE", async () => {
+    insertDoc(db, "doc-same", "Same origin");
+    const { status } = await fetchJson("/api/documents/doc-same", {
+      method: "DELETE",
+      headers: { Origin: baseUrl },
+    });
+    expect(status).toBe(200);
   });
 });
