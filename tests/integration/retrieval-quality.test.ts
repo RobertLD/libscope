@@ -21,7 +21,7 @@
  *  4. Library-filter precision — searching with library= must return ONLY
  *     docs from that library; zero cross-library leakage allowed.
  *
- *  5. Neural model suite (conditional) — if @xenova/transformers +
+ *  5. Neural model suite (conditional) — if @huggingface/transformers +
  *     all-MiniLM-L6-v2 is available locally, the same 15 queries run with
  *     real embeddings under higher thresholds (MRR ≥ 0.82), plus 5 pure-
  *     paraphrase queries that TF-IDF cannot handle but a semantic model should.
@@ -513,7 +513,7 @@ function loadVec(db: Database.Database): void {
 function isNeuralModelAvailable(): Promise<boolean> {
   try {
     const require = createRequire(import.meta.url);
-    require.resolve("@xenova/transformers");
+    require.resolve("@huggingface/transformers");
     // Attempt a quick model resolution without actually loading — just check the package exists
     return Promise.resolve(true);
   } catch {

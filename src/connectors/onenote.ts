@@ -423,8 +423,7 @@ async function indexOneNotePage(
   const markdown = convertOneNoteHtml(html);
 
   const existing = db.prepare("SELECT id FROM documents WHERE url = ?").get(sourceUrl) as
-    | { id: string }
-    | undefined;
+    { id: string } | undefined;
 
   let outcome: "added" | "updated";
   if (existing) {

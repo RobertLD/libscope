@@ -65,8 +65,7 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
   // Verify parent exists if provided
   if (input.parentId) {
     const parent = db.prepare("SELECT id FROM topics WHERE id = ?").get(input.parentId) as
-      | { id: string }
-      | undefined;
+      { id: string } | undefined;
     if (!parent) {
       throw new ValidationError(`Parent topic '${input.parentId}' not found`);
     }
@@ -130,8 +129,7 @@ export function listTopics(db: Database.Database, parentId?: string): Topic[] {
 /** Get a topic by ID. */
 export function getTopic(db: Database.Database, topicId: string): Topic {
   const row = db.prepare(`SELECT ${TOPIC_COLUMNS} FROM topics WHERE id = ?`).get(topicId) as
-    | TopicRow
-    | undefined;
+    TopicRow | undefined;
 
   if (!row) throw new TopicNotFoundError(topicId);
 

@@ -362,8 +362,7 @@ function createAnthropicProvider(
 
 /** SSE event for streaming RAG responses. */
 export type RagStreamEvent =
-  | { token: string }
-  | { done: true; sources: RagSource[]; model: string; tokensUsed?: number };
+  { token: string } | { done: true; sources: RagSource[]; model: string; tokensUsed?: number };
 
 /**
  * Perform streaming RAG: retrieve relevant chunks, then stream LLM tokens.
@@ -430,8 +429,7 @@ export interface AnswerMode {
 
 /** An LLM answer, or (passthrough) the context prompt for the caller to answer from. */
 export type AnswerResult =
-  | ({ mode: "answer" } & RagResult)
-  | ({ mode: "context" } & PassthroughResult);
+  ({ mode: "answer" } & RagResult) | ({ mode: "context" } & PassthroughResult);
 
 /**
  * Answer a question from the knowledge base. Every surface uses this one function:

@@ -107,8 +107,7 @@ export interface IngestResult {
   planned?: string[] | undefined;
   /** URL crawl statistics (spider only). */
   crawl?:
-    | { pagesCrawled: number; pagesSkipped: number; abortReason?: string | undefined }
-    | undefined;
+    { pagesCrawled: number; pagesSkipped: number; abortReason?: string | undefined } | undefined;
 }
 
 export function isHttpUrl(value: string): boolean {

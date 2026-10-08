@@ -71,8 +71,7 @@ function rowToLinkWithTitle(row: LinkRowWithTitles): DocumentLinkWithTitle {
 
 function assertDocumentExists(db: Database.Database, docId: string, role: string): void {
   const row = db.prepare("SELECT id FROM documents WHERE id = ?").get(docId) as
-    | { id: string }
-    | undefined;
+    { id: string } | undefined;
   if (!row) {
     throw new DocumentNotFoundError(`${role} document not found: ${docId}`);
   }
@@ -233,8 +232,7 @@ export function listLinks(db: Database.Database, linkType?: LinkType): DocumentL
 /** Resolve a document by its URL. Returns the document id or null. */
 export function resolveDocumentByUrl(db: Database.Database, url: string): string | null {
   const row = db.prepare("SELECT id FROM documents WHERE url = ? LIMIT 1").get(url) as
-    | { id: string }
-    | undefined;
+    { id: string } | undefined;
   return row?.id ?? null;
 }
 

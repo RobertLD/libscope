@@ -15,7 +15,7 @@ jobs:
   lint-and-typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -32,15 +32,17 @@ jobs:
       matrix:
         node-version: [20, 22]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts
-      # Build only the native addons the tests load: better-sqlite3, and sharp
-      # (@xenova/transformers loads it in the neural retrieval-quality suite).
-      - run: npm rebuild better-sqlite3 sharp
+      # Build only the native addon the tests load: better-sqlite3. sharp and
+      # onnxruntime-node (@huggingface/transformers, used by the neural
+      # retrieval-quality suite) ship prebuilt binaries; the onnxruntime-node
+      # install script only downloads optional CUDA libraries.
+      - run: npm rebuild better-sqlite3
       - run: npm run test:coverage
       - name: Upload coverage
         if: matrix.node-version == 22
@@ -55,8 +57,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
 
@@ -64,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint-and-typecheck, test]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 22

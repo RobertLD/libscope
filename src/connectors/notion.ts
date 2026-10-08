@@ -380,7 +380,7 @@ function extractTitle(result: NotionSearchResult): string {
   if (result.properties) {
     for (const prop of Object.values(result.properties)) {
       if (prop.type === "title" && prop.title) {
-        return extractRichText(prop.title as unknown as NotionRichText[]);
+        return extractRichText(prop.title);
       }
     }
   }
@@ -395,7 +395,7 @@ function propertyToTags(key: string, prop: NotionProperty): string[] {
   }
   if (prop.type === "date" && prop.date) return [`${key}:${prop.date.start}`];
   if (prop.type === "rich_text" && prop.rich_text) {
-    const text = extractRichText(prop.rich_text as unknown as NotionRichText[]);
+    const text = extractRichText(prop.rich_text);
     return text ? [`${key}:${text}`] : [];
   }
   return [];

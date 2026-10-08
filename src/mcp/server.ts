@@ -80,7 +80,7 @@ function toolAnnotations(list: OperationAnnotations[]): ToolAnnotations {
 }
 
 function shapeOf(op: Operation): Record<string, z.ZodType> {
-  return op.input.shape as Record<string, z.ZodType>;
+  return op.input.shape;
 }
 
 /**
@@ -129,7 +129,7 @@ export function toolAction<S extends z.ZodObject, O>(
   op: Operation<S, O>,
   format: Formatter<O>,
 ): ToolAction {
-  return { op: op as unknown as Operation, format: format as Formatter<unknown> };
+  return { op, format: format as Formatter<unknown> };
 }
 
 /**

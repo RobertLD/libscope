@@ -46,7 +46,7 @@ export const OPERATIONS: readonly Operation[] = [
   ...analyticsOperations,
   ...webhookOperations,
   ...taskOperations,
-] as unknown as readonly Operation[];
+];
 
 const BY_NAME = new Map(OPERATIONS.map((op) => [op.name, op]));
 

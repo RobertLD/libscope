@@ -485,7 +485,7 @@ describe("syncObsidianVault", () => {
           typeof readdirSync
         >;
       }
-      return [] as unknown as ReturnType<typeof readdirSync>;
+      return [];
     });
 
     mockedStatSync.mockImplementation((p: unknown) => {

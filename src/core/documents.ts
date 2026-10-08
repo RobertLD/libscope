@@ -84,8 +84,7 @@ export function deleteChunkEmbeddings(db: Database.Database, docIds: string[]): 
 /** Get a document by ID. */
 export function getDocument(db: Database.Database, documentId: string): Document {
   const row = db.prepare(`SELECT ${DOC_COLUMNS} FROM documents WHERE id = ?`).get(documentId) as
-    | DocumentRow
-    | undefined;
+    DocumentRow | undefined;
 
   if (!row) {
     throw new DocumentNotFoundError(documentId);

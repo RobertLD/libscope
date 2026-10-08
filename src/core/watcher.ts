@@ -166,8 +166,7 @@ export class FileWatcher {
   private removeDocument(fullPath: string): void {
     try {
       const existing = this.db.prepare("SELECT id FROM documents WHERE url = ?").get(fullPath) as
-        | { id: string }
-        | undefined;
+        { id: string } | undefined;
 
       if (!existing) return;
 

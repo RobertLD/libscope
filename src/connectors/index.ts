@@ -100,8 +100,7 @@ export function loadDbConnectorConfig(
   type: string,
 ): ConnectorConfig | undefined {
   const row = db.prepare("SELECT config_json FROM connector_configs WHERE type = ?").get(type) as
-    | { config_json: string }
-    | undefined;
+    { config_json: string } | undefined;
   if (!row) return undefined;
   try {
     return JSON.parse(row.config_json) as ConnectorConfig;

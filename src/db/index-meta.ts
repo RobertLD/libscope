@@ -106,8 +106,7 @@ export function writeEmbeddingIdentity(
  */
 export function getVectorTableDimensions(db: Database.Database): number | undefined {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'chunk_embeddings'").get() as
-    | { sql: string | null }
-    | undefined;
+    { sql: string | null } | undefined;
   if (!row) return undefined;
   const match = /float\[(\d+)\]/.exec(row.sql ?? "");
   return match ? Number(match[1]) : 0;
