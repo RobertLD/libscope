@@ -359,7 +359,7 @@ describe("extractDocLinks", () => {
       '<a href="/docs/page#section">Three</a>',
     ].join("\n");
     const links = extractDocLinks(html, BASE, "/docs/");
-    expect(links.filter((l) => l.includes("/docs/page")).length).toBe(1);
+    expect(links.filter((l) => l.includes("/docs/page"))).toHaveLength(1);
   });
 
   it("returns empty array when no anchors found", () => {
@@ -420,7 +420,7 @@ describe("extractSitemapUrls", () => {
   <url><loc>https://docs.example.com/docs/page</loc></url>
 </urlset>`;
     const urls = extractSitemapUrls(xml, BASE, "/docs/");
-    expect(urls.length).toBe(1);
+    expect(urls).toHaveLength(1);
   });
 
   it("returns empty array for empty sitemap", () => {

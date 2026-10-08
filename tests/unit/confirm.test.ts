@@ -18,34 +18,16 @@ describe("confirmAction", () => {
     expect(result).toBe(true);
   });
 
-  it("returns true when user answers 'y'", async () => {
-    const result = await confirmAction("Delete?", false, createMockInterface("y"));
-    expect(result).toBe(true);
-  });
-
-  it("returns true when user answers 'yes'", async () => {
-    const result = await confirmAction("Delete?", false, createMockInterface("yes"));
-    expect(result).toBe(true);
-  });
-
-  it("returns true when user answers 'YES' (case-insensitive)", async () => {
-    const result = await confirmAction("Delete?", false, createMockInterface("YES"));
-    expect(result).toBe(true);
-  });
-
-  it("returns false when user answers 'n'", async () => {
-    const result = await confirmAction("Delete?", false, createMockInterface("n"));
-    expect(result).toBe(false);
-  });
-
-  it("returns false when user answers empty string", async () => {
-    const result = await confirmAction("Delete?", false, createMockInterface(""));
-    expect(result).toBe(false);
-  });
-
-  it("returns false when user answers arbitrary text", async () => {
-    const result = await confirmAction("Delete?", false, createMockInterface("maybe"));
-    expect(result).toBe(false);
+  it.each([
+    { answer: "y", expected: true },
+    { answer: "yes", expected: true },
+    { answer: "YES", expected: true },
+    { answer: "n", expected: false },
+    { answer: "", expected: false },
+    { answer: "maybe", expected: false },
+  ])("returns $expected when user answers '$answer'", async ({ answer, expected }) => {
+    const result = await confirmAction("Delete?", false, createMockInterface(answer));
+    expect(result).toBe(expected);
   });
 
   it("closes the readline interface after prompting", async () => {

@@ -75,7 +75,7 @@ describe("knowledge packs", () => {
       const docs = db
         .prepare("SELECT id, pack_name FROM documents WHERE pack_name = ?")
         .all("test-pack") as Array<{ id: string; pack_name: string }>;
-      expect(docs.length).toBe(2);
+      expect(docs).toHaveLength(2);
 
       // Verify pack is recorded
       const packs = db.prepare("SELECT * FROM packs WHERE name = ?").all("test-pack") as Array<{
@@ -83,7 +83,7 @@ describe("knowledge packs", () => {
         version: string;
         doc_count: number;
       }>;
-      expect(packs.length).toBe(1);
+      expect(packs).toHaveLength(1);
       expect(packs[0]!.version).toBe("1.0.0");
       expect(packs[0]!.doc_count).toBe(2);
     });
@@ -224,17 +224,17 @@ describe("knowledge packs", () => {
       const docsBefore = db
         .prepare("SELECT id FROM documents WHERE pack_name = ?")
         .all("test-pack");
-      expect(docsBefore.length).toBe(2);
+      expect(docsBefore).toHaveLength(2);
 
       removePack(db, "test-pack");
 
       // Verify docs removed
       const docsAfter = db.prepare("SELECT id FROM documents WHERE pack_name = ?").all("test-pack");
-      expect(docsAfter.length).toBe(0);
+      expect(docsAfter).toHaveLength(0);
 
       // Verify pack record removed
       const packRecord = db.prepare("SELECT * FROM packs WHERE name = ?").all("test-pack");
-      expect(packRecord.length).toBe(0);
+      expect(packRecord).toHaveLength(0);
     });
 
     it("should throw when removing a non-existent pack", () => {
@@ -260,7 +260,7 @@ describe("knowledge packs", () => {
       await installPack(db, provider, path2);
 
       const packs = listInstalledPacks(db);
-      expect(packs.length).toBe(2);
+      expect(packs).toHaveLength(2);
       expect(packs.map((p) => p.name)).toEqual(["pack-a", "pack-b"]);
       expect(packs[0]!.version).toBe("1.0.0");
       expect(packs[0]!.docCount).toBe(2);
@@ -288,7 +288,7 @@ describe("knowledge packs", () => {
       });
 
       expect(pack.name).toBe("exported");
-      expect(pack.documents.length).toBe(2);
+      expect(pack.documents).toHaveLength(2);
       expect(pack.version).toBe("1.0.0");
       expect(pack.metadata.author).toBe("libscope");
 
@@ -1006,7 +1006,7 @@ describe("knowledge packs", () => {
       const docs = db
         .prepare("SELECT id FROM documents WHERE pack_name = ?")
         .all("concurrent-4") as Array<{ id: string }>;
-      expect(docs.length).toBe(4);
+      expect(docs).toHaveLength(4);
     });
 
     it("should make multiple embedBatch calls with small batchSize and high concurrency", async () => {

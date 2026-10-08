@@ -42,7 +42,7 @@ describe("saved search and analytics operations", () => {
       expect(list).toMatchObject({ total: 1, limit: 50, offset: 0 });
 
       const ran = await run(runSavedSearchOperation, t.ctx, { search: "react-hooks" });
-      expect(ran.items.length).toBe(1);
+      expect(ran.items).toHaveLength(1);
       expect(ran.search.resultCount).toBe(1);
       expect(ran.search.lastRunAt).not.toBeNull();
 

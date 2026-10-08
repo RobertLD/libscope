@@ -177,8 +177,8 @@ describe("spiderUrl", () => {
 
     // Should only visit a and b once each
     const urls = pages.map((p) => p.url);
-    expect(urls.filter((u) => u === "https://example.com/a").length).toBe(1);
-    expect(urls.filter((u) => u === "https://example.com/b").length).toBe(1);
+    expect(urls.filter((u) => u === "https://example.com/a")).toHaveLength(1);
+    expect(urls.filter((u) => u === "https://example.com/b")).toHaveLength(1);
   });
 
   it("filters cross-domain links when sameDomain=true (default)", async () => {
@@ -437,7 +437,7 @@ describe("spiderUrl", () => {
     const gen = spiderUrl("https://example.com/", { maxDepth: 0, maxPages: 10, requestDelay: 0 });
     const { pages } = await collectPages(gen);
 
-    expect(pages.length).toBe(1);
+    expect(pages).toHaveLength(1);
     expect(pages[0]!.url).toBe("https://example.com/");
   });
 
@@ -488,7 +488,7 @@ describe("spiderUrl", () => {
 
     const gen = spiderUrl("https://example.com/notes.txt", { maxDepth: 0, requestDelay: 0 });
     const { pages } = await collectPages(gen);
-    expect(pages.length).toBe(1);
+    expect(pages).toHaveLength(1);
     expect(pages[0]!.title).toBe("Plain Text");
   });
 

@@ -71,7 +71,7 @@ describe("web server", () => {
     expect(status).toBe(200);
     const docs = body as unknown as Array<{ title: string }>;
     expect(Array.isArray(docs)).toBe(true);
-    expect(docs.length).toBe(2);
+    expect(docs).toHaveLength(2);
     expect(docs[0]!.title).toBeDefined();
   });
 
@@ -93,7 +93,7 @@ describe("web server", () => {
     expect(status).toBe(200);
     const topics = body as unknown as Array<{ id: string; documentCount: number }>;
     expect(Array.isArray(topics)).toBe(true);
-    expect(topics.length).toBe(1);
+    expect(topics).toHaveLength(1);
     expect(topics[0]!.id).toBe("ts");
     expect(topics[0]!.documentCount).toBe(1);
   });
