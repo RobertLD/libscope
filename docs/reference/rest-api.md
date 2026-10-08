@@ -179,7 +179,7 @@ curl -X POST http://localhost:3378/api/v1/documents \
 # -> 202 { "data": { "taskId": "6f1c...", "operation": "add", "status": "running" } }
 
 curl http://localhost:3378/api/v1/tasks/6f1c...
-# -> { "data": { "status": "completed", "result": "{\"documents\":[{\"documentId\":\"...\"}],...}", ... } }
+# -> { "data": { "status": "completed", "result": "{\"kind\":\"content\",\"documents\":[{\"documentId\":\"...\",...}],...}", ... } }
 ```
 
 ### Add a web page, a crawled site or a repository

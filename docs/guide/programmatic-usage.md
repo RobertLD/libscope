@@ -98,7 +98,7 @@ if (result.mode === "answer") {
 
 `ask()` uses `llmProvider`, or the LLM from `llm.provider` (default `auto`: OpenAI if an OpenAI key is set, else Anthropic if an Anthropic key is set, else Ollama if `llm.url` is set or the embedding provider is `ollama`). If there is no LLM, `ask()` throws a `ConfigError` that tells you what to set.
 
-Streaming:
+Streaming needs an LLM: with `passthrough` or no LLM, `askStream()` throws a `ConfigError`.
 
 ```ts
 for await (const event of scope.askStream("How does OAuth2 work?")) {

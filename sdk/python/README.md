@@ -28,6 +28,7 @@ with LibscopeClient() as client:
     done = client.wait_for_task(task.id)
     doc_id = done.result["documents"][0]["documentId"]
 
+    client.create_topic("python")  # a topic must exist before documents use it
     client.add_text("My Notes", "Some useful content...", topic="python")
 
     page = client.search("how to use decorators", limit=5)
@@ -36,6 +37,7 @@ with LibscopeClient() as client:
 
     client.add_tags(doc_id, ["python", "tutorial"])
 
+    # ask needs an LLM on the server (otherwise it raises ServerError with the setting to change)
     answer = client.ask("What is the best practice for error handling?")
     print(answer.answer)
 ```
