@@ -167,6 +167,27 @@ describe("integration: registry publish", () => {
     expect(await verifyChecksum(publishedFile, result.checksum)).toBe(true);
   });
 
+  it("should submit a pack on a pushed feature branch and return to the base branch", async () => {
+    const bareRepo = createBareRepo(tempDir);
+    addTestRegistry(makeEntry("submit-reg", bareRepo));
+    await syncRegistry(getRegistry("submit-reg")!);
+    const cacheDir = getRegistryCacheDir("submit-reg");
+    const baseBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: cacheDir }).toString();
+
+    const packFile = createPackFile(tempDir, "submitted-pack");
+    const result = await publishPackToBranch({
+      registryName: "submit-reg",
+      packFilePath: packFile,
+      version: "1.0.0",
+    });
+
+    expect(result.branch).toBe("feature/add-submitted-pack");
+    const remoteBranches = execSync("git branch --list", { cwd: bareRepo }).toString();
+    expect(remoteBranches).toContain("feature/add-submitted-pack");
+    const current = execSync("git rev-parse --abbrev-ref HEAD", { cwd: cacheDir }).toString();
+    expect(current).toBe(baseBranch);
+  });
+
   it("should unpublish a pack version", async () => {
     const bareRepo = createBareRepo(tempDir);
     addTestRegistry(makeEntry("unpub-reg", bareRepo));

@@ -77,7 +77,7 @@ await scope.add("./docs");
 const { items } = await scope.search("how to authenticate");
 for (const hit of items) console.log(hit.documentId, hit.title, hit.score);
 
-const result = await scope.ask("How do I configure OAuth2?");
+const result = await scope.ask("How do I configure OAuth2?"); // needs an LLM, like the CLI
 if (result.mode === "answer") console.log(result.answer);
 
 scope.close();

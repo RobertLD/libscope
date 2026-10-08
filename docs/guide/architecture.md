@@ -328,7 +328,7 @@ New functionality starts as an operation. The surfaces then expose it with littl
    - **MCP**: only for tools that an assistant needs. Add it to `registerCoreTools` or `registerAdminTools` in `src/mcp/server.ts` with a formatter in `src/mcp/format.ts`.
 5. Run `npm run build && npm run docs:gen` to update the generated references, and commit them.
 
-Example (a hypothetical `rename-topic` operation; `renameTopic` is not in the code):
+Example (a hypothetical `rename-topic` operation over the existing `renameTopic` in `src/core/topics.ts`):
 
 ```typescript
 // src/core/operations/topics.ts

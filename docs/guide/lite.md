@@ -20,12 +20,12 @@
 npm install libscope
 ```
 
-For code chunking, also install tree-sitter and the grammars that you need (optional peer dependencies):
+For code chunking, also install tree-sitter and the grammars that you need (optional peer dependencies). Use these versions: npm refuses the latest grammar releases next to libscope.
 
 ```bash
-npm install tree-sitter
-npm install tree-sitter-typescript tree-sitter-javascript tree-sitter-python
-npm install tree-sitter-c-sharp tree-sitter-cpp tree-sitter-c tree-sitter-go
+npm install tree-sitter@0.21
+npm install tree-sitter-typescript@0.21 tree-sitter-javascript@0.21 tree-sitter-python@0.21
+npm install tree-sitter-c-sharp@0.21 tree-sitter-cpp@0.22 tree-sitter-c@0.21 tree-sitter-go@0.21
 ```
 
 If they are not installed, code is chunked with the built-in text chunker.

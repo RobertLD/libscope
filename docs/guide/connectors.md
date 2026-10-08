@@ -35,7 +35,7 @@ Each file also stores `connectorType`, the `schedule` (if set) and `lastSync`. A
 
 ### Schedules
 
-`--schedule <cron>` syncs a connection on a cron schedule. Schedules run while the REST API server runs (`libscope serve api`):
+`--schedule <cron>` syncs a connection on a cron schedule. Schedules run while the REST API server runs (`libscope serve api`). For a saved connection, give only the schedule (a new connection also needs its other settings, such as `--token`):
 
 ```bash
 libscope connect notion --schedule "0 */6 * * *" --no-sync   # every 6 hours

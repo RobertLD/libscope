@@ -196,8 +196,9 @@ export async function createRegistryRepo(path: string): Promise<void> {
 
   mkdirSync(path, { recursive: true });
 
-  // Initialize git repo
+  // Initialize git repo on "main" whatever init.defaultBranch is (the docs push "main")
   await git(["init"], { cwd: path });
+  await git(["symbolic-ref", "HEAD", "refs/heads/main"], { cwd: path });
 
   // Create canonical structure
   const indexPath = join(path, INDEX_FILE);
@@ -237,8 +238,8 @@ export async function commitAll(repoPath: string, message: string): Promise<void
   );
 }
 
-/** Add, commit, and push changes in a registry repo. */
+/** Add, commit, and push the current branch of a registry repo (also when the branch is new). */
 export async function commitAndPush(repoPath: string, message: string): Promise<void> {
   await commitAll(repoPath, message);
-  await git(["push"], { cwd: repoPath });
+  await git(["push", "-u", "origin", "HEAD"], { cwd: repoPath });
 }

@@ -14,20 +14,20 @@ The tree-sitter chunker uses the Abstract Syntax Tree (AST) to split at **semant
 
 ## Installation
 
-Tree-sitter is an **optional peer dependency**. Install the packages for the languages you need:
+Tree-sitter is an **optional peer dependency**. Install the packages for the languages you need, with the versions that libscope supports (the latest grammar releases need a newer tree-sitter, and npm refuses to install them next to libscope):
 
 ```bash
 # Core tree-sitter parser
-npm install tree-sitter
+npm install tree-sitter@0.21
 
 # Language grammars (install only what you need)
-npm install tree-sitter-typescript   # TypeScript + TSX
-npm install tree-sitter-javascript   # JavaScript, JSX, MJS, CJS
-npm install tree-sitter-python       # Python
-npm install tree-sitter-c-sharp      # C#
-npm install tree-sitter-cpp          # C++ (also used for .h/.hpp headers)
-npm install tree-sitter-c            # C
-npm install tree-sitter-go           # Go
+npm install tree-sitter-typescript@0.21   # TypeScript + TSX
+npm install tree-sitter-javascript@0.21   # JavaScript, JSX, MJS, CJS
+npm install tree-sitter-python@0.21       # Python
+npm install tree-sitter-c-sharp@0.21      # C#
+npm install tree-sitter-cpp@0.22          # C++ (also used for .h/.hpp headers)
+npm install tree-sitter-c@0.21            # C
+npm install tree-sitter-go@0.21           # Go
 ```
 
 If tree-sitter is not installed, `TreeSitterChunker.chunk()` throws a `ValidationError` with the install command, and `createCodeChunker()` falls back to the built-in chunker. Everything else works without tree-sitter.
@@ -78,7 +78,7 @@ export class AuthService extends EventEmitter {
 
   private async generateToken(userId: string): Promise<string> {
     // ... token generation logic
-    return `tok_${userId}_${Date.now()}`;
+    return "tok_" + userId + "_" + Date.now();
   }
 }
 `;
@@ -244,8 +244,8 @@ try {
   const chunks = await chunker.chunk(source, "rust");
 } catch (err) {
   if (err instanceof ValidationError) {
-    // "Unsupported language for code chunking: 'rust'"
-    // "Code chunking requires the 'tree-sitter' package. Install it with: ..."
+    // Unsupported language for code chunking: "rust"
+    // Code chunking requires the "tree-sitter" package. Install it with: ...
     console.warn(err.message);
   }
 }
@@ -253,7 +253,7 @@ try {
 
 Two error conditions:
 
-1. **Unsupported language** — throws immediately with the list of supported aliases
+1. **Unsupported language** — throws immediately (the aliases are in [Supported Languages](#supported-languages))
 2. **tree-sitter not installed** — throws with the exact `npm install` command
 
 Both are `ValidationError` from LibScope's error hierarchy.
