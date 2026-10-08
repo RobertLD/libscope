@@ -10,6 +10,7 @@ import { NodeHtmlMarkdown } from "node-html-markdown";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { fetchRaw } from "../core/url-fetcher.js";
+import { decodeHtmlEntities } from "../core/html-entities.js";
 import type { FetchOptions } from "../core/url-fetcher.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
@@ -354,7 +355,7 @@ export function extractDocTitle(html: string, url: string): string {
         .slice(innerStart, h1CloseIdx)
         .replaceAll(/<[^>]{1,2000}>/g, "")
         .trim();
-      if (title) return title;
+      if (title) return decodeHtmlEntities(title);
     }
   }
 
@@ -362,7 +363,7 @@ export function extractDocTitle(html: string, url: string): string {
   const titleTagMatch = /<title[^>]{0,2000}>([^<]+)<\/title>/i.exec(html);
   if (titleTagMatch?.[1]) {
     const title = titleTagMatch[1].trim();
-    if (title) return title;
+    if (title) return decodeHtmlEntities(title);
   }
 
   // Last resort: derive from URL path

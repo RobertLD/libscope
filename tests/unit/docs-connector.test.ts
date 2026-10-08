@@ -253,6 +253,12 @@ describe("extractDocTitle", () => {
       "My Library — Docs",
     ],
     [
+      "character references decoded",
+      "<html><head><title>Guide &#8212; Q&amp;A</title></head><body></body></html>",
+      "https://example.com/docs",
+      "Guide — Q&A",
+    ],
+    [
       "URL-derived fallback",
       "<html><body><p>content</p></body></html>",
       "https://example.com/docs/installation",

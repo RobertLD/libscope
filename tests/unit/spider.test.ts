@@ -81,6 +81,18 @@ describe("spiderUrl", () => {
     expect(page.depth).toBe(0);
   });
 
+  it("decodes character references in the page title", async () => {
+    mockFetchRaw.mockImplementation((url: string) => {
+      if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
+      return Promise.resolve(pageResponse(htmlPage("Guide &#8212; Q&amp;A"), url));
+    });
+
+    const gen = spiderUrl("https://example.com/", { maxPages: 1, requestDelay: 0 });
+    const result = await gen.next();
+    const page = result.value as { title: string };
+    expect(page.title).toBe("Guide — Q&A");
+  });
+
   it("follows links up to maxDepth", async () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));

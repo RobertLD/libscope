@@ -94,6 +94,20 @@ describe("fetchAndConvert", () => {
     expect(result.content).toContain("World");
   });
 
+  it("should decode character references in the <title>", async () => {
+    const html =
+      "<html><head><title>The Python Tutorial &#8212; Python &amp; more</title></head><body><p>x</p></body></html>";
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "text/html" }),
+      body: bodyStream(html),
+      text: () => Promise.resolve(html),
+    });
+
+    const result = await fetchAndConvert("https://example.com/page");
+    expect(result.title).toBe("The Python Tutorial — Python & more");
+  });
+
   it("should return markdown/plain text as-is", async () => {
     const md = "# Markdown Title\n\nSome content here.";
     mockFetch.mockResolvedValue({
