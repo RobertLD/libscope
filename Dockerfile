@@ -4,7 +4,8 @@
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+# tsc needs no native addon; the production stage builds them.
+RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
@@ -16,11 +17,11 @@ RUN groupadd -g 1001 libscope && \
     mkdir /data && chown libscope:libscope /data
 COPY package*.json ./
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 make g++ && \
+    apt-get install -y --no-install-recommends g++ make python3 && \
     npm ci --omit=dev --ignore-scripts && \
     npm rebuild better-sqlite3 sharp && \
     npm cache clean --force && \
-    apt-get purge -y python3 make g++ && \
+    apt-get purge -y g++ make python3 && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/dist ./dist
