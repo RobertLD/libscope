@@ -1,30 +1,17 @@
 import type Database from "better-sqlite3";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 // NOTE: @types/node-cron v3 is used with node-cron v4 — no v4 types are published yet.
 // The schedule() and ScheduledTask.stop() APIs are compatible across versions.
 import cron from "node-cron";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { listNamedConnectorConfigs } from "../connectors/index.js";
 import {
-  loadNamedConnectorConfig,
-  saveNamedConnectorConfig,
-  startSync,
-  completeSync,
-  failSync,
-} from "../connectors/index.js";
-import { syncNotion } from "../connectors/notion.js";
-import type { NotionConfig } from "../connectors/notion.js";
-import { syncSlack } from "../connectors/slack.js";
-import type { SlackConfig } from "../connectors/slack.js";
-import { syncConfluence } from "../connectors/confluence.js";
-import type { ConfluenceConfig } from "../connectors/confluence.js";
-import { syncObsidianVault } from "../connectors/obsidian.js";
-import type { ObsidianConfig } from "../connectors/obsidian.js";
-import { syncOneNote } from "../connectors/onenote.js";
-import type { OneNoteConfig } from "../connectors/onenote.js";
+  isConnectorType,
+  recordFailedSync,
+  resolveConnectorType,
+} from "../connectors/saved-config.js";
+import { runSavedConnectorSync } from "../connectors/registry.js";
 
 export interface ScheduleConfig {
   cronExpression: string;
@@ -66,7 +53,7 @@ export interface SchedulerStatus {
  * Reads schedule config from connector config files (~/.libscope/connectors/<name>.json).
  */
 export class ConnectorScheduler {
-  private jobs = new Map<string, ScheduledJob>();
+  private readonly jobs = new Map<string, ScheduledJob>();
   private started = false;
 
   constructor(
@@ -175,92 +162,24 @@ export class ConnectorScheduler {
       job.running = true;
     }
 
-    const syncId = startSync(this.db, connectorType, connectorName);
     log.info({ connector: connectorName, type: connectorType }, "Starting scheduled sync");
 
     try {
-      const stats = await this.executeSync(connectorType, connectorName);
-      completeSync(this.db, syncId, stats);
-      log.info({ connector: connectorName, ...stats }, "Scheduled sync completed");
+      // The connector records the run (one connector_syncs row, under connectorName).
+      if (!isConnectorType(connectorType)) {
+        const err = new ValidationError(`Unknown connector type: ${connectorType}`);
+        recordFailedSync(this.db, connectorType, connectorName, err);
+        throw err;
+      }
+      await runSavedConnectorSync(this.db, this.provider, connectorType, connectorName);
+      log.info({ connector: connectorName }, "Scheduled sync completed");
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failSync(this.db, syncId, message);
       log.error({ connector: connectorName, err }, "Scheduled sync failed");
     } finally {
       if (job) {
         job.running = false;
         job.lastRun = new Date().toISOString();
       }
-    }
-  }
-
-  private async executeSync(
-    connectorType: string,
-    connectorName: string,
-  ): Promise<{ added: number; updated: number; deleted: number; errored: number }> {
-    switch (connectorType) {
-      case "notion": {
-        const config = loadNamedConnectorConfig<NotionConfig>(connectorName);
-        const result = await syncNotion(this.db, this.provider, config);
-        config.lastSync = new Date().toISOString();
-        saveNamedConnectorConfig(connectorName, config);
-        return {
-          added: result.pagesIndexed,
-          updated: 0,
-          deleted: 0,
-          errored: result.errors.length,
-        };
-      }
-      case "slack": {
-        const config = loadNamedConnectorConfig<SlackConfig>(connectorName);
-        const result = await syncSlack(this.db, this.provider, config);
-        config.lastSync = new Date().toISOString();
-        saveNamedConnectorConfig(connectorName, config);
-        return {
-          added: result.messagesIndexed + result.threadsIndexed,
-          updated: 0,
-          deleted: 0,
-          errored: result.errors.length,
-        };
-      }
-      case "confluence": {
-        const config = loadNamedConnectorConfig<ConfluenceConfig>(connectorName);
-        const result = await syncConfluence(this.db, this.provider, config);
-        config.lastSync = new Date().toISOString();
-        saveNamedConnectorConfig(connectorName, config);
-        return {
-          added: result.pagesIndexed,
-          updated: result.pagesUpdated,
-          deleted: 0,
-          errored: result.errors.length,
-        };
-      }
-      case "obsidian": {
-        const config = loadNamedConnectorConfig<ObsidianConfig>(connectorName);
-        const result = await syncObsidianVault(this.db, this.provider, config);
-        config.lastSync = new Date().toISOString();
-        saveNamedConnectorConfig(connectorName, config);
-        return {
-          added: result.added,
-          updated: result.updated,
-          deleted: result.deleted,
-          errored: result.errors.length,
-        };
-      }
-      case "onenote": {
-        const config = loadNamedConnectorConfig<OneNoteConfig>(connectorName);
-        const result = await syncOneNote(this.db, this.provider, config);
-        config.lastSync = new Date().toISOString();
-        saveNamedConnectorConfig(connectorName, config);
-        return {
-          added: result.pagesAdded,
-          updated: result.pagesUpdated,
-          deleted: 0,
-          errored: result.errors.length,
-        };
-      }
-      default:
-        throw new ValidationError(`Unknown connector type: ${connectorType}`);
     }
   }
 }
@@ -270,34 +189,16 @@ export class ConnectorScheduler {
  * Each connector config can have a `schedule` field with a `cronExpression`.
  */
 export function loadScheduleEntries(): ConnectorScheduleEntry[] {
-  const log = getLogger();
   const entries: ConnectorScheduleEntry[] = [];
-
-  const connectorsDir = join(homedir(), ".libscope", "connectors");
-  if (!existsSync(connectorsDir)) {
-    return entries;
-  }
-
-  const files = readdirSync(connectorsDir).filter((f) => f.endsWith(".json"));
-  for (const file of files) {
-    try {
-      const raw = readFileSync(join(connectorsDir, file), "utf-8");
-      const config = JSON.parse(raw) as Record<string, unknown>;
-      const schedule = config.schedule as { cronExpression?: string } | undefined;
-
-      if (schedule?.cronExpression) {
-        const connectorName = file.replace(/\.json$/, "");
-        const connectorType = (config.type as string | undefined) ?? connectorName;
-        entries.push({
-          connectorType,
-          connectorName,
-          cronExpression: schedule.cronExpression,
-        });
-      }
-    } catch (err) {
-      log.warn({ file, err }, "Failed to read connector config for scheduling");
+  for (const { name, config } of listNamedConnectorConfigs()) {
+    const schedule = config["schedule"] as { cronExpression?: string } | undefined;
+    if (schedule?.cronExpression) {
+      entries.push({
+        connectorType: resolveConnectorType(name, config),
+        connectorName: name,
+        cronExpression: schedule.cronExpression,
+      });
     }
   }
-
   return entries;
 }

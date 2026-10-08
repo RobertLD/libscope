@@ -21,7 +21,7 @@ describe("config", () => {
 
     expect(config.embedding.provider).toBe("local");
     expect(config.logging.level).toBe("info");
-    expect(config.database.path).toContain("libscope.db");
+    // database.path defaults are covered with a temp HOME in db-location.test.ts
   });
 
   it("should return cached config on repeated calls", () => {
@@ -43,21 +43,21 @@ describe("config", () => {
 
   it("should pick up LIBSCOPE_OPENAI_API_KEY", () => {
     const config = loadConfigWithEnv({ LIBSCOPE_OPENAI_API_KEY: "sk-test123" });
-    expect(config.embedding.openaiApiKey).toBe("sk-test123");
+    expect(config.openai?.apiKey).toBe("sk-test123");
   });
 
-  it("should pick up LIBSCOPE_OLLAMA_URL", () => {
-    const config = loadConfigWithEnv({ LIBSCOPE_OLLAMA_URL: "http://custom:11434" });
-    expect(config.embedding.ollamaUrl).toBe("http://custom:11434");
+  it("should pick up LIBSCOPE_EMBEDDING_URL", () => {
+    const config = loadConfigWithEnv({ LIBSCOPE_EMBEDDING_URL: "http://custom:11434" });
+    expect(config.embedding.url).toBe("http://custom:11434");
   });
 
-  it("should pick up LIBSCOPE_ALLOW_PRIVATE_URLS", () => {
-    const config = loadConfigWithEnv({ LIBSCOPE_ALLOW_PRIVATE_URLS: "true" });
+  it("should pick up LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS", () => {
+    const config = loadConfigWithEnv({ LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS: "true" });
     expect(config.indexing.allowPrivateUrls).toBe(true);
   });
 
-  it("should pick up LIBSCOPE_ALLOW_SELF_SIGNED_CERTS", () => {
-    const config = loadConfigWithEnv({ LIBSCOPE_ALLOW_SELF_SIGNED_CERTS: "1" });
+  it("should pick up LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS", () => {
+    const config = loadConfigWithEnv({ LIBSCOPE_INDEXING_ALLOW_SELF_SIGNED_CERTS: "1" });
     expect(config.indexing.allowSelfSignedCerts).toBe(true);
   });
 
@@ -75,15 +75,14 @@ function makeConfig(overrides: Partial<LibScopeConfig> = {}): LibScopeConfig {
   return {
     embedding: {
       provider: "local",
-      ollamaUrl: "http://localhost:11434",
-      ollamaModel: "nomic-embed-text",
-      openaiModel: "text-embedding-3-small",
       ...overrides.embedding,
     },
     database: { path: "/tmp/test-libscope/libscope.db", ...overrides.database },
     indexing: { maxDocumentSize: 100 * 1024 * 1024, ...overrides.indexing },
     logging: { level: "info", ...overrides.logging },
     ...("llm" in overrides ? { llm: overrides.llm } : {}),
+    ...("openai" in overrides ? { openai: overrides.openai } : {}),
+    ...("anthropic" in overrides ? { anthropic: overrides.anthropic } : {}),
   };
 }
 
@@ -138,17 +137,32 @@ describe("validateConfig", () => {
 
   it("should not warn when embedding provider is openai with config key", () => {
     const config = makeConfig({
-      embedding: { provider: "openai", openaiApiKey: "sk-test" },
+      embedding: { provider: "openai" },
+      openai: { apiKey: "sk-test" },
     });
     const warnings = validateConfig(config);
     expect(warnings).toHaveLength(0);
   });
 
-  it("should not warn when embedding provider is openai with OPENAI_API_KEY env", () => {
+  it("should validate the resolved config only (env keys are resolved by loadConfig)", () => {
     process.env["OPENAI_API_KEY"] = "sk-env-test";
     const config = makeConfig({ embedding: { provider: "openai" } });
     const warnings = validateConfig(config);
-    expect(warnings).toHaveLength(0);
+    expect(warnings[0]).toContain("LIBSCOPE_OPENAI_API_KEY or OPENAI_API_KEY");
+  });
+
+  it("should warn when llm provider is anthropic without API key", () => {
+    const config = makeConfig({ llm: { provider: "anthropic" } });
+    const warnings = validateConfig(config);
+    expect(warnings.some((w) => w.includes("LIBSCOPE_ANTHROPIC_API_KEY"))).toBe(true);
+  });
+
+  it("should not warn when llm provider is anthropic with a key", () => {
+    const config = makeConfig({
+      llm: { provider: "anthropic" },
+      anthropic: { apiKey: "sk-ant" },
+    });
+    expect(validateConfig(config)).toHaveLength(0);
   });
 
   it("should warn when llm provider is openai without API key", () => {
@@ -159,26 +173,29 @@ describe("validateConfig", () => {
     expect(warnings.some((w) => w.includes("llm.provider"))).toBe(true);
   });
 
-  it("should not warn when llm provider is openai with embedding key available", () => {
+  it("should not warn when llm provider is openai with an OpenAI key", () => {
     const config = makeConfig({
-      embedding: { provider: "local", openaiApiKey: "sk-shared" },
       llm: { provider: "openai" },
+      openai: { apiKey: "sk-shared" },
     });
     const warnings = validateConfig(config);
     expect(warnings.some((w) => w.includes("llm.provider"))).toBe(false);
   });
 
-  it("should warn when ollama provider has no URL", () => {
-    const config = makeConfig({
-      embedding: { provider: "ollama", ollamaUrl: undefined },
-    });
+  it("should not warn when ollama provider has no URL (the default URL applies)", () => {
+    const config = makeConfig({ embedding: { provider: "ollama" } });
+    expect(validateConfig(config)).toHaveLength(0);
+  });
+
+  it("should warn when embedding.model is set for the local provider", () => {
+    const config = makeConfig({ embedding: { provider: "local", model: "bge-m3" } });
     const warnings = validateConfig(config);
-    expect(warnings.some((w) => w.includes("ollamaUrl"))).toBe(true);
+    expect(warnings.some((w) => w.includes("ignored by the local provider"))).toBe(true);
   });
 
   it("should not warn when ollama provider has a URL", () => {
     const config = makeConfig({
-      embedding: { provider: "ollama", ollamaUrl: "http://localhost:11434" },
+      embedding: { provider: "ollama", url: "http://localhost:11434" },
     });
     const warnings = validateConfig(config);
     expect(warnings).toHaveLength(0);

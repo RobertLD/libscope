@@ -1,0 +1,229 @@
+/**
+ * Saved connector configs: one file per named connector in ~/.libscope/connectors/<name>.json
+ * (mode 0600). `libscope connect <type>` writes them; `libscope sync`, the scheduler and the
+ * sync operation read them.
+ */
+import type Database from "better-sqlite3";
+import { ConfigError, ValidationError } from "../errors.js";
+import {
+  hasNamedConnectorConfig,
+  loadConnectorConfig,
+  loadNamedConnectorConfig,
+  saveNamedConnectorConfig,
+} from "./index.js";
+import { startSync, failSync } from "./sync-tracker.js";
+import type { OneNoteConfig } from "./onenote.js";
+
+/** Connector types that can be saved, re-synced and scheduled. */
+export const CONNECTOR_TYPES = [
+  "notion",
+  "slack",
+  "confluence",
+  "obsidian",
+  "onenote",
+  "docs",
+] as const;
+export type ConnectorType = (typeof CONNECTOR_TYPES)[number];
+
+export function isConnectorType(value: unknown): value is ConnectorType {
+  return typeof value === "string" && (CONNECTOR_TYPES as readonly string[]).includes(value);
+}
+
+/** Fields stored next to the connector's own settings. */
+export interface SavedConnectorFields {
+  /** Connector type the config belongs to. */
+  connectorType?: ConnectorType | undefined;
+  /** Cron schedule set by `libscope connect <type> --schedule`. */
+  schedule?: { cronExpression: string } | undefined;
+}
+
+interface HasLastSync {
+  lastSync?: string | undefined;
+}
+
+/**
+ * Connector type a saved config declares: its `connectorType` field, else a legacy `type`
+ * field that names a connector (Confluence's own `type` is "cloud"/"server").
+ */
+function declaredConnectorType(raw: Record<string, unknown>): ConnectorType | undefined {
+  if (isConnectorType(raw["connectorType"])) return raw["connectorType"];
+  if (isConnectorType(raw["type"])) return raw["type"];
+  return undefined;
+}
+
+/** Connector type of a saved config: the type it declares, else the config name. */
+export function resolveConnectorType(name: string, raw: Record<string, unknown>): string {
+  return declaredConnectorType(raw) ?? name;
+}
+
+/**
+ * Load the saved config `name` for `type`. Throws ConfigError if it is missing or declares
+ * a different connector type.
+ */
+export function loadSavedConnectorConfig<T>(type: ConnectorType, name: string = type): T {
+  const raw = loadNamedConnectorConfig<Record<string, unknown>>(name);
+  const declared = declaredConnectorType(raw);
+  if (declared !== undefined && declared !== type) {
+    throw new ConfigError(`Connector config "${name}" is a ${declared} connector, not ${type}`);
+  }
+  return raw as T;
+}
+
+/** Like loadSavedConnectorConfig, but returns undefined when no config named `name` exists. */
+export function findSavedConnectorConfig<T>(
+  type: ConnectorType,
+  name: string = type,
+): T | undefined {
+  return hasNamedConnectorConfig(name) ? loadSavedConnectorConfig<T>(type, name) : undefined;
+}
+
+/**
+ * Saved OneNote config `name`. For the default name, falls back to the credentials that
+ * older versions stored under the "onenote" key of ~/.libscope/connectors.json.
+ */
+export function findSavedOneNoteConfig(name: string = "onenote"): OneNoteConfig | undefined {
+  const saved = findSavedConnectorConfig<OneNoteConfig>("onenote", name);
+  if (saved || name !== "onenote") return saved;
+  const legacy = loadConnectorConfig()["onenote"] as Partial<OneNoteConfig> | undefined;
+  if (!legacy?.accessToken && !legacy?.refreshToken) return undefined;
+  return {
+    clientId: legacy.clientId ?? "",
+    tenantId: legacy.tenantId ?? "common",
+    accessToken: legacy.accessToken,
+    refreshToken: legacy.refreshToken,
+    tokenExpiry: legacy.tokenExpiry,
+    lastSync: legacy.lastSync,
+    notebooks: legacy.notebooks ?? ["all"],
+    excludeSections: legacy.excludeSections ?? [],
+  };
+}
+
+/**
+ * Save connector settings as config `name`, tagged with the connector type. A schedule
+ * already stored under that name is kept.
+ */
+export function saveConnectorSettings(type: ConnectorType, name: string, settings: object): void {
+  const existing = hasNamedConnectorConfig(name)
+    ? loadNamedConnectorConfig<SavedConnectorFields>(name)
+    : undefined;
+  saveNamedConnectorConfig(name, {
+    ...settings,
+    connectorType: type,
+    ...(existing?.schedule ? { schedule: existing.schedule } : {}),
+  });
+}
+
+/**
+ * Run `sync` with `config`, then save the config as `name` with lastSync set to the time
+ * the sync started. Changes the connector made to the config object (refreshed OneNote
+ * tokens) are saved too.
+ */
+export async function runAndSaveConnector<C extends HasLastSync, R>(
+  type: ConnectorType,
+  name: string,
+  config: C,
+  sync: (config: C) => Promise<R>,
+): Promise<R> {
+  const startedAt = new Date().toISOString();
+  const result = await sync(config);
+  saveConnectorSettings(type, name, { ...config, lastSync: startedAt });
+  return result;
+}
+
+/** Record one failed connector_syncs row for a run that never reached the connector. */
+export function recordFailedSync(
+  db: Database.Database,
+  connectorType: string,
+  connectorName: string,
+  err: unknown,
+): void {
+  failSync(
+    db,
+    startSync(db, connectorType, connectorName),
+    err instanceof Error ? err.message : String(err),
+  );
+}
+
+/**
+ * Re-sync saved connector `name` with its saved config and save the new lastSync.
+ * The connector records the run in connector_syncs under `name`; when the config cannot be
+ * loaded, one failed row is recorded here instead. Errors are rethrown.
+ */
+export async function syncSavedConnector<C extends HasLastSync, R>(
+  db: Database.Database,
+  type: ConnectorType,
+  name: string,
+  sync: (config: C) => Promise<R>,
+): Promise<R> {
+  let config: C;
+  try {
+    config = loadSavedConnectorConfig<C>(type, name);
+  } catch (err) {
+    recordFailedSync(db, type, name, err);
+    throw err;
+  }
+  return runAndSaveConnector(type, name, config, sync);
+}
+
+/** Per-call values for resolveSyncConfig; undefined means "not given". */
+export type SyncConfigOverrides<C> = { [K in keyof C]?: C[K] | undefined };
+
+/** Settings for resolveSyncConfig. */
+export interface ResolveSyncConfigOptions<C> {
+  /** Values used when neither the saved config nor the call provides one. */
+  defaults?: Partial<C> | undefined;
+  /** Fields that must be non-empty after merging. */
+  required?: ReadonlyArray<keyof C & string> | undefined;
+}
+
+/**
+ * Config for an on-demand sync (the MCP sync tools): `defaults`, then saved config `name`
+ * when it exists, then every defined value in `overrides`. Lets callers omit secrets that
+ * are already saved. Throws ValidationError naming required fields that are still empty.
+ */
+export function resolveSyncConfig<C extends object>(
+  type: ConnectorType,
+  name: string,
+  overrides: SyncConfigOverrides<C>,
+  options: ResolveSyncConfigOptions<C> = {},
+): { config: C; saved: C | undefined } {
+  const saved =
+    type === "onenote"
+      ? (findSavedOneNoteConfig(name) as C | undefined)
+      : findSavedConnectorConfig<C>(type, name);
+  const defined = Object.fromEntries(
+    Object.entries(overrides).filter(([, value]) => value !== undefined),
+  ) as Partial<C>;
+  const config: Partial<C> = { ...options.defaults, ...saved, ...defined };
+  const missing = (options.required ?? []).filter((key) => {
+    const value = config[key];
+    return value === undefined || value === "";
+  });
+  if (missing.length > 0) {
+    throw new ValidationError(
+      `Missing ${missing.join(", ")} for ${type} sync. Pass the value as a parameter, ` +
+        `or save a connector named "${name}" with 'libscope connect ${type}'.`,
+    );
+  }
+  return { config: config as C, saved };
+}
+
+/**
+ * After a OneNote sync that used saved config `name`, save tokens the connector refreshed
+ * so a rotated refresh token is not lost. Does nothing when no refresh happened or the
+ * caller supplied its own access token (no refresh token in `used`).
+ */
+export function saveRefreshedOneNoteTokens(
+  name: string,
+  saved: OneNoteConfig | undefined,
+  used: OneNoteConfig,
+): void {
+  if (!saved || !used.refreshToken) return;
+  if (used.accessToken === saved.accessToken && used.refreshToken === saved.refreshToken) return;
+  saveConnectorSettings("onenote", name, {
+    ...saved,
+    accessToken: used.accessToken,
+    refreshToken: used.refreshToken,
+    tokenExpiry: used.tokenExpiry,
+  });
+}

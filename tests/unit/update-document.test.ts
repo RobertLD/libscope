@@ -31,13 +31,26 @@ describe("updateDocument", () => {
     docId = result.id;
   });
 
-  it("should update title without re-chunking", async () => {
+  it("should update title without re-chunking, re-embedding the existing chunks", async () => {
+    const chunkIdsBefore = db
+      .prepare("SELECT id FROM chunks WHERE document_id = ? ORDER BY chunk_index")
+      .all(docId);
     const batchCallsBefore = provider.embedBatchCallCount;
     const input: UpdateDocumentInput = { title: "New Title" };
     const updated: Document = await updateDocument(db, provider, docId, input);
 
     expect(updated.title).toBe("New Title");
     expect(updated.content).toBe(baseInput.content);
+    // The title is part of the embedding text, so vectors are refreshed in place.
+    expect(provider.embedBatchCallCount).toBe(batchCallsBefore + 1);
+    expect(
+      db.prepare("SELECT id FROM chunks WHERE document_id = ? ORDER BY chunk_index").all(docId),
+    ).toEqual(chunkIdsBefore);
+  });
+
+  it("should not re-embed when only url or topic changes", async () => {
+    const batchCallsBefore = provider.embedBatchCallCount;
+    await updateDocument(db, provider, docId, { metadata: { url: "https://other.example" } });
     expect(provider.embedBatchCallCount).toBe(batchCallsBefore);
   });
 

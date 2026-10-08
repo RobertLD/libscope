@@ -4,7 +4,8 @@ import { z } from "zod";
 import { DocumentNotFoundError, ValidationError } from "../errors.js";
 import { validateRow, validateRows } from "../db/validate.js";
 import { createChildLogger } from "../logger.js";
-import type { Document } from "./documents.js";
+import { rowToDocument, type Document } from "./documents.js";
+import { STOPWORDS } from "./stopwords.js";
 
 const TagRowSchema = z.object({
   id: z.string(),
@@ -47,109 +48,6 @@ const TitleContentRowSchema = z.object({
   title: z.string(),
   content: z.string(),
 });
-
-const STOPWORDS = new Set([
-  "the",
-  "a",
-  "an",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  "being",
-  "have",
-  "has",
-  "had",
-  "do",
-  "does",
-  "did",
-  "will",
-  "would",
-  "shall",
-  "should",
-  "may",
-  "might",
-  "must",
-  "can",
-  "could",
-  "that",
-  "this",
-  "with",
-  "from",
-  "for",
-  "not",
-  "but",
-  "and",
-  "or",
-  "nor",
-  "so",
-  "yet",
-  "both",
-  "either",
-  "neither",
-  "each",
-  "every",
-  "all",
-  "any",
-  "few",
-  "more",
-  "most",
-  "other",
-  "some",
-  "such",
-  "than",
-  "too",
-  "very",
-  "just",
-  "about",
-  "above",
-  "after",
-  "again",
-  "against",
-  "below",
-  "between",
-  "during",
-  "into",
-  "through",
-  "under",
-  "until",
-  "also",
-  "how",
-  "what",
-  "when",
-  "where",
-  "which",
-  "while",
-  "who",
-  "whom",
-  "why",
-  "its",
-  "our",
-  "their",
-  "your",
-  "his",
-  "her",
-  "our",
-  "out",
-  "then",
-  "there",
-  "these",
-  "those",
-  "them",
-  "they",
-  "you",
-  "your",
-  "only",
-  "own",
-  "same",
-  "here",
-  "over",
-  "once",
-  "use",
-  "used",
-]);
 
 export interface Tag {
   id: string;
@@ -249,18 +147,28 @@ export function addTagsToDocument(
   return tags;
 }
 
-/** Remove a specific tag from a document. */
-export function removeTagFromDocument(
+/**
+ * Remove tags (by name, case-insensitive) from a document. Names the document does not carry
+ * are ignored. Returns the names that were removed.
+ */
+export function removeTagsFromDocument(
   db: Database.Database,
   documentId: string,
-  tagId: string,
-): void {
-  const log = createChildLogger({ operation: "removeTagFromDocument" });
-  db.prepare("DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?").run(
-    documentId,
-    tagId,
+  tagNames: string[],
+): string[] {
+  const log = createChildLogger({ operation: "removeTagsFromDocument" });
+  const remove = db.prepare(
+    "DELETE FROM document_tags WHERE document_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)",
   );
-  log.info({ documentId, tagId }, "Tag removed from document");
+  const removed: string[] = [];
+  const run = db.transaction(() => {
+    for (const name of new Set(tagNames.map((t) => t.trim().toLowerCase()))) {
+      if (remove.run(documentId, name).changes > 0) removed.push(name);
+    }
+  });
+  run();
+  log.info({ documentId, removed }, "Tags removed from document");
+  return removed;
 }
 
 /** Get all tags for multiple documents in a single query. Returns a Map of documentId → tags. */
@@ -354,20 +262,7 @@ export function getDocumentsByTag(
 
   log.info({ tagNames: normalized, resultCount: rows.length }, "Documents retrieved by tags");
 
-  return rows.map((row) => ({
-    id: row.id,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    title: row.title,
-    content: row.content,
-    url: row.url,
-    contentHash: row.content_hash,
-    submittedBy: row.submitted_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return rows.map((row) => rowToDocument(row));
 }
 
 /** Tokenize text into lowercase words, filtering stopwords and short words. */

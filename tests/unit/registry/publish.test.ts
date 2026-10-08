@@ -64,8 +64,6 @@ function makeEntry(
   return {
     name,
     url,
-    syncInterval: 3600,
-    priority: 1,
     lastSyncedAt: null,
     ...overrides,
   };
@@ -225,42 +223,20 @@ describe("registry publish", () => {
   // ----------------------------------------------------------------
 
   describe("semver version validation", () => {
-    it("should reject a version string that is not semver ('abc')", async () => {
+    it.each([
+      { label: "a version string that is not semver", version: "abc", file: "bad-ver.json" },
+      { label: "a version with only two parts", version: "1.2", file: "two-part.json" },
+      { label: "a version with four parts", version: "1.2.3.4", file: "four-part.json" },
+    ])("should reject $label ('$version')", async ({ version, file }) => {
       const regName = `reg-${randomUUID().slice(0, 8)}`;
       const { bareUrl } = createRegistryCache(tempDir, regName);
       addTestRegistry(makeEntry(regName, bareUrl));
 
-      const packFile = join(tempDir, "bad-ver.json");
-      writeFileSync(packFile, JSON.stringify(makePackJson("good-pack", "abc")), "utf-8");
+      const packFile = join(tempDir, file);
+      writeFileSync(packFile, JSON.stringify(makePackJson("good-pack", version)), "utf-8");
 
       await expect(
-        publishPack({ registryName: regName, packFilePath: packFile, version: "abc" }),
-      ).rejects.toThrow(/semver/i);
-    });
-
-    it("should reject a version with only two parts ('1.2')", async () => {
-      const regName = `reg-${randomUUID().slice(0, 8)}`;
-      const { bareUrl } = createRegistryCache(tempDir, regName);
-      addTestRegistry(makeEntry(regName, bareUrl));
-
-      const packFile = join(tempDir, "two-part.json");
-      writeFileSync(packFile, JSON.stringify(makePackJson("good-pack", "1.2")), "utf-8");
-
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile, version: "1.2" }),
-      ).rejects.toThrow(/semver/i);
-    });
-
-    it("should reject a version with four parts ('1.2.3.4')", async () => {
-      const regName = `reg-${randomUUID().slice(0, 8)}`;
-      const { bareUrl } = createRegistryCache(tempDir, regName);
-      addTestRegistry(makeEntry(regName, bareUrl));
-
-      const packFile = join(tempDir, "four-part.json");
-      writeFileSync(packFile, JSON.stringify(makePackJson("good-pack", "1.2.3.4")), "utf-8");
-
-      await expect(
-        publishPack({ registryName: regName, packFilePath: packFile, version: "1.2.3.4" }),
+        publishPack({ registryName: regName, packFilePath: packFile, version }),
       ).rejects.toThrow(/semver/i);
     });
 

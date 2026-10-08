@@ -38,7 +38,7 @@ describe("database schema", () => {
       const version = db.prepare("SELECT MAX(version) as v FROM schema_version").get() as {
         v: number;
       };
-      expect(version.v).toBe(17);
+      expect(version.v).toBe(19);
     });
 
     it("should create expected indexes", () => {
@@ -131,111 +131,19 @@ describe("database schema", () => {
       runMigrations(db);
     });
 
-    it("should throw DatabaseError for zero dimensions", () => {
-      expect(() => createVectorTable(db, 0)).toThrow(DatabaseError);
-      expect(() => createVectorTable(db, 0)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw DatabaseError for negative dimensions", () => {
-      expect(() => createVectorTable(db, -1)).toThrow(DatabaseError);
-    });
-
-    it("should throw DatabaseError for dimensions > 10000", () => {
-      expect(() => createVectorTable(db, 10001)).toThrow(DatabaseError);
-      expect(() => createVectorTable(db, 10001)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw DatabaseError for non-integer dimensions", () => {
-      expect(() => createVectorTable(db, 3.5)).toThrow(DatabaseError);
+    it.each([
+      { label: "zero", dimensions: 0 },
+      { label: "negative", dimensions: -1 },
+      { label: "> 10000", dimensions: 10001 },
+      { label: "non-integer", dimensions: 3.5 },
+    ])("should throw DatabaseError for $label dimensions", ({ dimensions }) => {
+      expect(() => createVectorTable(db, dimensions)).toThrow(DatabaseError);
+      expect(() => createVectorTable(db, dimensions)).toThrow("Invalid vector dimensions");
     });
 
     it("should not throw for valid dimensions (vec0 may not be available)", () => {
       // In test environment without sqlite-vec, this logs a warning but doesn't throw
       expect(() => createVectorTable(db, 384)).not.toThrow();
-    });
-  });
-
-  describe("createVectorTable", () => {
-    it("should throw on invalid dimensions (zero)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 0)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on invalid dimensions (negative)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, -1)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on invalid dimensions (too large)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 10001)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on non-integer dimensions", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 3.5)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should not throw on valid dimensions (vec0 will fail without sqlite-vec but catches)", () => {
-      runMigrations(db);
-      // This won't create a real vector table (no sqlite-vec) but should not throw
-      createVectorTable(db, 384);
-    });
-  });
-
-  describe("createVectorTable", () => {
-    it("should throw on invalid dimensions (zero)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 0)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on invalid dimensions (negative)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, -1)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on invalid dimensions (too large)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 10001)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on non-integer dimensions", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 3.5)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should not throw on valid dimensions (vec0 will fail without sqlite-vec but catches)", () => {
-      runMigrations(db);
-      // This won't create a real vector table (no sqlite-vec) but should not throw
-      createVectorTable(db, 384);
-    });
-  });
-
-  describe("createVectorTable", () => {
-    it("should throw on invalid dimensions (zero)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 0)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on invalid dimensions (negative)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, -1)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on invalid dimensions (too large)", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 10001)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should throw on non-integer dimensions", () => {
-      runMigrations(db);
-      expect(() => createVectorTable(db, 3.5)).toThrow("Invalid vector dimensions");
-    });
-
-    it("should not throw on valid dimensions (vec0 will fail without sqlite-vec but catches)", () => {
-      runMigrations(db);
-      // This won't create a real vector table (no sqlite-vec) but should not throw
-      createVectorTable(db, 384);
     });
   });
 });

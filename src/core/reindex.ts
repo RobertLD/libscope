@@ -1,8 +1,9 @@
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { DatabaseError } from "../errors.js";
+import { ConfigError, DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
 import { createVectorTable } from "../db/schema.js";
+import { buildEmbeddingText, createChunkWriter } from "./indexing.js";
 
 export interface ReindexOptions {
   /** Only reindex chunks belonging to these document IDs. */
@@ -15,6 +16,8 @@ export interface ReindexOptions {
   batchSize?: number | undefined;
   /** Called after each batch completes. */
   onProgress?: ((progress: ReindexProgress) => void) | undefined;
+  /** Abort between batches; the returned promise rejects with the signal's reason. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface ReindexProgress {
@@ -34,6 +37,10 @@ export interface ReindexResult {
 interface ChunkRow {
   id: string;
   content: string;
+  /** Owning document's metadata, used in the embedding text (see buildEmbeddingText). */
+  title?: string | null;
+  library?: string | null;
+  version?: string | null;
 }
 
 /**
@@ -63,71 +70,96 @@ export async function reindex(
   // Ensure the vector table exists with the correct dimensions for this provider.
   // Delegates to schema.createVectorTable() — single source of truth for the DDL.
   try {
-    createVectorTable(db, provider.dimensions);
-  } catch {
-    log.warn("Could not ensure vector table — continuing anyway");
+    createVectorTable(db, provider);
+  } catch (err) {
+    if (err instanceof ConfigError) throw err;
+    log.warn({ err }, "Could not ensure vector table — continuing anyway");
   }
 
-  const deleteStmt = db.prepare("DELETE FROM chunk_embeddings WHERE chunk_id = ?");
-  const insertStmt = db.prepare("INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)");
+  const writer = createChunkWriter(db);
 
   let completed = 0;
   let failed = 0;
   const failedChunkIds: string[] = [];
+  const batchContext: BatchContext = { db, provider, writer, failedChunkIds };
 
-  for (let i = 0; i < total; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize);
-    const texts = batch.map((c) => c.content);
-    const ids = batch.map((c) => c.id);
-
-    try {
-      const embeddings = await provider.embedBatch(texts);
-
-      let batchFailed = 0;
-      let batchSucceeded = 0;
-      const upsert = db.transaction(() => {
-        for (let j = 0; j < ids.length; j++) {
-          const chunkId = ids[j]!;
-          const embedding = embeddings[j];
-          if (!embedding) {
-            failedChunkIds.push(chunkId);
-            batchFailed++;
-            continue;
-          }
-          try {
-            deleteStmt.run(chunkId);
-            const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-            insertStmt.run(chunkId, vecBuffer);
-            batchSucceeded++;
-          } catch (err) {
-            log.warn({ chunkId, err }, "Failed to update embedding for chunk");
-            failedChunkIds.push(chunkId);
-            batchFailed++;
-          }
-        }
-      });
-
-      upsert();
-      failed += batchFailed;
-      completed += batchSucceeded;
-    } catch (err) {
-      log.error({ err, batchStart: i }, "Batch embedding failed");
-      for (const id of ids) {
-        failedChunkIds.push(id);
-      }
-      failed += ids.length;
-    }
+  // One batch at a time: each batch writes in its own transaction.
+  const reindexFrom = async (start: number): Promise<void> => {
+    if (start >= total) return;
+    options.signal?.throwIfAborted();
+    const batch = chunks.slice(start, start + batchSize);
+    const counts = await reindexBatch(batch, start, batchContext);
+    failed += counts.failed;
+    completed += counts.succeeded;
 
     options.onProgress?.({
       total,
       completed: completed,
       failed,
-      currentChunkId: ids[ids.length - 1],
+      currentChunkId: batch.at(-1)?.id,
     });
-  }
+    return reindexFrom(start + batchSize);
+  };
+
+  await reindexFrom(0);
 
   log.info({ total, completed, failed }, "Reindex complete");
   return { total, completed, failed, failedChunkIds };
+}
+
+interface BatchContext {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  writer: ReturnType<typeof createChunkWriter>;
+  /** Receives the IDs of chunks that could not be re-embedded. */
+  failedChunkIds: string[];
+}
+
+/** Embed one batch of chunks and replace their vectors. Returns the per-batch counts. */
+async function reindexBatch(
+  batch: ChunkRow[],
+  batchStart: number,
+  ctx: BatchContext,
+): Promise<{ succeeded: number; failed: number }> {
+  const log = getLogger();
+  const { failedChunkIds, writer } = ctx;
+  const texts = batch.map((c) => buildEmbeddingText(c.content, c));
+  const ids = batch.map((c) => c.id);
+
+  try {
+    const embeddings = await ctx.provider.embedBatch(texts);
+
+    let batchFailed = 0;
+    let batchSucceeded = 0;
+    const upsert = ctx.db.transaction(() => {
+      for (let j = 0; j < ids.length; j++) {
+        const chunkId = ids[j]!;
+        const embedding = embeddings[j];
+        if (!embedding) {
+          failedChunkIds.push(chunkId);
+          batchFailed++;
+          continue;
+        }
+        try {
+          writer.replaceEmbedding(chunkId, embedding);
+          batchSucceeded++;
+        } catch (err) {
+          log.warn({ chunkId, err }, "Failed to update embedding for chunk");
+          failedChunkIds.push(chunkId);
+          batchFailed++;
+        }
+      }
+    });
+
+    upsert();
+    return { succeeded: batchSucceeded, failed: batchFailed };
+  } catch (err) {
+    log.error({ err, batchStart }, "Batch embedding failed");
+    for (const id of ids) {
+      failedChunkIds.push(id);
+    }
+    return { succeeded: 0, failed: ids.length };
+  }
 }
 
 /** Build and execute the chunk query applying optional filters. */
@@ -153,7 +185,7 @@ function queryChunks(db: Database.Database, options: ReindexOptions): ChunkRow[]
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const sql = `
-    SELECT c.id, c.content
+    SELECT c.id, c.content, d.title, d.library, d.version
     FROM chunks c
     JOIN documents d ON c.document_id = d.id
     ${where}

@@ -1,18 +1,21 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { ValidationError, DocumentNotFoundError } from "../errors.js";
+import { ValidationError, DocumentNotFoundError, NotFoundError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import { extractMarkdownLinks, extractWikilinks } from "./link-extractor.js";
 
-export type LinkType = "see_also" | "prerequisite" | "supersedes" | "related" | "references";
-
-const VALID_LINK_TYPES: ReadonlySet<string> = new Set<LinkType>([
+/** Every link type accepted by {@link createLink}. */
+export const LINK_TYPES = [
   "see_also",
   "prerequisite",
   "supersedes",
   "related",
   "references",
-]);
+] as const;
+
+export type LinkType = (typeof LINK_TYPES)[number];
+
+const VALID_LINK_TYPES: ReadonlySet<string> = new Set<string>(LINK_TYPES);
 
 export interface DocumentLink {
   id: string;
@@ -167,7 +170,7 @@ export function deleteLink(db: Database.Database, linkId: string): void {
   const log = createChildLogger({ operation: "deleteLink" });
   const result = db.prepare("DELETE FROM document_links WHERE id = ?").run(linkId);
   if (result.changes === 0) {
-    throw new ValidationError(`Link not found: ${linkId}`);
+    throw new NotFoundError(`Link not found: ${linkId}`, "LINK_NOT_FOUND");
   }
   log.info({ linkId }, "Document link deleted");
 }

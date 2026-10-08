@@ -4,17 +4,20 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { Readable } from "node:stream";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ValidationError } from "../errors.js";
+import { EmbeddingError, ValidationError } from "../errors.js";
+import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-meta.js";
 import { getLogger } from "../logger.js";
 import { checkDuplicate } from "./dedup.js";
 import type { DedupOptions } from "./dedup.js";
+import { deleteChunkEmbeddings } from "./documents.js";
 import { extractAndStoreDocumentLinks } from "./links.js";
+import { emitEvent } from "./events.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 
 export interface IndexDocumentInput {
   title: string;
   content: string;
-  sourceType: "library" | "topic" | "manual" | "model-generated";
+  sourceType: SourceType;
   library?: string | undefined;
   version?: string | undefined;
   topicId?: string | undefined;
@@ -334,9 +337,7 @@ function handleUrlDedup(
 
   log.info({ docId: existing.id, url }, "Document updated, re-indexing");
   try {
-    db.prepare(
-      "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-    ).run(existing.id);
+    deleteChunkEmbeddings(db, [existing.id]);
   } catch (err: unknown) {
     log.debug({ err, docId: existing.id }, "Skipped chunk_embeddings cleanup during re-index");
   }
@@ -375,36 +376,109 @@ function handleTitleLengthDedup(
   );
 }
 
+/** Document fields that are folded into every chunk's embedding text. */
+export interface EmbeddingMeta {
+  title?: string | null | undefined;
+  library?: string | null | undefined;
+  version?: string | null | undefined;
+}
+
 /** Build the metadata prefix for embedding enrichment. */
-function buildMetaPrefix(input: IndexDocumentInput): string {
+function buildMetaPrefix(meta: EmbeddingMeta): string {
   const parts: string[] = [];
-  if (input.title) parts.push(input.title);
-  if (input.library) parts.push(`Library: ${input.library}`);
-  if (input.version) parts.push(`Version: ${input.version}`);
+  if (meta.title) parts.push(meta.title);
+  if (meta.library) parts.push(`Library: ${meta.library}`);
+  if (meta.version) parts.push(`Version: ${meta.version}`);
   return parts.length > 0 ? parts.join(" | ") + "\n\n" : "";
 }
 
-/** Try to prepare an insert statement for chunk_embedding_metadata if the table exists. */
-function tryPrepareMetaInsert(
-  db: Database.Database,
-): Database.Statement<[string, string, string]> | null {
+/**
+ * The text that is embedded for a chunk: a title/library/version prefix plus the chunk.
+ * Every write path (index, update, reindex, pack install) must embed this text so that
+ * a chunk's vector does not depend on how its document was written.
+ */
+export function buildEmbeddingText(chunk: string, meta: EmbeddingMeta): string {
+  return buildMetaPrefix(meta) + chunk;
+}
+
+/** True when two documents' metadata would produce different embedding text. */
+export function embeddingMetaChanged(a: EmbeddingMeta, b: EmbeddingMeta): boolean {
+  return buildMetaPrefix(a) !== buildMetaPrefix(b);
+}
+
+/** Split document content into chunks, using windowed chunking for very large documents. */
+export function splitIntoChunks(content: string): string[] {
+  return content.length > STREAMING_THRESHOLD
+    ? chunkContentStreaming(content)
+    : chunkContent(content);
+}
+
+/** Embed a document's chunks using {@link buildEmbeddingText}. */
+export function embedChunks(
+  provider: EmbeddingProvider,
+  chunks: string[],
+  meta: EmbeddingMeta,
+): Promise<number[][]> {
+  return provider.embedBatch(chunks.map((c) => buildEmbeddingText(c, meta)));
+}
+
+function isNoSuchTableError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("no such table");
+}
+
+/** Writes chunk rows and vectors the same way for every write path. */
+export interface ChunkWriter {
+  /** Insert chunk rows for a document with their embeddings (matched by array index). */
+  insertChunks(documentId: string, chunks: string[], embeddings: ReadonlyArray<number[]>): void;
+  /** Replace the stored embedding of an existing chunk. */
+  replaceEmbedding(chunkId: string, embedding: number[]): void;
+}
+
+/**
+ * Create a {@link ChunkWriter}. Writes are synchronous; callers wrap them in a transaction.
+ * When the vector table does not exist (sqlite-vec not loaded), vectors are skipped.
+ */
+export function createChunkWriter(db: Database.Database): ChunkWriter {
   const log = getLogger();
-  try {
-    const exists = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_embedding_metadata'",
-      )
-      .get();
-    if (exists) {
-      return db.prepare(`
-        INSERT OR REPLACE INTO chunk_embedding_metadata (chunk_id, embedding_provider, embedding_model)
-        VALUES (?, ?, ?)
-      `);
+  const insertChunk = db.prepare(
+    "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",
+  );
+  let insertVec: Database.Statement | undefined;
+  let deleteVec: Database.Statement | undefined;
+
+  const writeVector = (chunkId: string, embedding: number[], replace: boolean): void => {
+    try {
+      if (replace) {
+        deleteVec ??= db.prepare("DELETE FROM chunk_embeddings WHERE chunk_id = ?");
+        deleteVec.run(chunkId);
+      }
+      insertVec ??= db.prepare("INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)");
+      insertVec.run(chunkId, Buffer.from(new Float32Array(embedding).buffer));
+    } catch (err) {
+      if (isVectorDimensionError(err)) {
+        throw new EmbeddingError(
+          `The embedding has ${embedding.length} dimensions, which does not match the vector index. ${REBUILD_VECTOR_INDEX_HINT}`,
+          err,
+        );
+      }
+      if (!isNoSuchTableError(err)) throw err;
+      log.debug({ chunkId }, "Skipped vector insertion (sqlite-vec not loaded)");
     }
-  } catch (err: unknown) {
-    log.debug({ err }, "Skipped chunk_embedding_metadata check");
-  }
-  return null;
+  };
+
+  return {
+    insertChunks(documentId, chunks, embeddings): void {
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkId = randomUUID();
+        insertChunk.run(chunkId, documentId, chunks[i] ?? "", i);
+        writeVector(chunkId, embeddings[i] ?? [], false);
+      }
+    },
+    replaceEmbedding(chunkId, embedding): void {
+      writeVector(chunkId, embedding, true);
+    },
+  };
 }
 
 /** Index a document: validate, chunk, embed, and store. */
@@ -432,33 +506,20 @@ export async function indexDocument(
   if (titleResult) return titleResult;
 
   const docId = randomUUID();
-  let chunks: string[];
-  if (input.preChunked && input.preChunked.length > 0) {
-    chunks = input.preChunked;
-  } else {
-    const useStreaming = input.content.length > STREAMING_THRESHOLD;
-    chunks = useStreaming ? chunkContentStreaming(input.content) : chunkContent(input.content);
-  }
+  const chunks =
+    input.preChunked && input.preChunked.length > 0
+      ? input.preChunked
+      : splitIntoChunks(input.content);
 
   log.info({ docId, title: input.title, chunkCount: chunks.length }, "Indexing document");
 
-  const metaPrefix = buildMetaPrefix(input);
-  const textsForEmbedding = chunks.map((c) => metaPrefix + c);
-  const embeddings = await provider.embedBatch(textsForEmbedding);
+  const embeddings = await embedChunks(provider, chunks, input);
 
   const insertDoc = db.prepare(`
     INSERT INTO documents (id, source_type, library, version, topic_id, title, content, url, submitted_by, content_hash, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertChunk = db.prepare(`
-    INSERT INTO chunks (id, document_id, content, chunk_index)
-    VALUES (?, ?, ?, ?)
-  `);
-  const insertEmbedding = db.prepare(`
-    INSERT INTO chunk_embeddings (chunk_id, embedding)
-    VALUES (?, ?)
-  `);
-  const insertMeta = tryPrepareMetaInsert(db);
+  const writer = createChunkWriter(db);
 
   const transaction = db.transaction(() => {
     insertDoc.run(
@@ -474,32 +535,30 @@ export async function indexDocument(
       contentHash,
       input.expiresAt ?? null,
     );
-
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkId = randomUUID();
-      insertChunk.run(chunkId, docId, chunks[i] ?? "", i);
-      try {
-        const vecBuffer = Buffer.from(new Float32Array(embeddings[i] ?? []).buffer);
-        insertEmbedding.run(chunkId, vecBuffer);
-        insertMeta?.run(chunkId, provider.name, "unknown");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!message.includes("no such table")) throw err;
-        log.debug({ chunkId }, "Skipped vector insertion (sqlite-vec not loaded)");
-      }
-    }
+    writer.insertChunks(docId, chunks, embeddings);
   });
 
   transaction();
   log.info({ docId, chunkCount: chunks.length }, "Document indexed successfully");
 
-  try {
-    extractAndStoreDocumentLinks(db, docId, input.content);
-  } catch (err) {
-    log.warn({ err, docId }, "Failed to extract document links");
-  }
+  storeDocumentLinks(db, docId, input.content);
 
+  emitEvent(db, "document.created", {
+    documentId: docId,
+    title: input.title,
+    library: input.library,
+    version: input.version,
+  });
   return { id: docId, chunkCount: chunks.length };
+}
+
+/** Extract markdown/wiki links from content and store them; failures are logged, not thrown. */
+export function storeDocumentLinks(db: Database.Database, docId: string, content: string): void {
+  try {
+    extractAndStoreDocumentLinks(db, docId, content);
+  } catch (err) {
+    getLogger().warn({ err, docId }, "Failed to extract document links");
+  }
 }
 
 export interface IndexFileOptions {
@@ -509,6 +568,48 @@ export interface IndexFileOptions {
   title?: string | undefined;
   format?: string | undefined;
   dedup?: "skip" | "warn" | "force" | undefined;
+  /** Overrides the source type derived from `library`/`topic`. */
+  sourceType?: IndexDocumentInput["sourceType"] | undefined;
+  /** ISO 8601 expiry timestamp (see IndexDocumentInput.expiresAt). */
+  expiresAt?: string | undefined;
+  /** Custom chunker; see {@link Chunker}. */
+  chunker?: Chunker | undefined;
+  /** Stored as the document URL; re-indexing a file with the same URL updates that document. */
+  url?: string | undefined;
+}
+
+/**
+ * Splits a document into chunks instead of the built-in markdown chunker. `source` is the
+ * file path or URL the content came from ("" for inline content). Return undefined to use
+ * the built-in chunker for this document.
+ */
+export type Chunker = (doc: {
+  content: string;
+  title: string;
+  source: string;
+}) => Promise<string[] | undefined> | string[] | undefined;
+
+/** Document source types. */
+export const SOURCE_TYPES = ["library", "topic", "manual", "model-generated"] as const;
+export type SourceType = (typeof SOURCE_TYPES)[number];
+
+/**
+ * The one rule for a document's default source type, used by every write path
+ * (indexFile, ingest, and through ingest the CLI, MCP, REST and SDK):
+ *   1. an explicit `sourceType` wins;
+ *   2. else "library" when a library name is given;
+ *   3. else "topic" when a topic is given;
+ *   4. else "manual".
+ * "model-generated" is never inferred; callers set it explicitly.
+ */
+export function resolveSourceType(input: {
+  sourceType?: SourceType | undefined;
+  library?: string | undefined;
+  topic?: string | undefined;
+}): SourceType {
+  if (input.sourceType) return input.sourceType;
+  if (input.library) return "library";
+  return input.topic ? "topic" : "manual";
 }
 
 /**
@@ -529,27 +630,31 @@ export async function indexFile(
       : undefined;
   const effectiveName = normalizedFormat ? `file${normalizedFormat}` : filePath;
   const parser = getParserForFile(effectiveName);
-
-  if (!parser) {
-    const supported = getSupportedExtensions().join(", ");
-    throw new ValidationError(
-      `Unsupported file format: "${filePath}". Supported extensions: ${supported}`,
+  const unsupported = (): ValidationError =>
+    new ValidationError(
+      `Unsupported file format: "${filePath}". Supported extensions: ${getSupportedExtensions().join(", ")}`,
     );
-  }
+  // Without a parser, a custom chunker may still take the file as UTF-8 text (e.g. source code).
+  if (!parser && !options.chunker) throw unsupported();
 
-  log.info({ filePath, parser: parser.extensions[0] }, "Parsing file for indexing");
+  log.info({ filePath, parser: parser?.extensions[0] ?? "chunker" }, "Parsing file for indexing");
   const buffer = readFileSync(filePath);
-  const content = await parser.parse(buffer);
+  const content = parser ? await parser.parse(buffer) : buffer.toString("utf-8");
 
   const title = options.title ?? basename(filePath).replace(/\.[^.]+$/, "");
+  const preChunked = await options.chunker?.({ content, title, source: filePath });
+  if (!parser && !preChunked) throw unsupported();
 
   return indexDocument(db, provider, {
     title,
     content,
-    sourceType: options.library ? "library" : options.topic ? "topic" : "manual",
+    sourceType: resolveSourceType(options),
     library: options.library,
     version: options.version,
     topicId: options.topic,
     dedup: options.dedup,
+    expiresAt: options.expiresAt,
+    preChunked,
+    url: options.url,
   });
 }

@@ -7,8 +7,10 @@ import { addTagsToDocument } from "../core/tags.js";
 import { deleteDocument } from "../core/documents.js";
 import { getLogger } from "../logger.js";
 import { FetchError, ValidationError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
+import { trimTrailingSlashes } from "../utils/strings.js";
 import { fetchWithRetry } from "./http-utils.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 export interface ConfluenceConfig {
   baseUrl: string;
@@ -112,17 +114,25 @@ async function confluenceFetch<T>(url: string, auth: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function fetchAllPages<T>(initialUrl: string, baseUrl: string, auth: string): Promise<T[]> {
+async function fetchAllPages<T>(
+  initialUrl: string,
+  baseUrl: string,
+  auth: string,
+  signal?: AbortSignal,
+): Promise<T[]> {
   const all: T[] = [];
-  let url: string | undefined = initialUrl;
 
-  while (url) {
-    const resp: PaginatedResponse<T> = await confluenceFetch<PaginatedResponse<T>>(url, auth);
+  // One page per call; follows the "next" link until there is none.
+  const fetchFrom = async (url: string | undefined): Promise<void> => {
+    if (!url) return;
+    signal?.throwIfAborted();
+    const resp = await confluenceFetch<PaginatedResponse<T>>(url, auth);
     all.push(...resp.results);
     const next: string | undefined = resp._links?.next;
-    url = next ? `${baseUrl}${next}` : undefined;
-  }
+    return fetchFrom(next ? `${baseUrl}${next}` : undefined);
+  };
 
+  await fetchFrom(initialUrl);
   return all;
 }
 
@@ -137,11 +147,12 @@ function replaceStructuredMacros(
 ): string {
   const OPEN = "<ac:structured-macro";
   const CLOSE = "</ac:structured-macro>";
+  const lower = html.toLowerCase();
   let result = "";
   let pos = 0;
 
   while (pos < html.length) {
-    const start = html.toLowerCase().indexOf(OPEN.toLowerCase(), pos);
+    const start = lower.indexOf(OPEN, pos);
     if (start === -1) {
       result += html.slice(pos);
       break;
@@ -152,7 +163,7 @@ function replaceStructuredMacros(
       break;
     }
     const attrs = html.slice(start, tagEnd + 1);
-    const closeStart = html.toLowerCase().indexOf(CLOSE.toLowerCase(), tagEnd + 1);
+    const closeStart = lower.indexOf(CLOSE, tagEnd + 1);
     if (closeStart === -1) {
       result += html.slice(pos);
       break;
@@ -174,11 +185,14 @@ function replaceStructuredMacros(
 function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => string): string {
   const openPrefix = `<${tagName}`;
   const closeTag = `</${tagName}>`;
+  const lower = html.toLowerCase();
+  const lowerOpen = openPrefix.toLowerCase();
+  const lowerClose = closeTag.toLowerCase();
   let result = "";
   let pos = 0;
 
   while (pos < html.length) {
-    const start = html.toLowerCase().indexOf(openPrefix.toLowerCase(), pos);
+    const start = lower.indexOf(lowerOpen, pos);
     if (start === -1) {
       result += html.slice(pos);
       break;
@@ -188,7 +202,7 @@ function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => s
       result += html.slice(pos);
       break;
     }
-    const closeStart = html.toLowerCase().indexOf(closeTag.toLowerCase(), tagEnd + 1);
+    const closeStart = lower.indexOf(lowerClose, tagEnd + 1);
     if (closeStart === -1) {
       result += html.slice(pos);
       break;
@@ -204,10 +218,11 @@ function replaceTagPairs(html: string, tagName: string, cb: (inner: string) => s
 function extractTagContent(html: string, tagName: string): string {
   const open = `<${tagName}>`;
   const close = `</${tagName}>`;
-  const start = html.toLowerCase().indexOf(open.toLowerCase());
+  const lower = html.toLowerCase();
+  const start = lower.indexOf(open.toLowerCase());
   if (start === -1) return "";
   const contentStart = start + open.length;
-  const end = html.toLowerCase().indexOf(close.toLowerCase(), contentStart);
+  const end = lower.indexOf(close.toLowerCase(), contentStart);
   if (end === -1) return "";
   return html.slice(contentStart, end);
 }
@@ -218,11 +233,12 @@ function extractTagContent(html: string, tagName: string): string {
  */
 function removeSelfClosingMacros(html: string, nameTest: RegExp): string {
   const OPEN = "<ac:structured-macro";
+  const lower = html.toLowerCase();
   let result = "";
   let pos = 0;
 
   while (pos < html.length) {
-    const start = html.toLowerCase().indexOf(OPEN.toLowerCase(), pos);
+    const start = lower.indexOf(OPEN, pos);
     if (start === -1) {
       result += html.slice(pos);
       break;
@@ -443,26 +459,29 @@ interface SyncConfluenceSpaceOptions {
   urls: ApiUrls;
   auth: string;
   result: ConfluenceSyncResult;
+  signal: AbortSignal | undefined;
 }
 
 /** Sync all pages within a single Confluence space. */
 async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise<void> {
-  const { db, provider, space, confluenceType, base, urls, auth, result } = options;
+  const { db, provider, space, confluenceType, base, urls, auth, result, signal } = options;
   const log = getLogger();
   const topic = createTopic(db, { name: space.name });
 
   let pages: ConfluencePage[];
   try {
     const spaceRef = confluenceType === "server" ? space.key : space.id;
-    pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth);
+    pages = await fetchAllPages<ConfluencePage>(urls.spacePages(spaceRef), base, auth, signal);
   } catch (err) {
+    if (signal?.aborted) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     log.error({ spaceKey: space.key, err }, "Failed to fetch pages for space");
     result.errors.push({ page: `space:${space.key}`, error: msg });
     return;
   }
 
-  for (const page of pages) {
+  await forEachSequential(pages, async (page) => {
+    signal?.throwIfAborted();
     try {
       const outcome = await indexConfluencePage({
         db,
@@ -474,16 +493,24 @@ async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise
         urls,
         auth,
       });
-      if (outcome === "indexed") result.pagesIndexed++;
-      if (outcome === "updated") {
-        result.pagesUpdated++;
-        result.pagesIndexed++;
-      }
+      countPageOutcome(outcome, result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error({ pageId: page.id, title: page.title, err }, "Failed to index page");
       result.errors.push({ page: page.title, error: msg });
     }
+  });
+}
+
+/** Add one page's outcome to the sync counts (an updated page also counts as indexed). */
+function countPageOutcome(
+  outcome: Awaited<ReturnType<typeof indexConfluencePage>>,
+  result: ConfluenceSyncResult,
+): void {
+  if (outcome === "indexed") result.pagesIndexed++;
+  if (outcome === "updated") {
+    result.pagesUpdated++;
+    result.pagesIndexed++;
   }
 }
 
@@ -498,7 +525,7 @@ function validateConfluenceConfig(config: ConfluenceConfig): void {
   const confluenceType = config.type ?? "cloud";
   if (confluenceType === "cloud" && !config.email?.trim()) {
     throw new ValidationError(
-      "Confluence email is required for Cloud. For Server/Data Center, use --type server",
+      "Confluence email is required for Cloud. For Server/Data Center, use --server",
     );
   }
 }
@@ -507,6 +534,27 @@ export async function syncConfluence(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: ConfluenceConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<ConfluenceSyncResult> {
+  return trackSync(
+    db,
+    "confluence",
+    options.syncName ?? trimTrailingSlashes(config.baseUrl),
+    () => runConfluenceSync(db, provider, config, options.signal),
+    (result) => ({
+      added: result.pagesIndexed,
+      updated: result.pagesUpdated,
+      deleted: 0,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runConfluenceSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: ConfluenceConfig,
+  signal: AbortSignal | undefined,
 ): Promise<ConfluenceSyncResult> {
   const log = getLogger();
 
@@ -514,67 +562,54 @@ export async function syncConfluence(
 
   const confluenceType = config.type ?? "cloud";
   const auth = buildAuthHeader(confluenceType, config.email, config.token);
-  let base = config.baseUrl;
-  while (base.endsWith("/")) base = base.slice(0, -1);
+  const base = trimTrailingSlashes(config.baseUrl);
   const urls = getApiUrls(base, confluenceType);
-  const syncId = startSync(db, "confluence", base);
 
-  try {
-    const result: ConfluenceSyncResult = {
-      spaces: 0,
-      pagesIndexed: 0,
-      pagesUpdated: 0,
-      errors: [],
-    };
+  const result: ConfluenceSyncResult = {
+    spaces: 0,
+    pagesIndexed: 0,
+    pagesUpdated: 0,
+    errors: [],
+  };
 
-    log.info({ baseUrl: base }, "Starting Confluence sync");
+  log.info({ baseUrl: base }, "Starting Confluence sync");
 
-    const allSpaces = await fetchAllPages<ConfluenceSpace>(urls.spaces, base, auth);
-    const excludeSet = new Set(config.excludeSpaces ?? []);
-    const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
-    const spacesToSync = allSpaces.filter((s) => {
-      if (excludeSet.has(s.key)) return false;
-      return requestedAll || config.spaces.includes(s.key);
-    });
+  const allSpaces = await fetchAllPages<ConfluenceSpace>(urls.spaces, base, auth, signal);
+  const excludeSet = new Set(config.excludeSpaces ?? []);
+  const requestedAll = config.spaces.length === 1 && config.spaces[0] === "all";
+  const spacesToSync = allSpaces.filter((s) => {
+    if (excludeSet.has(s.key)) return false;
+    return requestedAll || config.spaces.includes(s.key);
+  });
 
-    result.spaces = spacesToSync.length;
-    log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
+  result.spaces = spacesToSync.length;
+  log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
 
-    for (const space of spacesToSync) {
-      await syncConfluenceSpace({
-        db,
-        provider,
-        space,
-        confluenceType,
-        base,
-        urls,
-        auth,
-        result,
-      });
-    }
+  await forEachSequential(spacesToSync, (space) =>
+    syncConfluenceSpace({
+      db,
+      provider,
+      space,
+      confluenceType,
+      base,
+      urls,
+      auth,
+      result,
+      signal,
+    }),
+  );
 
-    log.info(
-      {
-        spaces: result.spaces,
-        indexed: result.pagesIndexed,
-        updated: result.pagesUpdated,
-        errors: result.errors.length,
-      },
-      "Confluence sync complete",
-    );
-
-    completeSync(db, syncId, {
-      added: result.pagesIndexed,
+  log.info(
+    {
+      spaces: result.spaces,
+      indexed: result.pagesIndexed,
       updated: result.pagesUpdated,
-      deleted: 0,
-      errored: result.errors.length,
-    });
+      errors: result.errors.length,
+    },
+    "Confluence sync complete",
+  );
 
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
-  }
+  return result;
 }
 
 export function disconnectConfluence(db: Database.Database): number {

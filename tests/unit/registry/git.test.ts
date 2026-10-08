@@ -16,12 +16,13 @@ const gitEnv = {
 import {
   readIndex,
   createRegistryRepo,
-  checkGitAvailable,
+  git,
   cloneRegistry,
   fetchRegistry,
   commitAndPush,
   clearIndexCache,
 } from "../../../src/registry/git.js";
+import { ConfigError } from "../../../src/errors.js";
 
 describe("registry git helpers", () => {
   let tempDir: string;
@@ -35,10 +36,15 @@ describe("registry git helpers", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  describe("checkGitAvailable", () => {
-    it("should return true when git is available", async () => {
-      const result = await checkGitAvailable();
-      expect(result).toBe(true);
+  describe("git", () => {
+    it("reports a missing git binary as a ConfigError", async () => {
+      const savedPath = process.env["PATH"];
+      process.env["PATH"] = tempDir;
+      try {
+        await expect(git(["--version"])).rejects.toBeInstanceOf(ConfigError);
+      } finally {
+        process.env["PATH"] = savedPath;
+      }
     });
   });
 
@@ -221,6 +227,27 @@ describe("registry git helpers", () => {
       const log = execSync("git log --oneline", { cwd: repoPath, encoding: "utf-8" });
       expect(log).toContain("Initial registry structure");
     });
+
+    it("should commit on main even when git's default branch is master", async () => {
+      const repoPath = join(tempDir, "main-registry");
+      const saved = { ...process.env };
+      Object.assign(process.env, {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "init.defaultBranch",
+        GIT_CONFIG_VALUE_0: "master",
+      });
+      try {
+        await createRegistryRepo(repoPath);
+      } finally {
+        process.env = saved;
+      }
+
+      const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: repoPath,
+        encoding: "utf-8",
+      });
+      expect(branch.trim()).toBe("main");
+    });
   });
 
   describe("cloneRegistry + fetchRegistry", () => {
@@ -340,6 +367,30 @@ describe("registry git helpers", () => {
       execSync(`git clone "${bareDir}" "${verifyDir}"`, { stdio: "pipe" });
       const content = readFileSync(join(verifyDir, "file.txt"), "utf-8");
       expect(content).toBe("updated");
+    });
+
+    it("should push a new branch that has no upstream yet", async () => {
+      const bareDir = join(tempDir, "branch-bare.git");
+      execSync(`git init --bare "${bareDir}"`, { stdio: "pipe" });
+      const workDir = join(tempDir, "branch-work");
+      execSync(`git clone "${bareDir}" "${workDir}"`, { stdio: "pipe" });
+      writeFileSync(join(workDir, "file.txt"), "initial", "utf-8");
+      execSync("git add . && git commit -m 'init'", { cwd: workDir, stdio: "pipe", env: gitEnv });
+      execSync("git push origin HEAD", { cwd: workDir, stdio: "pipe" });
+
+      execSync("git checkout -b feature/add-pack", { cwd: workDir, stdio: "pipe" });
+      writeFileSync(join(workDir, "file.txt"), "on branch", "utf-8");
+      const saved = { ...process.env };
+      // Ignore the user's git config (push.autoSetupRemote would hide the missing upstream)
+      Object.assign(process.env, { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" });
+      try {
+        await commitAndPush(workDir, "branch commit");
+      } finally {
+        process.env = saved;
+      }
+
+      const branches = execSync("git branch --list", { cwd: bareDir, encoding: "utf-8" });
+      expect(branches).toContain("feature/add-pack");
     });
   });
 

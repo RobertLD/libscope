@@ -1,6 +1,6 @@
 # Code Indexing
 
-LibScope Lite includes a tree-sitter powered code chunker that splits source files at function and class boundaries. This produces semantically meaningful chunks that are far better for embedding than naive line-count splits.
+`libscope/lite` includes a tree-sitter code chunker that splits source files at function and class boundaries. These chunks embed much better than splits at a fixed line count. Use `createCodeChunker()` to index code with `LibScope`, or `TreeSitterChunker` to get the chunks with line numbers.
 
 ## Why Code-Aware Chunking Matters
 
@@ -14,35 +14,35 @@ The tree-sitter chunker uses the Abstract Syntax Tree (AST) to split at **semant
 
 ## Installation
 
-Tree-sitter is an **optional peer dependency**. Install the packages for the languages you need:
+Tree-sitter is an **optional peer dependency**. Install the packages for the languages you need, with the versions that libscope supports (the latest grammar releases need a newer tree-sitter, and npm refuses to install them next to libscope):
 
 ```bash
 # Core tree-sitter parser
-npm install tree-sitter
+npm install tree-sitter@0.21
 
 # Language grammars (install only what you need)
-npm install tree-sitter-typescript   # TypeScript + TSX
-npm install tree-sitter-javascript   # JavaScript, JSX, MJS, CJS
-npm install tree-sitter-python       # Python
-npm install tree-sitter-c-sharp      # C#
-npm install tree-sitter-cpp          # C++ (also used for .h/.hpp headers)
-npm install tree-sitter-c            # C
-npm install tree-sitter-go           # Go
+npm install tree-sitter-typescript@0.21   # TypeScript + TSX
+npm install tree-sitter-javascript@0.21   # JavaScript, JSX, MJS, CJS
+npm install tree-sitter-python@0.21       # Python
+npm install tree-sitter-c-sharp@0.21      # C#
+npm install tree-sitter-cpp@0.22          # C++ (also used for .h/.hpp headers)
+npm install tree-sitter-c@0.21            # C
+npm install tree-sitter-go@0.21           # Go
 ```
 
-If tree-sitter is not installed, `TreeSitterChunker.chunk()` throws a `ValidationError` with a clear install message. All other LibScope Lite features work normally without tree-sitter.
+If tree-sitter is not installed, `TreeSitterChunker.chunk()` throws a `ValidationError` with the install command, and `createCodeChunker()` falls back to the built-in chunker. Everything else works without tree-sitter.
 
 ## Supported Languages
 
-| Language | Aliases | Grammar Package |
-|---|---|---|
-| TypeScript | `typescript`, `ts`, `tsx` | `tree-sitter-typescript` |
+| Language   | Aliases                                 | Grammar Package          |
+| ---------- | --------------------------------------- | ------------------------ |
+| TypeScript | `typescript`, `ts`, `tsx`               | `tree-sitter-typescript` |
 | JavaScript | `javascript`, `js`, `jsx`, `mjs`, `cjs` | `tree-sitter-javascript` |
-| Python | `python`, `py` | `tree-sitter-python` |
-| C# | `csharp`, `cs` | `tree-sitter-c-sharp` |
-| C++ | `cpp`, `cc`, `cxx`, `hpp`, `h` | `tree-sitter-cpp` |
-| C | `c` | `tree-sitter-c` |
-| Go | `go` | `tree-sitter-go` |
+| Python     | `python`, `py`                          | `tree-sitter-python`     |
+| C#         | `csharp`, `cs`                          | `tree-sitter-c-sharp`    |
+| C++        | `cpp`, `cc`, `cxx`, `hpp`, `h`          | `tree-sitter-cpp`        |
+| C          | `c`                                     | `tree-sitter-c`          |
+| Go         | `go`                                    | `tree-sitter-go`         |
 
 Aliases are case-insensitive: `"TS"`, `"ts"`, `"TypeScript"` all resolve to TypeScript.
 
@@ -78,7 +78,7 @@ export class AuthService extends EventEmitter {
 
   private async generateToken(userId: string): Promise<string> {
     // ... token generation logic
-    return `tok_${userId}_${Date.now()}`;
+    return "tok_" + userId + "_" + Date.now();
   }
 }
 `;
@@ -90,21 +90,18 @@ Each chunk in the result:
 
 ```ts
 interface CodeChunk {
-  content: string;    // source text of the chunk
-  startLine: number;  // 1-based start line in the original file
-  endLine: number;    // 1-based end line in the original file
-  nodeType: string;   // tree-sitter node type (see below)
+  content: string; // source text of the chunk
+  startLine: number; // 1-based start line in the original file
+  endLine: number; // 1-based end line in the original file
+  nodeType: string; // tree-sitter node type (see below)
 }
 ```
 
-For the example above, you'd get chunks like:
+For the example above, the class fits in one chunk (under 1500 characters). The import before it is prepended to it as a preamble:
 
 ```
-chunk[0]: "import { EventEmitter } from 'events';"
-          startLine: 2, endLine: 2, nodeType: "preamble"
-
-chunk[1]: "export class AuthService extends EventEmitter { ... }"
-          startLine: 4, endLine: 25, nodeType: "class_declaration"
+chunk[0]: "import { EventEmitter } from \"events\";\n\nexport class AuthService ... }"
+          startLine: 2, endLine: 23, nodeType: "export_statement"
 ```
 
 ## Node Types
@@ -112,6 +109,7 @@ chunk[1]: "export class AuthService extends EventEmitter { ... }"
 The chunker extracts these node types per language:
 
 **TypeScript / TSX:**
+
 - `function_declaration` — `function foo() {}`
 - `class_declaration` — `class Foo {}`
 - `method_definition` — methods inside a class
@@ -122,14 +120,17 @@ The chunker extracts these node types per language:
 - `enum_declaration` — TypeScript enums
 
 **JavaScript / JSX:**
+
 - `function_declaration`, `class_declaration`, `method_definition`, `export_statement`, `lexical_declaration`
 
 **Python:**
+
 - `function_definition` — `def foo():`
 - `class_definition` — `class Foo:`
 - `decorated_definition` — `@decorator\ndef foo():`
 
 **C#:**
+
 - `method_declaration` — `public void Foo() {}`
 - `class_declaration` — `class Foo {}`
 - `interface_declaration` — `interface IFoo {}`
@@ -138,16 +139,19 @@ The chunker extracts these node types per language:
 - `constructor_declaration` — `public Foo() {}`
 
 **C++:**
+
 - `function_definition` — `void foo() {}`
 - `class_specifier` — `class Foo {}`
 - `struct_specifier` — `struct Point {}`
 - `namespace_definition` — `namespace MyNS {}`
 
 **C:**
+
 - `function_definition` — `void foo() {}`
 - `struct_specifier` — `struct Point {}`
 
 **Go:**
+
 - `function_declaration` — `func Foo() {}`
 - `method_declaration` — `func (r *Receiver) Foo() {}`
 - `type_declaration` — `type Foo struct {}` / `type Bar interface {}`
@@ -184,57 +188,34 @@ When a class is split, each method becomes its own chunk. If a single method is 
 
 If the source has no declaration nodes (e.g., a config file, a `.d.ts` with only type exports), the entire source is returned as a single chunk with `nodeType: "module"`.
 
-## Integrating with LibScope Lite
+## Indexing code with LibScope
 
-The typical pattern for indexing a codebase:
+`createCodeChunker()` returns a `Chunker` for `createLite()` or `LibScope.create()`. `add()` then splits each document with tree-sitter. The language comes from the extension of the file path, URL or title (or the `language` option). Documents in other languages use the built-in chunker.
 
 ```ts
-import { LibScopeLite, TreeSitterChunker } from "libscope/lite";
+import { createLite, createCodeChunker } from "libscope/lite";
 import { readdir, readFile } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 
-const chunker = new TreeSitterChunker();
-const lite = new LibScopeLite({ dbPath: "./my-project.db" });
+const scope = createLite({ dbPath: "./my-project.db", chunker: createCodeChunker() });
 
-async function indexDirectory(dir: string): Promise<void> {
-  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
-
-  const tasks = entries
+const entries = await readdir("./src", { recursive: true, withFileTypes: true });
+await Promise.all(
+  entries
     .filter((e) => e.isFile())
-    .map(async (entry) => {
-      const filePath = join(entry.parentPath, entry.name);
-      const ext = extname(entry.name).slice(1); // "ts", "py", etc.
-      const source = await readFile(filePath, "utf8");
+    .map(async (e) => {
+      const path = join(e.parentPath, e.name);
+      await scope.add({ title: path, content: await readFile(path, "utf8"), library: "src" });
+    }),
+);
 
-      if (chunker.supports(ext)) {
-        // Code-aware chunking
-        const chunks = await chunker.chunk(source, ext);
-        return chunks.map((c) => ({
-          title: `${filePath}:${c.startLine}-${c.endLine}`,
-          content: c.content,
-          url: filePath,
-          library: "src",
-        }));
-      }
+const { items } = await scope.search("authentication token generation");
+for (const r of items) console.log(`${r.title} (score: ${r.score.toFixed(3)})`);
 
-      // Plain text fallback for unsupported files
-      return [{ title: filePath, content: source, url: filePath, library: "src" }];
-    });
-
-  const docGroups = await Promise.all(tasks);
-  await lite.indexBatch(docGroups.flat(), { concurrency: 4 });
-}
-
-await indexDirectory("./src");
-console.log("Indexed. Searching...");
-
-const results = await lite.search("authentication token generation");
-for (const r of results) {
-  console.log(`${r.title} (score: ${r.score.toFixed(3)})`);
-}
-
-lite.close();
+scope.close();
 ```
+
+`scope.add(path)` does not accept source-code extensions such as `.ts` or `.py` (only document formats). Read the file and pass its `content` with the path as `title`, as above.
 
 ## Caching
 
@@ -263,15 +244,16 @@ try {
   const chunks = await chunker.chunk(source, "rust");
 } catch (err) {
   if (err instanceof ValidationError) {
-    // "Unsupported language for code chunking: 'rust'"
-    // "Code chunking requires the 'tree-sitter' package. Install it with: ..."
+    // Unsupported language for code chunking: "rust"
+    // Code chunking requires the "tree-sitter" package. Install it with: ...
     console.warn(err.message);
   }
 }
 ```
 
 Two error conditions:
-1. **Unsupported language** — throws immediately with the list of supported aliases
+
+1. **Unsupported language** — throws immediately (the aliases are in [Supported Languages](#supported-languages))
 2. **tree-sitter not installed** — throws with the exact `npm install` command
 
 Both are `ValidationError` from LibScope's error hierarchy.

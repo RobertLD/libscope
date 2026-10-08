@@ -7,16 +7,16 @@ Authentication is handled entirely by git. If you have SSH keys or an HTTPS cred
 ## Adding a Registry
 
 ```bash
-# Add a public registry
+# Add a public registry (the name "libscope-registry" comes from the URL)
 libscope registry add https://github.com/org/libscope-registry.git
 
-# Add with a custom alias and priority
-libscope registry add git@github.com:team/internal-packs.git --name team-packs --priority 5
+# Add with a custom name
+libscope registry add git@github.com:team/internal-packs.git --name team-packs
 
-# Add with auto-sync every 24 hours
-libscope registry add https://github.com/org/registry.git --sync-interval 86400
+# Add a registry on a local or shared disk
+libscope registry add file:///srv/libscope-packs.git
 
-# Add without cloning immediately
+# Add without cloning now
 libscope registry add https://github.com/org/registry.git --no-sync
 
 # List configured registries
@@ -26,7 +26,7 @@ libscope registry list
 libscope registry remove team-packs
 ```
 
-On first add, libscope clones the registry's index locally to `~/.libscope/registries/<name>/`. Subsequent syncs fetch only changes.
+When you add a registry, libscope clones it to `~/.libscope/registries/<name>/`. Later syncs fetch only changes.
 
 ## Searching Registries
 
@@ -35,33 +35,36 @@ On first add, libscope clones the registry's index locally to `~/.libscope/regis
 libscope registry search "react"
 
 # Search a specific registry
-libscope registry search "react" -r official
+libscope registry search "react" --registry official
 ```
 
 Results show the pack name, description, tags, latest version, and which registry it came from.
 
 ## Installing Packs from a Registry
 
-The existing `pack install` command now resolves packs from your configured registries:
+`pack install` finds pack names in your configured registries:
 
 ```bash
 # Install the latest version
 libscope pack install react-docs
 
 # Install a specific version
-libscope pack install react-docs --version 1.2.0
-# or
 libscope pack install react-docs@1.2.0
 
-# Install from a specific registry (skips conflict resolution)
+# Install from a specific registry
 libscope pack install react-docs --registry official
+
+# List the packs in all registries
+libscope pack list --available
 ```
 
-If multiple registries contain a pack with the same name, libscope resolves the conflict by priority (lower `priority` value wins). You can override this with `--registry <name>`.
+If more than one registry has a pack with the same name, the install fails and the error names the registries. Run it again with `--registry <name>`.
+
+Before it installs a pack, libscope verifies the pack file against the checksum in the registry.
 
 ### Offline Behavior
 
-If a registry is unreachable during install, libscope falls back to the cached index with a warning. If the registry has never been synced, it tells you to run `libscope registry sync` when online.
+Searching, listing and installing read only the local copies of the registries. They do not use the network. A registry that was never synced is skipped with a warning that tells you to run `libscope registry sync`.
 
 ## Syncing Registries
 
@@ -73,7 +76,7 @@ libscope registry sync
 libscope registry sync official
 ```
 
-Registries also auto-sync when the local cache is older than the configured `syncInterval` (in seconds). This happens automatically before pack installs when the cache is stale.
+Registries are synced only when you run `registry sync` (or `registry add`). If a registry cannot be reached, libscope keeps its local copy and reports it as offline.
 
 ## Creating Your Own Registry
 
@@ -89,16 +92,16 @@ This creates a git repo with the correct folder structure (`index.json`, `packs/
 
 ```bash
 # Publish a pack file to a registry you own
-libscope registry publish ./my-pack.json -r my-registry --version 1.0.0
+libscope registry publish ./my-pack.json --registry my-registry --pack-version 1.0.0
 
-# Auto-bump patch version (from latest in registry)
-libscope registry publish ./my-pack.json -r my-registry
+# Publish the next patch version (from the latest in the registry)
+libscope registry publish ./my-pack.json.gz --registry my-registry
 
 # Submit a pack to someone else's registry (creates a feature branch)
-libscope registry publish ./my-pack.json -r community --submit
+libscope registry publish ./my-pack.json --registry community --submit
 
 # Unpublish a specific version
-libscope registry unpublish my-pack -r my-registry --version 1.0.0
+libscope registry unpublish my-pack@1.0.0 --registry my-registry
 ```
 
 Publishing assembles the pack into the registry's folder structure, generates a SHA-256 checksum, updates `index.json` and `pack.json`, and commits + pushes. The `--submit` flag pushes to a `feature/add-<pack-name>` branch instead — you then create a pull request manually.
@@ -109,13 +112,12 @@ Every published pack version includes a `checksum.sha256` file. On install, libs
 
 ## Versioning
 
-Pack versions follow [semver](https://semver.org/) (e.g. `1.0.0`, `1.2.3`). When you publish without `--version`, the patch version is auto-bumped from the latest. Old versions are preserved in the registry. `pack install` defaults to the latest version unless you specify one.
+Pack versions follow [semver](https://semver.org/) (e.g. `1.0.0`, `1.2.3`). When you publish without `--pack-version`, the patch version is auto-bumped from the latest. Old versions are preserved in the registry. `pack install` defaults to the latest version unless you specify one with `name@version`.
 
-## MCP Usage
+## Other Interfaces
 
-Your AI assistant can also work with registries through MCP:
-
-- `install-pack` — install from a registry by name
-- `list-packs --available` — browse packs available in registries
+- **Node.js API:** `scope.registries.list()`, `.add()`, `.remove()`, `.sync()`, `.search()`, `.create()`, `.publish()`, `.unpublish()`, and `scope.packs.install({ pack, registry })`.
+- **REST API:** `GET /api/v1/registries`, `GET /api/v1/registries/search`, `GET /api/v1/packs?available=true` and `POST /api/v1/packs` (read-only access to registries; add, sync and publish with the CLI or the Node.js API).
+- **MCP (admin toolset):** `install-pack` installs from a registry by name, and `list-packs` with `available: true` browses the packs in the registries.
 
 See the [Registry Reference](/reference/registry) for complete schema details, configuration format, and all CLI flags.

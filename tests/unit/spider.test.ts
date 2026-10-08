@@ -81,6 +81,18 @@ describe("spiderUrl", () => {
     expect(page.depth).toBe(0);
   });
 
+  it("decodes HTML character references in the page title", async () => {
+    mockFetchRaw.mockImplementation((url: string) => {
+      if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
+      return Promise.resolve(pageResponse(htmlPage("Docs &#8212; A &amp; B"), url));
+    });
+
+    const gen = spiderUrl("https://example.com/", { maxPages: 1, requestDelay: 0 });
+    const result = await gen.next();
+    const page = result.value as { title: string };
+    expect(page.title).toBe("Docs — A & B");
+  });
+
   it("follows links up to maxDepth", async () => {
     mockFetchRaw.mockImplementation((url: string) => {
       if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
@@ -165,8 +177,8 @@ describe("spiderUrl", () => {
 
     // Should only visit a and b once each
     const urls = pages.map((p) => p.url);
-    expect(urls.filter((u) => u === "https://example.com/a").length).toBe(1);
-    expect(urls.filter((u) => u === "https://example.com/b").length).toBe(1);
+    expect(urls.filter((u) => u === "https://example.com/a")).toHaveLength(1);
+    expect(urls.filter((u) => u === "https://example.com/b")).toHaveLength(1);
   });
 
   it("filters cross-domain links when sameDomain=true (default)", async () => {
@@ -425,7 +437,7 @@ describe("spiderUrl", () => {
     const gen = spiderUrl("https://example.com/", { maxDepth: 0, maxPages: 10, requestDelay: 0 });
     const { pages } = await collectPages(gen);
 
-    expect(pages.length).toBe(1);
+    expect(pages).toHaveLength(1);
     expect(pages[0]!.url).toBe("https://example.com/");
   });
 
@@ -476,7 +488,7 @@ describe("spiderUrl", () => {
 
     const gen = spiderUrl("https://example.com/notes.txt", { maxDepth: 0, requestDelay: 0 });
     const { pages } = await collectPages(gen);
-    expect(pages.length).toBe(1);
+    expect(pages).toHaveLength(1);
     expect(pages[0]!.title).toBe("Plain Text");
   });
 
@@ -493,5 +505,42 @@ describe("spiderUrl", () => {
     const gen = spiderUrl("https://example.com/", { maxPages: 2, maxDepth: 5, requestDelay: 0 });
     const { stats } = await collectPages(gen);
     expect((stats as { abortReason?: string }).abortReason).toBe("maxPages");
+  });
+
+  it("throws the abort reason between pages when the signal is aborted", async () => {
+    let counter = 0;
+    mockFetchRaw.mockImplementation((url: string) => {
+      if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
+      counter++;
+      const links = [`https://example.com/page${counter + 100}`];
+      return Promise.resolve(pageResponse(htmlPage(`Page ${counter}`, links), url));
+    });
+    const controller = new AbortController();
+
+    const gen = spiderUrl("https://example.com/", {
+      maxPages: 10,
+      maxDepth: 5,
+      requestDelay: 0,
+      signal: controller.signal,
+    });
+    const first = await gen.next();
+    expect(first.done).toBe(false);
+    controller.abort();
+
+    await expect(gen.next()).rejects.toBe(controller.signal.reason);
+    // Only the seed page was fetched (robots.txt calls excluded).
+    expect(counter).toBe(1);
+  });
+
+  it("throws the abort reason when a page fetch finishes after abort", async () => {
+    const controller = new AbortController();
+    mockFetchRaw.mockImplementation((url: string) => {
+      if (url.endsWith("/robots.txt")) return Promise.reject(new Error("404"));
+      controller.abort();
+      return Promise.resolve(pageResponse(htmlPage("Seed"), url));
+    });
+
+    const gen = spiderUrl("https://example.com/", { requestDelay: 0, signal: controller.signal });
+    await expect(gen.next()).rejects.toHaveProperty("name", "AbortError");
   });
 });

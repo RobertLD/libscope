@@ -1,13 +1,15 @@
 import type Database from "better-sqlite3";
+import { setTimeout as sleep } from "node:timers/promises";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
-import { createTopic, listTopics } from "../core/topics.js";
+import { createTopic } from "../core/topics.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -76,7 +78,7 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
   if (requestTimestamps.length >= MAX_REQUESTS_PER_MINUTE) {
     const waitMs = 60_000 - (now - (requestTimestamps[0] ?? now));
     log.debug({ waitMs }, "Rate limit reached, waiting");
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    await sleep(waitMs);
   }
   unlock!();
 
@@ -97,7 +99,7 @@ async function rateLimitedFetch(url: string, options: RequestInit): Promise<Resp
         `Rate limited by Graph API (attempt ${attempt + 1})`,
         "ONENOTE_RATE_LIMITED",
       );
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await sleep(delayMs);
       continue;
     }
 
@@ -288,46 +290,60 @@ export async function authenticateDeviceCode(
   const interval = (dcData.interval ?? 5) * 1000;
   const deadline = Date.now() + dcData.expires_in * 1000;
 
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
+  return pollDeviceToken({
+    tokenUrl,
+    clientId,
+    deviceCode: dcData.device_code,
+    interval,
+    deadline,
+  });
+}
 
-    const tokenRes = await fetch(tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        client_id: clientId,
-        device_code: dcData.device_code,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+/** Ask for the token every `interval` ms until the user signs in, an error, or `deadline`. */
+async function pollDeviceToken(poll: {
+  tokenUrl: string;
+  clientId: string;
+  deviceCode: string;
+  interval: number;
+  deadline: number;
+}): Promise<{ accessToken: string; refreshToken: string; expiresAt: string }> {
+  if (Date.now() >= poll.deadline) {
+    throw new LibScopeError("Device code authentication timed out", "ONENOTE_AUTH_ERROR");
+  }
+  await sleep(poll.interval);
 
-    if (tokenRes.ok) {
-      const tokenData = (await tokenRes.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
-      const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
-      return {
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expiresAt,
-      };
-    }
+  const tokenRes = await fetch(poll.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      client_id: poll.clientId,
+      device_code: poll.deviceCode,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
 
-    const errData = (await tokenRes.json()) as { error: string };
-    if (errData.error === "authorization_pending") {
-      continue;
-    }
-    if (errData.error === "slow_down") {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      continue;
-    }
-    throw new LibScopeError(`Authentication failed: ${errData.error}`, "ONENOTE_AUTH_ERROR");
+  if (tokenRes.ok) {
+    const tokenData = (await tokenRes.json()) as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+    const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+    return {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      expiresAt,
+    };
   }
 
-  throw new LibScopeError("Device code authentication timed out", "ONENOTE_AUTH_ERROR");
+  const errData = (await tokenRes.json()) as { error: string };
+  if (errData.error === "slow_down") {
+    await sleep(5000);
+  } else if (errData.error !== "authorization_pending") {
+    throw new LibScopeError(`Authentication failed: ${errData.error}`, "ONENOTE_AUTH_ERROR");
+  }
+  return pollDeviceToken(poll);
 }
 
 // ---------------------------------------------------------------------------
@@ -380,13 +396,9 @@ export async function refreshAccessToken(
 // Sync
 // ---------------------------------------------------------------------------
 
+/** createTopic returns the existing topic when the name is already taken (ON CONFLICT). */
 function ensureOrCreateTopic(db: Database.Database, name: string, parentId?: string): string {
-  const existing = listTopics(db, parentId).find((t) => t.name === name);
-  if (existing) {
-    return existing.id;
-  }
-  const topic = createTopic(db, { name, parentId });
-  return topic.id;
+  return createTopic(db, { name, parentId }).id;
 }
 
 function buildSourceUrl(notebook: string, section: string, pageTitle: string): string {
@@ -444,6 +456,7 @@ interface SyncOneNoteSectionOptions {
   config: OneNoteConfig;
   seenSourceUrls: Set<string>;
   result: OneNoteSyncResult;
+  signal: AbortSignal | undefined;
 }
 
 /** Sync all pages within a single section. */
@@ -458,6 +471,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
     config,
     seenSourceUrls,
     result,
+    signal,
   } = options;
   const log = getLogger();
   const sectionTopicId = ensureOrCreateTopic(db, section.displayName, notebookTopicId);
@@ -474,7 +488,8 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
     return;
   }
 
-  for (const page of pages) {
+  await forEachSequential(pages, async (page) => {
+    signal?.throwIfAborted();
     const sourceUrl = buildSourceUrl(notebookName, section.displayName, page.title);
     seenSourceUrls.add(sourceUrl);
 
@@ -495,19 +510,16 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
       log.error({ page: page.title, err }, "Failed to sync page");
       result.errors.push({ page: page.title, error: msg });
     }
-  }
+  });
 }
 
 /** Sync all sections within a single notebook. */
 async function syncOneNoteNotebook(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  token: string,
-  notebook: GraphNotebook,
-  config: OneNoteConfig,
-  seenSourceUrls: Set<string>,
-  result: OneNoteSyncResult,
+  options: Omit<SyncOneNoteSectionOptions, "notebookName" | "section" | "notebookTopicId"> & {
+    notebook: GraphNotebook;
+  },
 ): Promise<void> {
+  const { db, provider, token, notebook, config, seenSourceUrls, result, signal } = options;
   const notebookTopicId = ensureOrCreateTopic(db, notebook.displayName);
 
   let sections: GraphSection[];
@@ -522,7 +534,8 @@ async function syncOneNoteNotebook(
   const filteredSections = sections.filter((s) => !config.excludeSections.includes(s.displayName));
   result.sections += filteredSections.length;
 
-  for (const section of filteredSections) {
+  await forEachSequential(filteredSections, async (section) => {
+    signal?.throwIfAborted();
     await syncOneNoteSection({
       db,
       provider,
@@ -533,8 +546,9 @@ async function syncOneNoteNotebook(
       config,
       seenSourceUrls,
       result,
+      signal,
     });
-  }
+  });
 }
 
 /** Delete OneNote documents whose source URLs were not seen during sync. */
@@ -552,76 +566,120 @@ function deleteStaleOneNoteDocs(db: Database.Database, seenSourceUrls: Set<strin
   return deleted;
 }
 
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
+
+/** True when the access token is missing, has no known expiry, or expires soon. */
+function accessTokenNeedsRefresh(config: OneNoteConfig): boolean {
+  if (!config.accessToken || !config.tokenExpiry) return true;
+  const expiresAt = Date.parse(config.tokenExpiry);
+  return !Number.isNaN(expiresAt) && expiresAt - Date.now() < TOKEN_REFRESH_MARGIN_MS;
+}
+
+/**
+ * Refresh `config.accessToken` in place when it is missing, has no recorded expiry, or is
+ * about to expire, and the config holds a client ID and refresh token. Updates accessToken,
+ * refreshToken and tokenExpiry on the config object; callers that persist the config should
+ * save it after the sync. Returns true when the tokens were refreshed.
+ */
+export async function ensureOneNoteAccessToken(config: OneNoteConfig): Promise<boolean> {
+  if (!config.clientId || !config.refreshToken || !accessTokenNeedsRefresh(config)) {
+    return false;
+  }
+  const tenantId = config.tenantId === "" ? undefined : config.tenantId;
+  const auth = await refreshAccessToken(config.clientId, config.refreshToken, tenantId);
+  config.accessToken = auth.accessToken;
+  config.refreshToken = auth.refreshToken;
+  config.tokenExpiry = auth.expiresAt;
+  getLogger().info("Refreshed OneNote access token");
+  return true;
+}
+
+/**
+ * Sync OneNote notebooks. Refreshes an expired or missing access token first when the
+ * config carries a refresh token (see ensureOneNoteAccessToken; the config is updated).
+ */
 export async function syncOneNote(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: OneNoteConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<OneNoteSyncResult> {
+  return trackSync(
+    db,
+    "onenote",
+    options.syncName ?? "onenote",
+    () => runOneNoteSync(db, provider, config, options.signal),
+    (result) => ({
+      added: result.pagesAdded,
+      updated: result.pagesUpdated,
+      deleted: result.pagesDeleted,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runOneNoteSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: OneNoteConfig,
+  signal: AbortSignal | undefined,
 ): Promise<OneNoteSyncResult> {
   const log = getLogger();
+  await ensureOneNoteAccessToken(config);
   const token = config.accessToken;
   if (!token) {
     throw new LibScopeError("No access token provided", "ONENOTE_AUTH_ERROR");
   }
 
-  const syncId = startSync(db, "onenote", "onenote");
+  const result: OneNoteSyncResult = {
+    notebooks: 0,
+    sections: 0,
+    pagesAdded: 0,
+    pagesUpdated: 0,
+    pagesDeleted: 0,
+    errors: [],
+  };
 
-  try {
-    const result: OneNoteSyncResult = {
-      notebooks: 0,
-      sections: 0,
-      pagesAdded: 0,
-      pagesUpdated: 0,
-      pagesDeleted: 0,
-      errors: [],
-    };
+  log.info("Starting OneNote sync");
 
-    log.info("Starting OneNote sync");
+  const allNotebooks = await listNotebooks(token);
+  const targetNotebooks =
+    config.notebooks.length === 1 && config.notebooks[0] === "all"
+      ? allNotebooks
+      : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
 
-    const allNotebooks = await listNotebooks(token);
-    const targetNotebooks =
-      config.notebooks.length === 1 && config.notebooks[0] === "all"
-        ? allNotebooks
-        : allNotebooks.filter((nb) => config.notebooks.includes(nb.displayName));
+  result.notebooks = targetNotebooks.length;
+  const seenSourceUrls = new Set<string>();
 
-    result.notebooks = targetNotebooks.length;
-    const seenSourceUrls = new Set<string>();
-
-    for (const notebook of targetNotebooks) {
-      await syncOneNoteNotebook(db, provider, token, notebook, config, seenSourceUrls, result);
-    }
-
-    result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);
-
-    const connConfig = loadConnectorConfig();
-    const onenoteConf = (connConfig.onenote ?? {}) as Record<string, unknown>;
-    onenoteConf.lastSync = new Date().toISOString();
-    connConfig.onenote = onenoteConf;
-    saveConnectorConfig(connConfig);
-
-    log.info(
-      {
-        notebooks: result.notebooks,
-        sections: result.sections,
-        pagesAdded: result.pagesAdded,
-        pagesUpdated: result.pagesUpdated,
-        pagesDeleted: result.pagesDeleted,
-        errors: result.errors.length,
-      },
-      "OneNote sync complete",
-    );
-
-    completeSync(db, syncId, {
-      added: result.pagesAdded,
-      updated: result.pagesUpdated,
-      deleted: result.pagesDeleted,
-      errored: result.errors.length,
+  await forEachSequential(targetNotebooks, async (notebook) => {
+    signal?.throwIfAborted();
+    await syncOneNoteNotebook({
+      db,
+      provider,
+      token,
+      notebook,
+      config,
+      seenSourceUrls,
+      result,
+      signal,
     });
+  });
 
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
-  }
+  result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);
+
+  log.info(
+    {
+      notebooks: result.notebooks,
+      sections: result.sections,
+      pagesAdded: result.pagesAdded,
+      pagesUpdated: result.pagesUpdated,
+      pagesDeleted: result.pagesDeleted,
+      errors: result.errors.length,
+    },
+    "OneNote sync complete",
+  );
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

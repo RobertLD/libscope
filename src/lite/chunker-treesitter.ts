@@ -322,7 +322,7 @@ export class TreeSitterChunker {
       } catch (err: unknown) {
         throw new ValidationError(
           'Code chunking requires the "tree-sitter" package. ' +
-            "Install it with: npm install tree-sitter tree-sitter-typescript tree-sitter-javascript tree-sitter-python",
+            "Install it with: npm install tree-sitter@0.21 tree-sitter-typescript@0.21 tree-sitter-javascript@0.21 tree-sitter-python@0.21",
           err,
         );
       }
@@ -341,24 +341,17 @@ export class TreeSitterChunker {
 
     try {
       const mod = (await import(packageName)) as Record<string, unknown>;
-      // Grammar packages typically export the language as the default export.
-      // tree-sitter-typescript exports { typescript, tsx } as named exports.
-      let grammar: unknown;
-      if (language === "typescript" && "typescript" in mod) {
-        grammar = mod["typescript"];
-      } else if ("default" in mod) {
-        grammar = mod["default"];
-      } else {
-        // Fallback: use the module itself (some packages export the grammar directly)
-        grammar = mod;
-      }
+      // The grammar packages are CommonJS: import() returns their module.exports as `default`.
+      const exported = ("default" in mod ? mod["default"] : mod) as Record<string, unknown>;
+      // tree-sitter-typescript exports { typescript, tsx }; the others export the language.
+      const grammar = language === "typescript" ? exported["typescript"] : exported;
 
       this.grammarCache.set(language, grammar);
       return grammar;
     } catch (err: unknown) {
       throw new ValidationError(
         `Code chunking for ${language} requires the "${packageName}" package. ` +
-          `Install it with: npm install ${packageName}`,
+          `Install it with: npm install ${packageName}@${language === "cpp" ? "0.22" : "0.21"}`,
         err,
       );
     }

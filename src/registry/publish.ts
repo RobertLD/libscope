@@ -4,9 +4,8 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { getLogger } from "../logger.js";
-import { ValidationError } from "../errors.js";
+import { NotFoundError, ValidationError } from "../errors.js";
 import type {
   PublishOptions,
   PublishResult,
@@ -22,10 +21,10 @@ import {
   INDEX_FILE,
   getRegistryCacheDir,
 } from "./types.js";
-import { getRegistry } from "./config.js";
-import { commitAndPush, fetchRegistry, git, clearIndexCache } from "./git.js";
+import { requireRegistry } from "./config.js";
+import { commitAll, commitAndPush, fetchRegistry, git, clearIndexCache } from "./git.js";
 import { computeChecksum, writeChecksumFile } from "./checksum.js";
-import type { KnowledgePack } from "../core/packs.js";
+import { readPackFile, type KnowledgePack } from "../core/packs.js";
 
 /** Remove an entire pack directory and its entry from the index. */
 function removeEntirePack(packDir: string, cacheDir: string, packName: string): void {
@@ -100,28 +99,17 @@ function bumpPatchVersion(version: string): string {
   return `${parts[0]}.${parts[1]}.${Number.isNaN(patch) ? 1 : patch + 1}`;
 }
 
-/** Gzip magic number: first two bytes of a gzip stream. */
-const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
-
 /**
  * Read a pack JSON file (plain or gzip-compressed).
  * Auto-detects gzip by checking for magic bytes.
  */
 function readPackJson(filePath: string): KnowledgePack {
-  const raw = readFileSync(filePath);
-  const text =
-    raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]
-      ? gunzipSync(raw).toString("utf-8")
-      : raw.toString("utf-8");
-  return JSON.parse(text) as KnowledgePack;
+  return JSON.parse(readPackFile(filePath)) as KnowledgePack;
 }
 
 /** Validate that the registry exists and has a local cache; return the cache directory. */
 function validateRegistryCache(registryName: string): string {
-  const entry = getRegistry(registryName);
-  if (!entry) {
-    throw new ValidationError(`Registry "${registryName}" not found. Add it first.`);
-  }
+  requireRegistry(registryName);
   const cacheDir = getRegistryCacheDir(registryName);
   if (!existsSync(cacheDir)) {
     throw new ValidationError(
@@ -192,7 +180,7 @@ function resolveVersionAndManifest(
   if (manifest.versions.some((v) => v.version === version)) {
     throw new ValidationError(
       `Version ${version} of "${pack.name}" already exists in "${registryName}". ` +
-        "Use --version to specify a different version.",
+        "Publish it with a different version.",
     );
   }
 
@@ -256,18 +244,35 @@ function rollbackVersionDir(versionDir: string, created: boolean): void {
   }
 }
 
+/** Where a publish goes: its default commit message and how the commit is pushed. */
+interface PublishTarget {
+  defaultMessage: (packName: string, version: string) => string;
+  push: (cacheDir: string) => Promise<unknown>;
+}
+
 /**
  * Publish a pack to a registry.
  * Creates the canonical folder structure, generates checksum, updates index and manifest, commits and pushes.
  */
 export async function publishPack(options: PublishOptions): Promise<PublishResult> {
+  const cacheDir = validateRegistryCache(options.registryName);
+  await tryFetchLatest(cacheDir, "publish");
+  const pack = readAndValidatePack(options.packFilePath);
+  return publishInCache(options, cacheDir, pack, {
+    defaultMessage: (name, version) => `publish: ${name}@${version}`,
+    push: (dir) => git(["push"], { cwd: dir }),
+  });
+}
+
+/** Write the pack's version into the registry clone at `cacheDir`, commit it and push it. */
+async function publishInCache(
+  options: PublishOptions,
+  cacheDir: string,
+  pack: KnowledgePack,
+  target: PublishTarget,
+): Promise<PublishResult> {
   const log = getLogger();
   const { registryName, packFilePath, commitMessage } = options;
-
-  const cacheDir = validateRegistryCache(registryName);
-  await tryFetchLatest(cacheDir, "publish");
-
-  const pack = readAndValidatePack(packFilePath);
 
   const packDir = join(cacheDir, PACKS_DIR, pack.name);
   const manifestPath = join(packDir, PACK_MANIFEST_FILE);
@@ -321,8 +326,8 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
     };
     upsertIndexEntry(indexPath, index, summary);
 
-    const msg = commitMessage ?? `publish: ${pack.name}@${version}`;
-    await commitAndPush(cacheDir, msg);
+    await commitAll(cacheDir, commitMessage ?? target.defaultMessage(pack.name, version));
+    await target.push(cacheDir);
 
     log.info({ registry: registryName, pack: pack.name, version, checksum }, "Pack published");
     return { packName: pack.name, version, checksum, registryName };
@@ -333,47 +338,57 @@ export async function publishPack(options: PublishOptions): Promise<PublishResul
 }
 
 /**
- * Publish to a feature branch instead of main (for PR workflow).
+ * Publish to a `feature/add-<pack>` branch of the registry instead of its main branch (for a
+ * pull request). The branch starts at the remote's latest main branch and is pushed to the
+ * remote. The local clone is left on its own branch, so later publishes and syncs are not
+ * affected.
  */
 export async function publishPackToBranch(
   options: PublishOptions,
 ): Promise<PublishResult & { branch: string }> {
   const log = getLogger();
-  const { registryName, packFilePath } = options;
+  const { registryName } = options;
 
   const cacheDir = validateRegistryCache(registryName);
-
-  const pack = readPackJson(packFilePath);
+  await tryFetchLatest(cacheDir, "publish");
+  const pack = readAndValidatePack(options.packFilePath);
   const branchName = `feature/add-${pack.name}`;
 
-  // Create and checkout branch
-  await git(["checkout", "-b", branchName], { cwd: cacheDir });
+  const startRef = await currentRef(cacheDir);
+  await git(["checkout", "-B", branchName], { cwd: cacheDir });
 
   try {
-    // Reuse the normal publish flow (which commits)
-    const result = await publishPack({
-      ...options,
-      commitMessage: options.commitMessage ?? `feat: add ${pack.name}@${pack.version}`,
+    const result = await publishInCache(options, cacheDir, pack, {
+      defaultMessage: (name, version) => `feat: add ${name}@${version}`,
+      push: (dir) => git(["push", "origin", `HEAD:refs/heads/${branchName}`], { cwd: dir }),
     });
-
-    // Push the branch
-    await git(["push", "-u", "origin", branchName], { cwd: cacheDir });
-
     log.info({ branch: branchName, registry: registryName }, "Pack published to feature branch");
-
     return { ...result, branch: branchName };
+  } finally {
+    await leaveFeatureBranch(cacheDir, startRef, branchName);
+  }
+}
+
+/** The checked-out branch name, or the commit when HEAD is detached. */
+async function currentRef(cacheDir: string): Promise<string> {
+  const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: cacheDir });
+  return branch === "HEAD" ? git(["rev-parse", "HEAD"], { cwd: cacheDir }) : branch;
+}
+
+/** Check out `startRef` again, dropping the publish's files, and delete the local branch. */
+async function leaveFeatureBranch(
+  cacheDir: string,
+  startRef: string,
+  featureBranch: string,
+): Promise<void> {
+  try {
+    await git(["checkout", "-f", startRef], { cwd: cacheDir });
+    await git(["branch", "-D", featureBranch], { cwd: cacheDir });
   } catch (err) {
-    // Try to go back to main branch on failure
-    try {
-      await git(["checkout", "main"], { cwd: cacheDir });
-      await git(["branch", "-D", branchName], { cwd: cacheDir });
-    } catch (cleanupErr) {
-      log.warn(
-        { err: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) },
-        "Failed to clean up feature branch after publish failure",
-      );
-    }
-    throw err;
+    getLogger().warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "Failed to return the registry clone to its branch after publishing to a feature branch",
+    );
   }
 }
 
@@ -395,13 +410,13 @@ export async function unpublishPack(options: UnpublishOptions): Promise<void> {
   const manifestPath = join(packDir, PACK_MANIFEST_FILE);
 
   if (!existsSync(manifestPath)) {
-    throw new ValidationError(`Pack "${packName}" not found in registry "${registryName}".`);
+    throw new NotFoundError(`Pack "${packName}" not found in registry "${registryName}".`);
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PackManifest;
   const versionIdx = manifest.versions.findIndex((v) => v.version === version);
   if (versionIdx === -1) {
-    throw new ValidationError(
+    throw new NotFoundError(
       `Version ${version} of "${packName}" not found in registry "${registryName}".`,
     );
   }

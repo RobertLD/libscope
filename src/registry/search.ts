@@ -1,13 +1,19 @@
 /**
- * Registry search: find packs across all configured registries.
+ * List and search the packs of the configured registries, from their local (synced) indexes.
  */
 
 import { existsSync } from "node:fs";
 import { getLogger } from "../logger.js";
-import type { RegistryEntry, PackSummary, RegistrySearchResult } from "./types.js";
+import type { RegistryEntry, PackSummary, RegistryPack, RegistrySearchResult } from "./types.js";
 import { getRegistryCacheDir } from "./types.js";
-import { loadRegistries } from "./config.js";
+import { loadRegistries, requireRegistry } from "./config.js";
 import { readIndex } from "./git.js";
+
+/** Packs in registries plus warnings for registries that could not be read. */
+export interface RegistryPackList {
+  packs: RegistryPack[];
+  warnings: string[];
+}
 
 /**
  * Compute a relevance score for a pack against a query.
@@ -50,41 +56,37 @@ function scoreMatch(pack: PackSummary, query: string): number {
   return score;
 }
 
-/** Resolve which registries to search, returning them or adding a warning if not found. */
-function resolveRegistries(
-  registryName: string | undefined,
-  warnings: string[],
-): RegistryEntry[] | null {
-  if (!registryName) return loadRegistries();
-  const all = loadRegistries();
-  const entry = all.find((r) => r.name === registryName);
-  if (!entry) {
-    warnings.push(`Registry "${registryName}" not found.`);
-    return null;
-  }
-  return [entry];
-}
-
 /** Read packs from a single registry, appending warnings on failure. */
-function readRegistryPacks(entry: RegistryEntry, warnings: string[]): PackSummary[] | null {
+function readRegistryPacks(entry: RegistryEntry, warnings: string[]): PackSummary[] {
   const cacheDir = getRegistryCacheDir(entry.name);
   if (!existsSync(cacheDir)) {
     warnings.push(
       `Registry "${entry.name}" has never been synced. Run: libscope registry sync ${entry.name}`,
     );
-    return null;
+    return [];
   }
   try {
     return readIndex(cacheDir);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     warnings.push(`Failed to read index for "${entry.name}": ${msg}`);
-    getLogger().warn(
-      { registry: entry.name, err: msg },
-      "Failed to read registry index during search",
-    );
-    return null;
+    getLogger().warn({ registry: entry.name, err: msg }, "Failed to read registry index");
+    return [];
   }
+}
+
+/**
+ * Every pack in the local indexes of all registries, or of `registryName` only
+ * (NotFoundError when that registry is not configured). No network access.
+ */
+export function listRegistryPacks(registryName?: string): RegistryPackList {
+  const registries =
+    registryName === undefined ? loadRegistries() : [requireRegistry(registryName)];
+  const warnings: string[] = [];
+  const packs = registries.flatMap((entry) =>
+    readRegistryPacks(entry, warnings).map((pack) => ({ ...pack, registry: entry.name })),
+  );
+  return { packs, warnings };
 }
 
 /**
@@ -95,29 +97,12 @@ export function searchRegistries(
   query: string,
   options?: { registryName?: string | undefined },
 ): { results: RegistrySearchResult[]; warnings: string[] } {
-  const warnings: string[] = [];
-  const results: RegistrySearchResult[] = [];
-
-  const registries = resolveRegistries(options?.registryName, warnings);
-  if (!registries) return { results, warnings };
-
-  for (const entry of registries) {
-    const packs = readRegistryPacks(entry, warnings);
-    if (!packs) continue;
-
-    for (const pack of packs) {
-      const score = scoreMatch(pack, query);
-      if (score > 0) {
-        results.push({ registryName: entry.name, pack, score });
-      }
-    }
-  }
+  const { packs, warnings } = listRegistryPacks(options?.registryName);
+  const results = packs
+    .map((pack) => ({ ...pack, score: scoreMatch(pack, query) }))
+    .filter((r) => r.score > 0);
 
   // Sort by score descending, then by name
-  results.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return a.pack.name.localeCompare(b.pack.name);
-  });
-
+  results.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   return { results, warnings };
 }

@@ -9,9 +9,12 @@
  *  - Private/internal IPs are blocked by the underlying url-fetcher
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
 import { getLogger } from "../logger.js";
 import { FetchError } from "../errors.js";
+import { firstMarkdownHeading } from "../utils/markdown.js";
 import { fetchRaw, type FetchOptions } from "./url-fetcher.js";
+import { decodeHtmlEntities } from "./html-entities.js";
 import { extractLinks } from "./link-extractor.js";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 
@@ -44,6 +47,8 @@ export interface SpiderOptions {
     FetchOptions,
     "allowPrivateUrls" | "allowSelfSignedCerts" | "timeout" | "maxBodySize"
   >;
+  /** Abort the crawl between pages; the generator then throws the signal's reason. */
+  signal?: AbortSignal;
 }
 
 export interface SpiderResult {
@@ -266,11 +271,11 @@ function stripTags(input: string): string {
 function extractTitle(html: string, url: string): string {
   // Try <title> tag
   const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-  if (match?.[1]) return match[1].trim();
+  if (match?.[1]) return decodeHtmlEntities(match[1].trim());
   // Try first <h1>
   const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
   if (h1?.[1]) {
-    return stripTags(h1[1]).trim();
+    return decodeHtmlEntities(stripTags(h1[1]).trim());
   }
   // Fall back to URL path
   try {
@@ -451,6 +456,75 @@ async function fetchSpiderPage(
   }
 }
 
+type QueueEntry = { url: string; depth: number };
+
+/** Mutable state of one crawl (breadth-first queue, visited URLs, stats). */
+interface CrawlState {
+  config: SpiderConfig;
+  stats: SpiderStats;
+  robotsCache: Map<string, Set<string>>;
+  visited: Set<string>;
+  queue: QueueEntry[];
+  deadline: number;
+  signal: AbortSignal | undefined;
+  log: ReturnType<typeof getLogger>;
+}
+
+/**
+ * Take the next unvisited queue entry and mark it visited. Returns undefined when the crawl
+ * is over: the queue is empty, maxPages is reached, or the total timeout has passed.
+ */
+function takeNextEntry(crawl: CrawlState): QueueEntry | undefined {
+  const { queue, stats, config, visited } = crawl;
+  while (queue.length > 0 && stats.pagesFetched < config.maxPages) {
+    crawl.signal?.throwIfAborted();
+    if (checkDeadline(crawl.deadline, stats, crawl.log)) return undefined;
+    const entry = queue.shift()!;
+    if (!visited.has(entry.url)) {
+      visited.add(entry.url);
+      return entry;
+    }
+  }
+  return undefined;
+}
+
+/** Fetch queue entries until one gives a page; undefined when the crawl is over. */
+async function nextCrawledPage(
+  crawl: CrawlState,
+): Promise<{ raw: Awaited<ReturnType<typeof fetchRaw>>; result: SpiderResult } | undefined> {
+  const entry = takeNextEntry(crawl);
+  if (!entry) return undefined;
+  const { url, depth } = entry;
+  const { config, stats, log } = crawl;
+
+  if (depth > 0 && (await shouldSkipNonSeedUrl(url, config, crawl.robotsCache, stats, log))) {
+    return nextCrawledPage(crawl);
+  }
+
+  const raw = await fetchSpiderPage(url, config, stats, log);
+  crawl.signal?.throwIfAborted();
+  if (!raw) return nextCrawledPage(crawl);
+
+  const result = convertPage(raw, url, depth);
+  if (result.url !== url) crawl.visited.add(result.url);
+
+  stats.pagesFetched++;
+  return { raw, result };
+}
+
+/** Yield crawled pages breadth-first; each page's links are queued after it is consumed. */
+async function* crawlPages(crawl: CrawlState): AsyncGenerator<SpiderResult, void, unknown> {
+  const page = await nextCrawledPage(crawl);
+  if (!page) return;
+  const { raw, result } = page;
+  yield result;
+
+  if (result.depth < crawl.config.maxDepth) {
+    enqueueChildLinks(raw, result.url, result.depth, crawl.visited, crawl.queue);
+  }
+  yield* crawlPages(crawl);
+}
+
 /**
  * Spider a seed URL, yielding each successfully fetched page as a SpiderResult.
  * Performs BFS up to maxDepth hops and maxPages total.
@@ -479,33 +553,19 @@ export async function* spiderUrl(
   robotsCache.set(config.seedOrigin, seedRobots);
   log.debug({ origin: config.seedOrigin, rules: seedRobots.size }, "Loaded robots.txt rules");
 
-  const visited = new Set<string>();
-  type QueueEntry = { url: string; depth: number };
-  const queue: QueueEntry[] = [{ url: seedUrl, depth: 0 }];
-  const deadline = Date.now() + HARD_TOTAL_TIMEOUT_MS;
+  const crawl: CrawlState = {
+    config,
+    stats,
+    robotsCache,
+    visited: new Set<string>(),
+    queue: [{ url: seedUrl, depth: 0 }],
+    deadline: Date.now() + HARD_TOTAL_TIMEOUT_MS,
+    signal: options.signal,
+    log,
+  };
+  const { queue } = crawl;
 
-  while (queue.length > 0 && stats.pagesFetched < config.maxPages) {
-    if (checkDeadline(deadline, stats, log)) break;
-
-    const { url, depth } = queue.shift()!;
-    if (visited.has(url)) continue;
-    visited.add(url);
-
-    if (depth > 0 && (await shouldSkipNonSeedUrl(url, config, robotsCache, stats, log))) continue;
-
-    const raw = await fetchSpiderPage(url, config, stats, log);
-    if (!raw) continue;
-
-    const result = convertPage(raw, url, depth);
-    if (result.url !== url) visited.add(result.url);
-
-    stats.pagesFetched++;
-    yield result;
-
-    if (depth < config.maxDepth) {
-      enqueueChildLinks(raw, result.url, depth, visited, queue);
-    }
-  }
+  yield* crawlPages(crawl);
 
   if (!stats.abortReason && queue.length > 0 && stats.pagesFetched >= config.maxPages) {
     stats.abortReason = "maxPages";
@@ -527,8 +587,8 @@ export async function* spiderUrl(
 
 function extractTextTitle(text: string, url: string): string {
   // For plain text/markdown, try first # heading
-  const match = /^#\s+(.+)$/m.exec(text);
-  if (match?.[1]) return match[1].trim();
+  const heading = firstMarkdownHeading(text);
+  if (heading) return heading.trim();
   // Fall back to URL
   try {
     const parsed = new URL(url);
@@ -539,8 +599,4 @@ function extractTextTitle(text: string, url: string): string {
   } catch {
     return url;
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

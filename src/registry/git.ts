@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLogger } from "../logger.js";
-import { FetchError, ValidationError } from "../errors.js";
+import { ConfigError, FetchError, ValidationError } from "../errors.js";
 import type { PackSummary } from "./types.js";
 import { INDEX_FILE, PACKS_DIR } from "./types.js";
 
@@ -35,6 +35,10 @@ export async function git(
     const { stdout } = await execFile("git", args, { cwd, timeout });
     return stdout.trim();
   } catch (err) {
+    // ENOENT with an existing (or no) working directory: the git binary itself is missing.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT" && (!cwd || existsSync(cwd))) {
+      throw new ConfigError("git is not installed or not in PATH", err);
+    }
     const message = err instanceof Error ? err.message : String(err);
     log.error({ args, cwd, err: message }, "Git command failed");
 
@@ -192,8 +196,9 @@ export async function createRegistryRepo(path: string): Promise<void> {
 
   mkdirSync(path, { recursive: true });
 
-  // Initialize git repo
+  // Initialize git repo on "main" whatever init.defaultBranch is (the docs push "main")
   await git(["init"], { cwd: path });
+  await git(["symbolic-ref", "HEAD", "refs/heads/main"], { cwd: path });
 
   // Create canonical structure
   const indexPath = join(path, INDEX_FILE);
@@ -224,22 +229,17 @@ export async function createRegistryRepo(path: string): Promise<void> {
   log.info({ path }, "Registry repo initialized");
 }
 
-/** Check if git is available on the system. */
-export async function checkGitAvailable(): Promise<boolean> {
-  try {
-    await execFile("git", ["--version"]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Add, commit, and push changes in a registry repo. */
-export async function commitAndPush(repoPath: string, message: string): Promise<void> {
+/** Add and commit all changes in a registry repo. */
+export async function commitAll(repoPath: string, message: string): Promise<void> {
   await git(["add", "."], { cwd: repoPath });
   await git(
     ["-c", "user.name=libscope", "-c", "user.email=libscope@localhost", "commit", "-m", message],
     { cwd: repoPath },
   );
-  await git(["push"], { cwd: repoPath });
+}
+
+/** Add, commit, and push the current branch of a registry repo (also when the branch is new). */
+export async function commitAndPush(repoPath: string, message: string): Promise<void> {
+  await commitAll(repoPath, message);
+  await git(["push", "-u", "origin", "HEAD"], { cwd: repoPath });
 }

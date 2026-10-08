@@ -21,8 +21,10 @@ import { homedir } from "node:os";
 // Folder structure constants
 // ---------------------------------------------------------------------------
 
-/** Root directory for all registry caches. */
-export const REGISTRIES_DIR = join(homedir(), ".libscope", "registries");
+/** Root directory for all registry caches (~/.libscope/registries, read at call time). */
+export function getRegistriesDir(): string {
+  return join(homedir(), ".libscope", "registries");
+}
 
 /** Name of the top-level index file in each registry. */
 export const INDEX_FILE = "index.json";
@@ -44,19 +46,10 @@ export const CHECKSUM_FILE = "checksum.sha256";
 export interface RegistryEntry {
   /** User-chosen short name (e.g. "official", "team-internal"). */
   name: string;
-  /** Git remote URL (https or ssh). */
+  /** Git remote URL (https://, ssh://, git@host:path or file://). */
   url: string;
-  /** How often to auto-sync, in seconds. 0 = manual only. */
-  syncInterval: number;
-  /** Priority for conflict resolution — lower wins. */
-  priority: number;
   /** ISO-8601 timestamp of last successful sync, or null if never synced. */
   lastSyncedAt: string | null;
-}
-
-/** Shape of the "registries" key in ~/.libscope/config.json. */
-export interface RegistryConfigBlock {
-  registries: RegistryEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -114,51 +107,32 @@ export interface PackManifest {
 }
 
 // ---------------------------------------------------------------------------
-// Search results
+// Packs listed from registries
 // ---------------------------------------------------------------------------
 
-/** A pack search result, combining summary info with registry source. */
-export interface RegistrySearchResult {
-  /** Which registry this result came from. */
-  registryName: string;
-  /** Pack summary from that registry's index. */
-  pack: PackSummary;
-  /** Relevance score (higher = better match). */
+/** A pack from a registry index, with the registry it came from. */
+export interface RegistryPack extends PackSummary {
+  registry: string;
+}
+
+/** A pack search result: the pack and its relevance score (higher = better match). */
+export interface RegistrySearchResult extends RegistryPack {
   score: number;
 }
-
-// ---------------------------------------------------------------------------
-// Conflict resolution
-// ---------------------------------------------------------------------------
-
-/** When multiple registries offer the same pack, the user must choose. */
-export interface RegistryConflict {
-  packName: string;
-  /** One entry per registry that has this pack. */
-  sources: Array<{
-    registryName: string;
-    registryUrl: string;
-    version: string;
-    priority: number;
-  }>;
-}
-
-/** Resolution strategy for pack conflicts. */
-export type ConflictResolution =
-  | { strategy: "priority" }
-  | { strategy: "interactive" }
-  | { strategy: "explicit"; registryName: string };
 
 // ---------------------------------------------------------------------------
 // Sync state
 // ---------------------------------------------------------------------------
 
-/** Status of a registry sync operation. */
+/** Result of syncing one registry. */
 export interface RegistrySyncStatus {
-  registryName: string;
-  status: "syncing" | "success" | "error" | "offline";
+  registry: string;
+  /** "offline": the fetch failed and the cached copy is used; "error": no usable copy. */
+  status: "success" | "error" | "offline";
   lastSyncedAt: string | null;
   error?: string;
+  /** Packs in the local index after the sync, or null when there is no readable index. */
+  packs: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,30 +173,30 @@ export interface UnpublishOptions {
 
 /** Get the local cache directory for a named registry. */
 export function getRegistryCacheDir(registryName: string): string {
-  return join(REGISTRIES_DIR, registryName);
+  return join(getRegistriesDir(), registryName);
 }
 
 /** Get the path to a registry's local index.json. */
 export function getRegistryIndexPath(registryName: string): string {
-  return join(REGISTRIES_DIR, registryName, INDEX_FILE);
+  return join(getRegistriesDir(), registryName, INDEX_FILE);
 }
 
 /** Get the path to a pack's manifest within a registry cache. */
 export function getPackManifestPath(registryName: string, packName: string): string {
-  return join(REGISTRIES_DIR, registryName, PACKS_DIR, packName, PACK_MANIFEST_FILE);
+  return join(getRegistriesDir(), registryName, PACKS_DIR, packName, PACK_MANIFEST_FILE);
 }
 
 /** Get the directory for a specific pack version within a registry cache. */
 export function getPackVersionDir(registryName: string, packName: string, version: string): string {
-  return join(REGISTRIES_DIR, registryName, PACKS_DIR, packName, version);
+  return join(getRegistriesDir(), registryName, PACKS_DIR, packName, version);
 }
 
 /** Get the path to the pack data file for a specific version. */
 export function getPackDataPath(registryName: string, packName: string, version: string): string {
-  return join(REGISTRIES_DIR, registryName, PACKS_DIR, packName, version, `${packName}.json`);
+  return join(getRegistriesDir(), registryName, PACKS_DIR, packName, version, `${packName}.json`);
 }
 
 /** Get the path to the checksum file for a specific pack version. */
 export function getChecksumPath(registryName: string, packName: string, version: string): string {
-  return join(REGISTRIES_DIR, registryName, PACKS_DIR, packName, version, CHECKSUM_FILE);
+  return join(getRegistriesDir(), registryName, PACKS_DIR, packName, version, CHECKSUM_FILE);
 }

@@ -228,3 +228,36 @@ describe("reindex", () => {
     expect(result.completed).toBe(0);
   });
 });
+
+describe("reindex cancellation", () => {
+  const chunks = [
+    { id: "c1", content: "chunk 1" },
+    { id: "c2", content: "chunk 2" },
+    { id: "c3", content: "chunk 3" },
+  ];
+
+  it("rejects with the abort reason and stops between batches", async () => {
+    const { db } = createMockDb(chunks);
+    const { provider, embedBatchFn } = createMockProvider();
+    const controller = new AbortController();
+
+    const promise = reindex(db, provider, {
+      batchSize: 1,
+      signal: controller.signal,
+      onProgress: () => controller.abort(),
+    });
+
+    await expect(promise).rejects.toHaveProperty("name", "AbortError");
+    expect(embedBatchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not embed anything when the signal is already aborted", async () => {
+    const { db } = createMockDb(chunks);
+    const { provider, embedBatchFn } = createMockProvider();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(reindex(db, provider, { signal: controller.signal })).rejects.toThrow();
+    expect(embedBatchFn).not.toHaveBeenCalled();
+  });
+});

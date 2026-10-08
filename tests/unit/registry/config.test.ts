@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { initLogger } from "../../../src/logger.js";
+import { NotFoundError } from "../../../src/errors.js";
 import type { RegistryEntry } from "../../../src/registry/types.js";
 
 // Mock homedir before importing registry config module
@@ -28,14 +29,14 @@ const {
   validateRegistryName,
   validateGitUrl,
   sanitizeUrl,
+  requireRegistry,
+  deriveRegistryName,
 } = await import("../../../src/registry/config.js");
 
 function makeEntry(overrides: Partial<RegistryEntry> = {}): RegistryEntry {
   return {
     name: "test-reg",
     url: "https://github.com/org/registry.git",
-    syncInterval: 3600,
-    priority: 1,
     lastSyncedAt: null,
     ...overrides,
   };
@@ -110,20 +111,30 @@ describe("registry config", () => {
       expect(() => validateGitUrl("not-a-url")).toThrow();
     });
 
+    it("accepts file:/// URLs and rejects plain local paths", () => {
+      expect(validateGitUrl("file:///srv/registry.git/")).toBe("file:///srv/registry.git");
+      expect(() => validateGitUrl("/srv/registry.git")).toThrow();
+    });
+
     // Security/robustness fixes: whitespace trimming and trailing slash normalisation
-    it("should trim leading and trailing whitespace", () => {
-      const result = validateGitUrl("  https://github.com/org/repo.git  ");
-      expect(result).toBe("https://github.com/org/repo.git");
-    });
-
-    it("should strip trailing slashes", () => {
-      const result = validateGitUrl("https://github.com/org/repo/");
-      expect(result).toBe("https://github.com/org/repo");
-    });
-
-    it("should strip both whitespace and trailing slashes together", () => {
-      const result = validateGitUrl("  https://github.com/org/repo.git  ");
-      expect(result).toBe("https://github.com/org/repo.git");
+    it.each([
+      {
+        name: "trims leading and trailing whitespace",
+        input: "  https://github.com/org/repo.git  ",
+        expected: "https://github.com/org/repo.git",
+      },
+      {
+        name: "strips trailing slashes",
+        input: "https://github.com/org/repo/",
+        expected: "https://github.com/org/repo",
+      },
+      {
+        name: "strips both whitespace and trailing slashes together",
+        input: "  https://github.com/org/repo/  ",
+        expected: "https://github.com/org/repo",
+      },
+    ])("should normalise the URL: $name", ({ input, expected }) => {
+      expect(validateGitUrl(input)).toBe(expected);
     });
 
     // Security: reject embedded credentials
@@ -284,8 +295,33 @@ describe("registry config", () => {
       expect(loadRegistries()).toHaveLength(0);
     });
 
-    it("should throw when removing non-existent registry", () => {
-      expect(() => removeRegistry("nonexistent")).toThrow(/not found/);
+    it("should throw NotFoundError when removing non-existent registry", () => {
+      expect(() => removeRegistry("nonexistent")).toThrow(NotFoundError);
+    });
+  });
+
+  describe("requireRegistry", () => {
+    it("returns the entry, or throws NotFoundError", () => {
+      addRegistry(makeEntry({ name: "here" }));
+      expect(requireRegistry("here").name).toBe("here");
+      expect(() => requireRegistry("gone")).toThrow(NotFoundError);
+    });
+  });
+
+  describe("deriveRegistryName", () => {
+    it.each([
+      ["https://github.com/org/packs.git", "packs"],
+      ["https://github.com/org/packs/", "packs"],
+      ["git@github.com:org/team-packs.git", "team-packs"],
+      ["git@host:packs.git", "packs"],
+      ["ssh://git@host:7999/proj/my_packs.git", "my_packs"],
+      ["file:///srv/registries/local.git", "local"],
+    ])("%s -> %s", (url, name) => {
+      expect(deriveRegistryName(url)).toBe(name);
+    });
+
+    it("throws ValidationError when no valid name can be derived", () => {
+      expect(() => deriveRegistryName("https://example.com/x.git")).toThrow(/Give a name/);
     });
   });
 

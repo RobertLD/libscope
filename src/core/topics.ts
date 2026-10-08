@@ -3,7 +3,13 @@ import { randomUUID } from "node:crypto";
 import { ValidationError, TopicNotFoundError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import { validateRow } from "../utils/db-validation.js";
-import type { Document } from "./documents.js";
+import {
+  DOC_COLUMNS,
+  deleteChunkEmbeddings,
+  rowToDocument,
+  type Document,
+  type DocumentRow,
+} from "./documents.js";
 
 export interface Topic {
   id: string;
@@ -12,6 +18,28 @@ export interface Topic {
   parentId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+const TOPIC_COLUMNS = "id, name, description, parent_id, created_at, updated_at";
+
+type TopicRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  parent_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function rowToTopic(row: TopicRow): Topic {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    parentId: row.parent_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export interface CreateTopicInput {
@@ -69,41 +97,20 @@ export function createTopic(db: Database.Database, input: CreateTopicInput): Top
 
   // Topic already existed — fetch and return it
   log.info({ name: input.name }, "Topic already exists, returning existing");
-  const row = db
-    .prepare(
-      "SELECT id, name, description, parent_id, created_at, updated_at FROM topics WHERE name = ?",
-    )
-    .get(input.name);
+  const row = db.prepare(`SELECT ${TOPIC_COLUMNS} FROM topics WHERE name = ?`).get(input.name);
 
-  const validated = validateRow<{
-    id: string;
-    name: string;
-    description: string | null;
-    parent_id: string | null;
-    created_at: string;
-    updated_at: string;
-  }>(
+  const validated = validateRow<TopicRow>(
     row,
     ["id", "name", "description", "parent_id", "created_at", "updated_at"],
     "existing topic lookup",
   );
 
-  return {
-    id: validated.id,
-    name: validated.name,
-    description: validated.description,
-    parentId: validated.parent_id,
-    createdAt: validated.created_at,
-    updatedAt: validated.updated_at,
-  };
+  return rowToTopic(validated);
 }
 
 /** List topics, optionally filtered by parent. */
 export function listTopics(db: Database.Database, parentId?: string): Topic[] {
-  let sql = `
-    SELECT id, name, description, parent_id, created_at, updated_at
-    FROM topics
-  `;
+  let sql = `SELECT ${TOPIC_COLUMNS} FROM topics`;
   const params: unknown[] = [];
 
   if (parentId === undefined) {
@@ -115,55 +122,35 @@ export function listTopics(db: Database.Database, parentId?: string): Topic[] {
 
   sql += " ORDER BY name";
 
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: string;
-    name: string;
-    description: string | null;
-    parent_id: string | null;
-    created_at: string;
-    updated_at: string;
-  }>;
+  const rows = db.prepare(sql).all(...params) as TopicRow[];
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    parentId: row.parent_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return rows.map((row) => rowToTopic(row));
 }
 
 /** Get a topic by ID. */
 export function getTopic(db: Database.Database, topicId: string): Topic {
-  const row = db
-    .prepare(
-      `
-    SELECT id, name, description, parent_id, created_at, updated_at
-    FROM topics WHERE id = ?
-  `,
-    )
-    .get(topicId) as
-    | {
-        id: string;
-        name: string;
-        description: string | null;
-        parent_id: string | null;
-        created_at: string;
-        updated_at: string;
-      }
+  const row = db.prepare(`SELECT ${TOPIC_COLUMNS} FROM topics WHERE id = ?`).get(topicId) as
+    | TopicRow
     | undefined;
 
   if (!row) throw new TopicNotFoundError(topicId);
 
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    parentId: row.parent_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+  return rowToTopic(row);
+}
+
+/** ID of the topic whose ID or name (case-insensitive) is `ref`, or undefined. */
+export function findTopicId(db: Database.Database, ref: string): string | undefined {
+  const row = db
+    .prepare("SELECT id FROM topics WHERE id = ? OR name = ? COLLATE NOCASE ORDER BY id = ? DESC")
+    .get(ref, ref, ref) as { id: string } | undefined;
+  return row?.id;
+}
+
+/** ID of the topic whose ID or name is `ref`. Throws TopicNotFoundError when there is none. */
+export function resolveTopicId(db: Database.Database, ref: string): string {
+  const id = findTopicId(db, ref);
+  if (id === undefined) throw new TopicNotFoundError(ref);
+  return id;
 }
 
 export interface GetDocumentsByTopicOptions {
@@ -179,7 +166,10 @@ export interface TopicStats {
   documentCount: number;
 }
 
-/** Delete a topic and optionally its document associations. */
+/** Documents per DELETE statement when removing a topic's vectors (bounds SQL variables). */
+const EMBEDDING_DELETE_BATCH = 500;
+
+/** Delete a topic and optionally its documents (with their chunks and vectors). */
 export function deleteTopic(
   db: Database.Database,
   topicId: string,
@@ -189,6 +179,20 @@ export function deleteTopic(
   getTopic(db, topicId);
   const run = db.transaction(() => {
     if (options?.deleteDocuments) {
+      // chunk_embeddings is a virtual table with no foreign key, so remove vectors explicitly.
+      const docIds = (
+        db.prepare("SELECT id FROM documents WHERE topic_id = ?").all(topicId) as Array<{
+          id: string;
+        }>
+      ).map((row) => row.id);
+      try {
+        for (let i = 0; i < docIds.length; i += EMBEDDING_DELETE_BATCH) {
+          deleteChunkEmbeddings(db, docIds.slice(i, i + EMBEDDING_DELETE_BATCH));
+        }
+      } catch (err: unknown) {
+        const tableMissing = err instanceof Error && err.message.includes("no such table");
+        log[tableMissing ? "debug" : "warn"]({ err, topicId }, "Skipped chunk_embeddings cleanup");
+      }
       db.prepare("DELETE FROM documents WHERE topic_id = ?").run(topicId);
     }
     db.prepare("DELETE FROM topics WHERE id = ?").run(topicId);
@@ -223,37 +227,10 @@ export function getDocumentsByTopic(
   const offset = options?.offset ?? 0;
   const rows = db
     .prepare(
-      `SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
-    FROM documents WHERE topic_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT ${DOC_COLUMNS} FROM documents WHERE topic_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     )
-    .all(topicId, limit, offset) as Array<{
-    id: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    title: string;
-    content: string;
-    url: string | null;
-    content_hash: string | null;
-    submitted_by: string;
-    created_at: string;
-    updated_at: string;
-  }>;
-  return rows.map((row) => ({
-    id: row.id,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    title: row.title,
-    content: row.content,
-    url: row.url,
-    contentHash: row.content_hash,
-    submittedBy: row.submitted_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+    .all(topicId, limit, offset) as DocumentRow[];
+  return rows.map((row) => rowToDocument(row));
 }
 
 /** Get topics with document counts. */

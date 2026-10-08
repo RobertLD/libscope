@@ -1,6 +1,7 @@
 import { EmbeddingError } from "../errors.js";
 import { createChildLogger } from "../logger.js";
 import { withRetry } from "../utils/retry.js";
+import { EmbeddingDimensions } from "./dimensions.js";
 import type { EmbeddingProvider } from "./embedding.js";
 
 /**
@@ -9,14 +10,23 @@ import type { EmbeddingProvider } from "./embedding.js";
  */
 export class OllamaEmbeddingProvider implements EmbeddingProvider {
   readonly name = "ollama";
-  readonly dimensions: number;
+  private readonly expectedDimensions: EmbeddingDimensions;
 
+  /**
+   * @param dimensions - Override for the vector size. When omitted, known models use their
+   *   documented size and other models use the size of the first embedding returned.
+   */
   constructor(
     private readonly baseUrl: string = "http://localhost:11434",
-    private readonly model: string = "nomic-embed-text",
-    dimensions: number = 768,
+    readonly model: string = "nomic-embed-text",
+    dimensions?: number,
   ) {
-    this.dimensions = dimensions;
+    this.expectedDimensions = new EmbeddingDimensions(model, dimensions);
+  }
+
+  /** Vector size, or 0 until the first embedding of an unknown model. */
+  get dimensions(): number {
+    return this.expectedDimensions.value;
   }
 
   async embed(text: string): Promise<number[]> {
@@ -62,11 +72,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         if (!embedding) {
           throw new EmbeddingError("Ollama returned empty embeddings");
         }
-        if (embedding.length !== this.dimensions) {
-          throw new EmbeddingError(
-            `Expected embedding dimension ${this.dimensions}, got ${embedding.length}`,
-          );
-        }
+        this.expectedDimensions.check([embedding]);
         return embedding;
       });
     } catch (err) {
@@ -129,13 +135,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
             `Ollama returned ${embeddings.length} embeddings for ${texts.length} inputs`,
           );
         }
-        for (const emb of embeddings) {
-          if (emb.length !== this.dimensions) {
-            throw new EmbeddingError(
-              `Expected embedding dimension ${this.dimensions}, got ${emb.length}`,
-            );
-          }
-        }
+        this.expectedDimensions.check(embeddings);
         return embeddings;
       });
     } catch (err) {

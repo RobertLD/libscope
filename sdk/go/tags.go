@@ -1,45 +1,40 @@
 package libscope
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 )
 
-// ListTags lists all tags.
-func (c *Client) ListTags(ctx context.Context) ([]Tag, error) {
-	resp, err := c.do(ctx, http.MethodGet, "/api/v1/tags", nil)
-	if err != nil {
-		return nil, err
-	}
-	result, err := decodeResponse[[]Tag](resp)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+type documentTags struct {
+	Tags []string `json:"tags"`
 }
 
-// AddTagsToDocument adds tags to a document.
-func (c *Client) AddTagsToDocument(ctx context.Context, docID string, tags []string) ([]Tag, error) {
-	body := map[string]interface{}{
-		"tags": tags,
-	}
-	data, err := json.Marshal(body)
+// ListTags lists tags with their document counts.
+func (c *Client) ListTags(ctx context.Context) ([]Tag, error) {
+	page, err := get[Page[Tag]](ctx, c, "/tags", nil)
 	if err != nil {
-		return nil, fmt.Errorf("libscope: encoding request: %w", err)
+		return nil, err
 	}
+	return page.Items, nil
+}
 
-	path := "/api/v1/documents/" + url.PathEscape(docID) + "/tags"
-	resp, err := c.do(ctx, http.MethodPost, path, bytes.NewReader(data))
+// AddTags adds tags to a document and returns the document's tags.
+func (c *Client) AddTags(ctx context.Context, documentID string, tags []string) ([]string, error) {
+	path := documentsPath + segment(documentID) + "/tags"
+	out, err := send[documentTags](ctx, c, http.MethodPost, path, documentTags{Tags: tags})
 	if err != nil {
 		return nil, err
 	}
-	result, err := decodeResponse[[]Tag](resp)
-	if err != nil {
+	return out.Tags, nil
+}
+
+// RemoveTags removes tags from a document and returns the document's remaining tags.
+func (c *Client) RemoveTags(ctx context.Context, documentID string, tags []string) ([]string, error) {
+	var out documentTags
+	path := documentsPath + segment(documentID) + "/tags"
+	if err := c.call(ctx, http.MethodDelete, path, url.Values{"tags": tags}, nil, &out); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return out.Tags, nil
 }

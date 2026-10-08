@@ -12,12 +12,20 @@ import {
 } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type { EmbeddingProvider } from "../providers/embedding.js";
-import { ValidationError, FetchError } from "../errors.js";
+import { ValidationError, NotFoundError } from "../errors.js";
 import { getLogger } from "../logger.js";
-import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import {
+  buildEmbeddingText,
+  createChunkWriter,
+  splitIntoChunks,
+  type ChunkWriter,
+} from "./indexing.js";
+import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { suggestTagsFromText } from "./tags.js";
 import { fetchAndConvert } from "./url-fetcher.js";
+import { forEachSequential } from "../utils/async.js";
+import { globToRegExp, toPosixPath } from "../utils/glob.js";
 
 export interface PackDocument {
   title: string;
@@ -39,13 +47,6 @@ export interface KnowledgePack {
   };
 }
 
-export interface PackInfo {
-  name: string;
-  version: string;
-  description: string;
-  docCount: number;
-}
-
 export interface InstalledPack {
   name: string;
   version: string;
@@ -62,7 +63,6 @@ export interface InstallResult {
 }
 
 export interface InstallOptions {
-  registryUrl?: string | undefined;
   /** Number of documents to embed and insert per batch. Default: 10. */
   batchSize?: number | undefined;
   /** Skip the first N documents (for resuming a partial install). Default: 0. */
@@ -71,6 +71,11 @@ export interface InstallOptions {
   concurrency?: number | undefined;
   /** Called after each batch of documents is processed. */
   onProgress?: ((current: number, total: number, docTitle: string) => void) | undefined;
+  /**
+   * Abort between batches. The install is then rolled back (pack row and inserted documents
+   * removed) and the returned promise rejects with the signal's reason.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 export interface CreatePackOptions {
@@ -103,8 +108,6 @@ export interface CreatePackFromSourceOptions {
   onProgress?: ((info: { file: string; index: number; total: number }) => void) | undefined;
 }
 
-const DEFAULT_REGISTRY_URL = "https://raw.githubusercontent.com/libscope/packs/main/registry.json";
-
 /** Gzip magic number: first two bytes of a gzip stream. */
 const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
 
@@ -124,37 +127,12 @@ function writePackFile(filePath: string, pack: KnowledgePack): void {
 }
 
 /** Read a pack file, auto-detecting gzip by magic bytes or extension. */
-function readPackFile(filePath: string): string {
+export function readPackFile(filePath: string): string {
   const raw = readFileSync(filePath);
   if (raw.length >= 2 && raw[0] === GZIP_MAGIC[0] && raw[1] === GZIP_MAGIC[1]) {
     return gunzipSync(raw).toString("utf-8");
   }
   return raw.toString("utf-8");
-}
-
-/** Validate that a registry URL uses https and is not a private IP. */
-function validateRegistryUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new ValidationError("Invalid registry URL");
-  }
-  if (parsed.protocol !== "https:") {
-    throw new ValidationError("Registry URL must use https");
-  }
-  const host = parsed.hostname;
-  if (
-    host === "localhost" ||
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host.startsWith("169.254.")
-  ) {
-    throw new ValidationError("Registry URL must not point to a private/internal address");
-  }
 }
 
 /** Validate that a value is a non-empty string, throwing with the given message if not. */
@@ -218,49 +196,10 @@ function validatePack(data: unknown): KnowledgePack {
   return data as KnowledgePack;
 }
 
-/** List available packs from a remote registry. */
-export async function listAvailablePacks(registryUrl?: string): Promise<PackInfo[]> {
-  const url = registryUrl ?? DEFAULT_REGISTRY_URL;
-  const log = getLogger();
-
-  validateRegistryUrl(url);
-
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) {
-      throw new FetchError(`Registry returned ${response.status}: ${response.statusText}`);
-    }
-    const data: unknown = await response.json();
-    if (!Array.isArray(data)) {
-      throw new ValidationError("Registry response is not an array");
-    }
-
-    return (data as Array<Record<string, unknown>>).map((entry) => {
-      const name = entry["name"];
-      const version = entry["version"];
-      const description = entry["description"];
-      const docCount = entry["docCount"] ?? entry["doc_count"];
-      return {
-        name: typeof name === "string" ? name : "",
-        version: typeof version === "string" ? version : "",
-        description: typeof description === "string" ? description : "",
-        docCount: typeof docCount === "number" ? docCount : 0,
-      };
-    });
-  } catch (err) {
-    log.error({ err, url }, "Failed to fetch pack registry");
-    if (err instanceof ValidationError) throw err;
-    if (err instanceof FetchError) throw err;
-    throw new FetchError(
-      `Failed to fetch pack registry: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
 /** Load a pack from a local file path. */
-function loadPackFromFile(packNameOrPath: string): KnowledgePack {
-  const resolved = pathResolve(packNameOrPath);
-  if (!pathIsAbsolute(packNameOrPath) && !resolved.startsWith(process.cwd())) {
+function loadPackFromFile(packPath: string): KnowledgePack {
+  const resolved = pathResolve(packPath);
+  if (!pathIsAbsolute(packPath) && !resolved.startsWith(process.cwd())) {
     throw new ValidationError("Pack file path must be within the current working directory");
   }
   try {
@@ -270,31 +209,7 @@ function loadPackFromFile(packNameOrPath: string): KnowledgePack {
   } catch (err) {
     if (err instanceof ValidationError) throw err;
     throw new ValidationError(
-      `Failed to read pack file "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/** Load a pack from a remote registry. */
-async function loadPackFromRegistry(
-  packNameOrPath: string,
-  registryUrl: string,
-): Promise<KnowledgePack> {
-  validateRegistryUrl(registryUrl);
-  const baseUrl = registryUrl.replace(/\/[^/]+$/, "");
-  const packUrl = `${baseUrl}/${packNameOrPath}.json`;
-  try {
-    const response = await fetch(packUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) {
-      throw new FetchError(`Pack fetch returned ${response.status}: ${response.statusText}`);
-    }
-    const data: unknown = await response.json();
-    return validatePack(data);
-  } catch (err) {
-    if (err instanceof ValidationError) throw err;
-    if (err instanceof FetchError) throw err;
-    throw new FetchError(
-      `Failed to fetch pack "${packNameOrPath}": ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to read pack file "${packPath}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -335,27 +250,28 @@ type DocChunkInfo = {
 };
 type ResolvedBatch = {
   docInfos: DocChunkInfo[];
-  allChunks: string[];
+  /** Text to embed for every chunk in the batch, in docInfos/chunk order. */
+  embeddingTexts: string[];
 };
 
 /** Chunk a batch's documents on demand, right before embedding. */
 function resolveBatch(batchDocs: PackDocument[]): ResolvedBatch {
   const docInfos: DocChunkInfo[] = [];
-  const allChunks: string[] = [];
+  const embeddingTexts: string[] = [];
   for (const doc of batchDocs) {
     const contentHash = createHash("sha256").update(doc.content).digest("hex");
-    const useStreaming = doc.content.length > STREAMING_THRESHOLD;
-    const chunks = useStreaming ? chunkContentStreaming(doc.content) : chunkContent(doc.content);
+    const chunks = splitIntoChunks(doc.content);
     docInfos.push({
       doc,
       docId: randomUUID(),
       contentHash,
       chunks,
-      chunkOffset: allChunks.length,
+      chunkOffset: embeddingTexts.length,
     });
-    allChunks.push(...chunks);
+    // Pack documents are stored with a title only (no library/version).
+    embeddingTexts.push(...chunks.map((c) => buildEmbeddingText(c, { title: doc.title })));
   }
-  return { docInfos, allChunks };
+  return { docInfos, embeddingTexts };
 }
 
 /** Insert a single resolved batch into the database. Returns number of documents installed. */
@@ -365,13 +281,9 @@ function insertBatchIntoDb(
   embeddings: number[][],
   packName: string,
   insertDoc: Database.Statement,
-  insertChunk: Database.Statement,
-  insertEmbedding: Database.Statement,
+  writer: ChunkWriter,
 ): number {
-  const log = getLogger();
-  let batchInstalled = 0;
   const doInsert = db.transaction(() => {
-    batchInstalled = 0;
     for (const info of batch.docInfos) {
       insertDoc.run(
         info.docId,
@@ -383,41 +295,90 @@ function insertBatchIntoDb(
         info.contentHash,
         packName,
       );
-      for (let j = 0; j < info.chunks.length; j++) {
-        const chunkId = randomUUID();
-        const chunkText = info.chunks[j] ?? "";
-        const embedding = embeddings[info.chunkOffset + j] ?? [];
-        insertChunk.run(chunkId, info.docId, chunkText, j);
-        try {
-          const vecBuffer = Buffer.from(new Float32Array(embedding).buffer);
-          insertEmbedding.run(chunkId, vecBuffer);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (!message.includes("no such table")) {
-            log.warn({ chunkId, err }, "Failed to insert vector embedding");
-          }
-        }
-      }
-      batchInstalled++;
+      writer.insertChunks(
+        info.docId,
+        info.chunks,
+        embeddings.slice(info.chunkOffset, info.chunkOffset + info.chunks.length),
+      );
     }
   });
   doInsert();
-  return batchInstalled;
+  return batch.docInfos.length;
 }
 
-/** Install a pack from a local JSON file path or registry name. */
+/**
+ * Run `start(i)` for each batch index with at most `concurrency` in flight, calling
+ * `afterEach()` each time one settles. Stops scheduling and rejects when `start` rejects,
+ * `afterEach` throws, or `signal` is aborted (with the signal's reason).
+ */
+function runBatchesConcurrently(
+  batchCount: number,
+  concurrency: number,
+  start: (i: number) => Promise<void>,
+  afterEach: () => void,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let activeCount = 0;
+    let scheduleIdx = 0;
+    let settled = false;
+
+    const fail = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
+    const onBatchSettled = (): void => {
+      activeCount--;
+      if (settled) return;
+      try {
+        signal?.throwIfAborted();
+        afterEach();
+        if (scheduleIdx < batchCount) {
+          scheduleNext();
+        } else if (activeCount === 0) {
+          settled = true;
+          resolve();
+        }
+      } catch (err) {
+        fail(err);
+      }
+    };
+
+    const onBatchFailed = (err: unknown): void => {
+      activeCount--;
+      fail(err);
+    };
+
+    function scheduleNext(): void {
+      while (activeCount < concurrency && scheduleIdx < batchCount) {
+        const i = scheduleIdx++;
+        activeCount++;
+        start(i).then(onBatchSettled, onBatchFailed);
+      }
+    }
+
+    if (batchCount === 0) {
+      resolve();
+      return;
+    }
+    scheduleNext();
+  });
+}
+
+/**
+ * Install a pack from a .json or .json.gz file (gzip is detected by magic bytes). Packs in
+ * registries are resolved to a file with `resolveRegistryPack` first.
+ */
 export async function installPack(
   db: Database.Database,
   provider: EmbeddingProvider,
-  packNameOrPath: string,
+  packPath: string,
   options?: InstallOptions,
 ): Promise<InstallResult> {
   const log = getLogger();
-
-  const isLocalFile = packNameOrPath.endsWith(".json") || packNameOrPath.endsWith(".json.gz");
-  const pack = isLocalFile
-    ? loadPackFromFile(packNameOrPath)
-    : await loadPackFromRegistry(packNameOrPath, options?.registryUrl ?? DEFAULT_REGISTRY_URL);
+  const pack = loadPackFromFile(packPath);
 
   // Check if already installed
   const existing = db.prepare("SELECT name FROM packs WHERE name = ?").get(pack.name) as
@@ -433,6 +394,7 @@ export async function installPack(
   const { batchSize, concurrency, resumeFrom } = validateInstallOptions(options, total);
   const onProgress = options?.onProgress;
   const docs = resumeFrom > 0 ? pack.documents.slice(resumeFrom) : pack.documents;
+  options?.signal?.throwIfAborted();
 
   log.info(
     { pack: pack.name, docCount: total, batchSize, concurrency, resumeFrom },
@@ -449,14 +411,7 @@ export async function installPack(
     INSERT INTO documents (id, source_type, title, content, url, submitted_by, content_hash, pack_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertChunk = db.prepare(`
-    INSERT INTO chunks (id, document_id, content, chunk_index)
-    VALUES (?, ?, ?, ?)
-  `);
-  const insertEmbedding = db.prepare(`
-    INSERT INTO chunk_embeddings (chunk_id, embedding)
-    VALUES (?, ?)
-  `);
+  const writer = createChunkWriter(db);
 
   type BatchData = { batchDocs: PackDocument[] };
   const batches: BatchData[] = [];
@@ -484,15 +439,7 @@ export async function installPack(
         errors += batch.docInfos.length;
       } else {
         try {
-          installed += insertBatchIntoDb(
-            db,
-            batch,
-            embeddings,
-            pack.name,
-            insertDoc,
-            insertChunk,
-            insertEmbedding,
-          );
+          installed += insertBatchIntoDb(db, batch, embeddings, pack.name, insertDoc, writer);
         } catch (err) {
           log.warn(
             { err, pack: pack.name, batchIndex: i },
@@ -511,58 +458,37 @@ export async function installPack(
     }
   }
 
-  // Semaphore-based concurrent embedding
-  await new Promise<void>((resolve) => {
-    if (batches.length === 0) {
-      resolve();
-      return;
+  /** Chunk and embed batch `i`; embedding failures are recorded, not thrown. */
+  async function embedBatchAt(i: number): Promise<void> {
+    const resolved = resolveBatch(batches[i]!.batchDocs);
+    try {
+      const embeddings =
+        resolved.embeddingTexts.length > 0
+          ? await provider.embedBatch(resolved.embeddingTexts)
+          : [];
+      embedResults[i] = { resolved, embeddings, success: true };
+    } catch (err) {
+      log.warn(
+        { err, pack: pack.name, batchIndex: i },
+        "Failed to embed batch, skipping these documents",
+      );
+      embedResults[i] = { resolved, embeddings: [], success: false };
     }
+  }
 
-    let activeCount = 0;
-    let scheduleIdx = 0;
-
-    function scheduleNext(): void {
-      while (activeCount < concurrency && scheduleIdx < batches.length) {
-        const i = scheduleIdx++;
-        const resolved = resolveBatch(batches[i]!.batchDocs);
-        activeCount++;
-
-        let embedPromise: Promise<number[][]>;
-        if (resolved.allChunks.length > 0) {
-          try {
-            embedPromise = provider.embedBatch(resolved.allChunks);
-          } catch (err) {
-            embedPromise = Promise.reject(err instanceof Error ? err : new Error(String(err)));
-          }
-        } else {
-          embedPromise = Promise.resolve([] as number[][]);
-        }
-
-        embedPromise
-          .then((embeddings) => {
-            embedResults[i] = { resolved, embeddings, success: true };
-          })
-          .catch((err) => {
-            log.warn(
-              { err, pack: pack.name, batchIndex: i },
-              "Failed to embed batch, skipping these documents",
-            );
-            embedResults[i] = { resolved, embeddings: [], success: false };
-          })
-          .finally(() => {
-            activeCount--;
-            flushInserts();
-            if (scheduleIdx < batches.length) {
-              scheduleNext();
-            } else if (activeCount === 0) {
-              resolve();
-            }
-          });
-      }
-    }
-
-    scheduleNext();
-  });
+  try {
+    await runBatchesConcurrently(
+      batches.length,
+      concurrency,
+      embedBatchAt,
+      flushInserts,
+      options?.signal,
+    );
+  } catch (err) {
+    log.warn({ err, pack: pack.name }, "Pack install stopped, rolling back");
+    removePack(db, pack.name);
+    throw err;
+  }
 
   db.prepare("UPDATE packs SET doc_count = ? WHERE name = ?").run(installed, pack.name);
 
@@ -579,7 +505,7 @@ export function removePack(db: Database.Database, packName: string): void {
     | undefined;
 
   if (!existing) {
-    throw new ValidationError(`Pack "${packName}" is not installed`);
+    throw new NotFoundError(`Pack "${packName}" is not installed`, "PACK_NOT_FOUND");
   }
 
   const docIds = db.prepare("SELECT id FROM documents WHERE pack_name = ?").all(packName) as Array<{
@@ -589,9 +515,7 @@ export function removePack(db: Database.Database, packName: string): void {
   const deleteTransaction = db.transaction(() => {
     for (const { id } of docIds) {
       try {
-        db.prepare(
-          "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-        ).run(id);
+        deleteChunkEmbeddings(db, [id]);
       } catch (err) {
         log.debug(
           { err, documentId: id },
@@ -688,18 +612,6 @@ export function createPack(db: Database.Database, options: CreatePackOptions): K
 // Create pack from filesystem / URL sources (no database required)
 // ---------------------------------------------------------------------------
 
-/** Simple glob-style pattern matching (supports * and ** wildcards). */
-function matchesExcludePattern(relativePath: string, pattern: string): boolean {
-  // Escape regex special chars except * and **
-  // prettier-ignore
-  const escaped = pattern
-    .replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`)
-    .replaceAll("**", "\0")
-    .replaceAll("*", "[^/]*")
-    .replaceAll("\0", ".*");
-  return new RegExp(`^${escaped}$`).test(relativePath);
-}
-
 /** Recursively collect files from a directory. */
 function collectFiles(
   dir: string,
@@ -709,6 +621,7 @@ function collectFiles(
   excludePatterns: string[],
 ): string[] {
   const results: string[] = [];
+  const excludeRegexes = excludePatterns.map(globToRegExp);
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -723,7 +636,7 @@ function collectFiles(
     const rel = relative(rootDir, fullPath);
 
     // Check exclude patterns
-    if (excludePatterns.some((p) => matchesExcludePattern(rel, p))) {
+    if (excludeRegexes.some((rx) => rx.test(toPosixPath(rel)))) {
       continue;
     }
 
@@ -819,57 +732,76 @@ async function fetchUrlToPackDoc(url: string): Promise<PackDocument | null> {
   return { title: fetched.title, content: fetched.content.trimEnd(), source: url, tags };
 }
 
-/** Process all file sources, collecting documents and errors. */
-async function processFileSources(
-  allFiles: string[],
-  totalCount: number,
-  onProgress: CreatePackFromSourceOptions["onProgress"],
-): Promise<{ documents: PackDocument[]; errors: Array<{ source: string; error: string }> }> {
-  const log = getLogger();
+interface SourceResults {
+  documents: PackDocument[];
+  errors: Array<{ source: string; error: string }>;
+}
+
+/**
+ * Load each source in order with `load`, collecting documents and errors. A source that fails
+ * is reported to `onError` and skipped. `indexOffset` is added to the progress index.
+ */
+async function processSources(
+  sources: string[],
+  progress: {
+    indexOffset: number;
+    totalCount: number;
+    onProgress: CreatePackFromSourceOptions["onProgress"];
+  },
+  load: (source: string) => Promise<PackDocument | null>,
+  onError: (source: string, message: string) => void,
+): Promise<SourceResults> {
   const documents: PackDocument[] = [];
   const errors: Array<{ source: string; error: string }> = [];
 
-  for (let i = 0; i < allFiles.length; i++) {
-    const filePath = allFiles[i]!;
-    onProgress?.({ file: filePath, index: i, total: totalCount });
+  await forEachSequential(sources, async (source, i) => {
+    progress.onProgress?.({
+      file: source,
+      index: progress.indexOffset + i,
+      total: progress.totalCount,
+    });
     try {
-      const doc = await parseFileToPackDoc(filePath);
+      const doc = await load(source);
       if (doc) documents.push(doc);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ file: filePath, err: msg }, "Failed to parse file, skipping");
-      errors.push({ source: filePath, error: msg });
+      onError(source, msg);
+      errors.push({ source, error: msg });
     }
-  }
+  });
 
   return { documents, errors };
 }
 
+/** Process all file sources, collecting documents and errors. */
+function processFileSources(
+  allFiles: string[],
+  totalCount: number,
+  onProgress: CreatePackFromSourceOptions["onProgress"],
+): Promise<SourceResults> {
+  const log = getLogger();
+  return processSources(
+    allFiles,
+    { indexOffset: 0, totalCount, onProgress },
+    parseFileToPackDoc,
+    (file, msg) => log.warn({ file, err: msg }, "Failed to parse file, skipping"),
+  );
+}
+
 /** Process all URL sources, collecting documents and errors. */
-async function processUrlSources(
+function processUrlSources(
   urls: string[],
   fileOffset: number,
   totalCount: number,
   onProgress: CreatePackFromSourceOptions["onProgress"],
-): Promise<{ documents: PackDocument[]; errors: Array<{ source: string; error: string }> }> {
+): Promise<SourceResults> {
   const log = getLogger();
-  const documents: PackDocument[] = [];
-  const errors: Array<{ source: string; error: string }> = [];
-
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i]!;
-    onProgress?.({ file: url, index: fileOffset + i, total: totalCount });
-    try {
-      const doc = await fetchUrlToPackDoc(url);
-      if (doc) documents.push(doc);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ url, err: msg }, "Failed to fetch URL, skipping");
-      errors.push({ source: url, error: msg });
-    }
-  }
-
-  return { documents, errors };
+  return processSources(
+    urls,
+    { indexOffset: fileOffset, totalCount, onProgress },
+    fetchUrlToPackDoc,
+    (url, msg) => log.warn({ url, err: msg }, "Failed to fetch URL, skipping"),
+  );
 }
 
 /** Validate that at least one document was created, throwing if none. */

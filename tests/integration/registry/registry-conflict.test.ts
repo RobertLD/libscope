@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID, createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { initLogger } from "../../../src/logger.js";
+import { NotFoundError } from "../../../src/errors.js";
 import type { RegistryEntry, PackSummary } from "../../../src/registry/types.js";
 
 const gitEnv = {
@@ -29,10 +30,13 @@ vi.mock("node:os", async (importOriginal) => {
 const { loadRegistries, saveRegistries, getRegistry } =
   await import("../../../src/registry/config.js");
 const { syncRegistry } = await import("../../../src/registry/sync.js");
-const { resolvePackFromRegistries } = await import("../../../src/registry/resolve.js");
+const { findRegistryPack } = await import("../../../src/registry/resolve.js");
+const { installPackOperation, listPacksOperation, runOperation } =
+  await import("../../../src/core/operations/index.js");
+const { makeContext } = await import("../../unit/operations/helpers.js");
 
-function makeEntry(name: string, url: string, priority = 1): RegistryEntry {
-  return { name, url, syncInterval: 3600, priority, lastSyncedAt: null };
+function makeEntry(name: string, url: string): RegistryEntry {
+  return { name, url, lastSyncedAt: null };
 }
 
 function addTestRegistry(entry: RegistryEntry): void {
@@ -112,183 +116,69 @@ describe("integration: registry conflict resolution", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("should detect conflict when two registries have the same pack name", async () => {
-    const sharedPack: PackSummary = {
-      name: "shared-pack",
-      description: "Shared",
+  function pack(name: string, author = "author"): PackSummary {
+    return {
+      name,
+      description: `The ${name} pack`,
       tags: [],
       latestVersion: "1.0.0",
-      author: "author",
+      author,
       updatedAt: "2026-01-01",
     };
+  }
 
-    const repo1 = createBareRepoWithPacks(tempDir, [sharedPack]);
-    const repo2 = createBareRepoWithPacks(tempDir, [{ ...sharedPack, author: "other-author" }]);
+  async function addSynced(name: string, packs: PackSummary[]): Promise<void> {
+    addTestRegistry(makeEntry(name, createBareRepoWithPacks(tempDir, packs)));
+    expect((await syncRegistry(getRegistry(name)!)).status).toBe("success");
+  }
 
-    addTestRegistry(makeEntry("reg1", repo1, 2));
-    addTestRegistry(makeEntry("reg2", repo2, 1));
+  it("refuses an ambiguous pack name and installs from the named registry", async () => {
+    await addSynced("reg1", [pack("shared-pack")]);
+    await addSynced("reg2", [pack("shared-pack", "other-author")]);
+    const t = makeContext();
+    try {
+      await expect(
+        runOperation(installPackOperation, t.ctx, { pack: "shared-pack" }),
+      ).rejects.toThrow(/several registries \(reg1, reg2\)/);
 
-    await syncRegistry(getRegistry("reg1")!);
-    await syncRegistry(getRegistry("reg2")!);
-
-    // With interactive resolution, should get conflict back
-    const { resolved, conflict } = resolvePackFromRegistries("shared-pack", {
-      conflictResolution: { strategy: "interactive" },
-    });
-
-    expect(resolved).toBeNull();
-    expect(conflict).toBeDefined();
-    expect(conflict!.sources).toHaveLength(2);
-    expect(conflict!.sources.map((s) => s.registryName).sort((a, b) => a.localeCompare(b))).toEqual(
-      ["reg1", "reg2"],
-    );
+      const result = await runOperation(installPackOperation, t.ctx, {
+        pack: "shared-pack@1.0.0",
+        registry: "reg2",
+      });
+      expect(result).toMatchObject({ packName: "shared-pack", documentsInstalled: 1 });
+      const row = t.db.prepare("SELECT content FROM documents").get() as { content: string };
+      expect(row.content).toContain("other-author");
+    } finally {
+      t.db.close();
+    }
   });
 
-  it("should resolve conflict with explicit --registry flag", async () => {
-    const sharedPack: PackSummary = {
-      name: "shared-pack",
-      description: "Shared",
-      tags: [],
-      latestVersion: "1.0.0",
-      author: "author-1",
-      updatedAt: "2026-01-01",
-    };
-
-    const repo1 = createBareRepoWithPacks(tempDir, [sharedPack]);
-    const repo2 = createBareRepoWithPacks(tempDir, [{ ...sharedPack, author: "author-2" }]);
-
-    addTestRegistry(makeEntry("reg1", repo1));
-    addTestRegistry(makeEntry("reg2", repo2));
-    await syncRegistry(getRegistry("reg1")!);
-    await syncRegistry(getRegistry("reg2")!);
-
-    const { resolved } = resolvePackFromRegistries("shared-pack", {
-      registryName: "reg1",
-    });
-
-    expect(resolved).not.toBeNull();
-    expect(resolved!.registryName).toBe("reg1");
+  it("resolves packs with different names without a registry", async () => {
+    await addSynced("one", [pack("alpha")]);
+    await addSynced("two", [pack("beta")]);
+    expect(findRegistryPack("alpha").registry).toBe("one");
+    expect(findRegistryPack("beta").registry).toBe("two");
+    expect(() => findRegistryPack("gamma")).toThrow(NotFoundError);
   });
 
-  it("should resolve conflict by priority (lower wins)", async () => {
-    const sharedPack: PackSummary = {
-      name: "priority-pack",
-      description: "Priority test",
-      tags: [],
-      latestVersion: "1.0.0",
-      author: "author",
-      updatedAt: "2026-01-01",
-    };
-
-    const repo1 = createBareRepoWithPacks(tempDir, [sharedPack]);
-    const repo2 = createBareRepoWithPacks(tempDir, [sharedPack]);
-
-    addTestRegistry(makeEntry("high-priority", repo1, 10));
-    addTestRegistry(makeEntry("low-priority", repo2, 1));
-    await syncRegistry(getRegistry("high-priority")!);
-    await syncRegistry(getRegistry("low-priority")!);
-
-    const { resolved } = resolvePackFromRegistries("priority-pack", {
-      conflictResolution: { strategy: "priority" },
-    });
-
-    expect(resolved).not.toBeNull();
-    expect(resolved!.registryName).toBe("low-priority");
-  });
-
-  it("should not conflict when packs have different names", async () => {
-    const repo1 = createBareRepoWithPacks(tempDir, [
-      {
-        name: "pack-a",
-        description: "Pack A",
-        tags: [],
-        latestVersion: "1.0.0",
-        author: "a",
-        updatedAt: "2026-01-01",
-      },
-    ]);
-    const repo2 = createBareRepoWithPacks(tempDir, [
-      {
-        name: "pack-b",
-        description: "Pack B",
-        tags: [],
-        latestVersion: "1.0.0",
-        author: "b",
-        updatedAt: "2026-01-01",
-      },
-    ]);
-
-    addTestRegistry(makeEntry("no-conflict-1", repo1));
-    addTestRegistry(makeEntry("no-conflict-2", repo2));
-    await syncRegistry(getRegistry("no-conflict-1")!);
-    await syncRegistry(getRegistry("no-conflict-2")!);
-
-    const { resolved: r1, conflict: c1 } = resolvePackFromRegistries("pack-a");
-    expect(r1).not.toBeNull();
-    expect(c1).toBeUndefined();
-
-    const { resolved: r2, conflict: c2 } = resolvePackFromRegistries("pack-b");
-    expect(r2).not.toBeNull();
-    expect(c2).toBeUndefined();
-  });
-
-  it("should handle conflict with three registries", async () => {
-    const sharedPack: PackSummary = {
-      name: "triple-pack",
-      description: "Three-way conflict",
-      tags: [],
-      latestVersion: "1.0.0",
-      author: "author",
-      updatedAt: "2026-01-01",
-    };
-
-    const repo1 = createBareRepoWithPacks(tempDir, [sharedPack]);
-    const repo2 = createBareRepoWithPacks(tempDir, [sharedPack]);
-    const repo3 = createBareRepoWithPacks(tempDir, [sharedPack]);
-
-    addTestRegistry(makeEntry("triple-1", repo1));
-    addTestRegistry(makeEntry("triple-2", repo2));
-    addTestRegistry(makeEntry("triple-3", repo3));
-    await syncRegistry(getRegistry("triple-1")!);
-    await syncRegistry(getRegistry("triple-2")!);
-    await syncRegistry(getRegistry("triple-3")!);
-
-    const { conflict } = resolvePackFromRegistries("triple-pack", {
-      conflictResolution: { strategy: "interactive" },
-    });
-
-    expect(conflict).toBeDefined();
-    expect(conflict!.sources).toHaveLength(3);
-  });
-
-  it("should list all conflicting registries in conflict object", async () => {
-    const sharedPack: PackSummary = {
-      name: "info-pack",
-      description: "Info test",
-      tags: [],
-      latestVersion: "1.0.0",
-      author: "author",
-      updatedAt: "2026-01-01",
-    };
-
-    const repo1 = createBareRepoWithPacks(tempDir, [sharedPack]);
-    const repo2 = createBareRepoWithPacks(tempDir, [sharedPack]);
-
-    addTestRegistry(makeEntry("info-reg1", repo1, 2));
-    addTestRegistry(makeEntry("info-reg2", repo2, 1));
-    await syncRegistry(getRegistry("info-reg1")!);
-    await syncRegistry(getRegistry("info-reg2")!);
-
-    const { conflict } = resolvePackFromRegistries("info-pack", {
-      conflictResolution: { strategy: "interactive" },
-    });
-
-    expect(conflict!.packName).toBe("info-pack");
-    for (const source of conflict!.sources) {
-      expect(source.registryName).toBeTruthy();
-      expect(source.registryUrl).toBeTruthy();
-      expect(source.version).toBe("1.0.0");
-      expect(typeof source.priority).toBe("number");
+  it("lists the packs available in the synced registries", async () => {
+    await addSynced("one", [pack("alpha")]);
+    await addSynced("two", [pack("beta"), pack("alpha")]);
+    const t = makeContext();
+    try {
+      const all = await runOperation(listPacksOperation, t.ctx, { available: true });
+      expect(all.items.map((p) => ("registry" in p ? `${p.registry}/${p.name}` : p.name))).toEqual([
+        "one/alpha",
+        "two/beta",
+        "two/alpha",
+      ]);
+      const two = await runOperation(listPacksOperation, t.ctx, {
+        available: true,
+        registry: "two",
+      });
+      expect(two.items).toHaveLength(2);
+    } finally {
+      t.db.close();
     }
   });
 });

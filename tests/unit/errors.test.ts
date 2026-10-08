@@ -8,7 +8,26 @@ import {
   ConfigError,
   DocumentNotFoundError,
   ChunkNotFoundError,
+  TopicNotFoundError,
+  NotFoundError,
 } from "../../src/errors.js";
+
+describe("NotFoundError", () => {
+  it("is the base class of every not-found error and keeps each code", () => {
+    const cases: Array<[NotFoundError, string]> = [
+      [new DocumentNotFoundError("d"), "DOCUMENT_NOT_FOUND"],
+      [new ChunkNotFoundError("c"), "CHUNK_NOT_FOUND"],
+      [new TopicNotFoundError("t"), "TOPIC_NOT_FOUND"],
+      [new NotFoundError("Link not found: l", "LINK_NOT_FOUND"), "LINK_NOT_FOUND"],
+      [new NotFoundError("gone"), "NOT_FOUND"],
+    ];
+    for (const [err, code] of cases) {
+      expect(err).toBeInstanceOf(NotFoundError);
+      expect(err).toBeInstanceOf(LibScopeError);
+      expect(err.code).toBe(code);
+    }
+  });
+});
 
 describe("errors", () => {
   it("should create LibScopeError with code", () => {

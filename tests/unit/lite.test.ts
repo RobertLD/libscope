@@ -1,348 +1,188 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { LibScopeLite } from "../../src/lite/index.js";
-import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  ConfigError,
+  LibScope,
+  ValidationError,
+  createCodeChunker,
+  createLite,
+  normalizeRawInput,
+  type LlmProvider,
+} from "../../src/lite/index.js";
 import { TreeSitterChunker } from "../../src/lite/chunker-treesitter.js";
-import type { LlmProvider } from "../../src/core/rag.js";
+import { initLogger } from "../../src/logger.js";
+import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
 
-function* fakeStream(): Generator<string> {
-  yield "Hello";
-  yield " world";
+const corpus = [
+  { title: "React Hooks", content: "useState and useEffect are the most common React hooks." },
+  { title: "Vue Composition", content: "Vue 3 composition API uses the setup function." },
+  { title: "Angular DI", content: "Angular uses the dependency injection pattern extensively." },
+];
+
+async function seed(scope: LibScope): Promise<void> {
+  for (const doc of corpus) await scope.add(doc);
 }
 
-describe("LibScopeLite", () => {
-  let lite: LibScopeLite;
-  let provider: MockEmbeddingProvider;
+/** Search results without the per-database IDs and timestamps. */
+function comparable(items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return items.map(({ documentId: _d, chunkId: _c, ...rest }) => rest);
+}
 
-  beforeEach(() => {
-    provider = new MockEmbeddingProvider();
-    lite = new LibScopeLite({ dbPath: ":memory:", provider });
-  });
+beforeAll(() => {
+  initLogger("silent");
+});
+
+describe("createLite", () => {
+  const open: LibScope[] = [];
+  const lite = (options: Parameters<typeof createLite>[0]): LibScope => {
+    const scope = createLite(options);
+    open.push(scope);
+    return scope;
+  };
 
   afterEach(() => {
-    lite.close();
+    for (const scope of open.splice(0)) scope.close();
+    vi.restoreAllMocks();
   });
 
-  describe("constructor", () => {
-    it("should create an instance with in-memory DB", () => {
-      expect(lite).toBeInstanceOf(LibScopeLite);
-    });
-
-    it("should accept custom embedding provider", () => {
-      const custom = new MockEmbeddingProvider();
-      const instance = new LibScopeLite({ dbPath: ":memory:", provider: custom });
-      expect(instance).toBeInstanceOf(LibScopeLite);
-      instance.close();
-    });
+  it("returns a LibScope", () => {
+    expect(lite({ dbPath: ":memory:", provider: new MockEmbeddingProvider() })).toBeInstanceOf(
+      LibScope,
+    );
   });
 
-  describe("index()", () => {
-    it("should index a single document", async () => {
-      await lite.index([{ title: "Test Doc", content: "This is test content for indexing." }]);
-
-      expect(provider.embedBatchCallCount).toBeGreaterThan(0);
-    });
-
-    it("should index multiple documents", async () => {
-      await lite.index([
-        { title: "Doc A", content: "Content of document A about TypeScript." },
-        { title: "Doc B", content: "Content of document B about Python." },
-      ]);
-
-      // Both docs should have been processed
-      expect(provider.embedBatchCallCount).toBeGreaterThanOrEqual(2);
-    });
-
-    it("should index with optional metadata fields", async () => {
-      await lite.index([
-        {
-          title: "Library Doc",
-          content: "React documentation content here.",
-          library: "react",
-          sourceType: "library",
-          version: "18.0.0",
-          url: "https://react.dev",
-        },
-      ]);
-
-      // Should succeed without errors
-      expect(provider.embedBatchCallCount).toBeGreaterThan(0);
-    });
+  it("needs dbPath or db", () => {
+    expect(() => createLite({ provider: new MockEmbeddingProvider() })).toThrow(ValidationError);
   });
 
-  describe("indexBatch()", () => {
-    it("should index documents with concurrency control", async () => {
-      const docs = Array.from({ length: 5 }, (_, i) => ({
-        title: `Batch Doc ${i}`,
-        content: `Batch content number ${i} with enough text to be meaningful.`,
-      }));
-
-      await lite.indexBatch(docs, { concurrency: 2 });
-
-      expect(provider.embedBatchCallCount).toBe(5);
+  it("gives the same results as LibScope.create with useConfigFile: false", async () => {
+    const preset = lite({ dbPath: ":memory:", provider: new MockEmbeddingProvider() });
+    const full = LibScope.create({
+      dbPath: ":memory:",
+      provider: new MockEmbeddingProvider(),
+      useConfigFile: false,
     });
+    open.push(full);
+    await seed(preset);
+    await seed(full);
 
-    it("should handle empty array", async () => {
-      await lite.indexBatch([], { concurrency: 2 });
-      expect(provider.embedBatchCallCount).toBe(0);
-    });
+    const a = await preset.search({ query: "React hooks", limit: 2 });
+    const b = await full.search({ query: "React hooks", limit: 2 });
+    expect(a.total).toBe(b.total);
+    expect(comparable(a.items as unknown as Array<Record<string, unknown>>)).toEqual(
+      comparable(b.items as unknown as Array<Record<string, unknown>>),
+    );
+    expect(a.items[0]).toHaveProperty("documentId");
 
-    it("should handle concurrency of 1 (sequential)", async () => {
-      const docs = [
-        { title: "A", content: "Content A for sequential test." },
-        { title: "B", content: "Content B for sequential test." },
-      ];
-
-      await lite.indexBatch(docs, { concurrency: 1 });
-      expect(provider.embedBatchCallCount).toBe(2);
-    });
+    const listA = await preset.docs.list();
+    const listB = await full.docs.list();
+    expect(listA.items.map((d) => d.title)).toEqual(listB.items.map((d) => d.title));
   });
 
-  describe("search()", () => {
-    beforeEach(async () => {
-      await lite.index([
-        {
-          title: "React Hooks",
-          content: "useState and useEffect are the most common React hooks.",
-        },
-        { title: "Vue Composition", content: "Vue 3 composition API uses setup function." },
-        { title: "Angular DI", content: "Angular uses dependency injection pattern extensively." },
-      ]);
-    });
+  it("ask without an LLM throws ConfigError; with one returns a RagResult", async () => {
+    const noLlm = lite({ dbPath: ":memory:", provider: new MockEmbeddingProvider() });
+    await seed(noLlm);
+    await expect(noLlm.ask("What are hooks?")).rejects.toBeInstanceOf(ConfigError);
 
-    it("should return search results", async () => {
-      const results = await lite.search("React hooks");
-      expect(results.length).toBeGreaterThan(0);
+    const complete = vi.fn().mockResolvedValue({ text: "Hooks are functions." });
+    const llm: LlmProvider = { model: "test-model", complete };
+    const withLlm = lite({
+      dbPath: ":memory:",
+      provider: new MockEmbeddingProvider(),
+      llmProvider: llm,
     });
-
-    it("should return results with expected shape", async () => {
-      const results = await lite.search("React");
-      const first = results[0];
-      expect(first).toBeDefined();
-      expect(first).toHaveProperty("docId");
-      expect(first).toHaveProperty("chunkId");
-      expect(first).toHaveProperty("title");
-      expect(first).toHaveProperty("content");
-      expect(first).toHaveProperty("score");
-      expect(first).toHaveProperty("url");
-      expect(typeof first?.score).toBe("number");
+    await seed(withLlm);
+    const result = await withLlm.ask("What are hooks?");
+    expect(result).toMatchObject({
+      mode: "answer",
+      answer: "Hooks are functions.",
+      model: "test-model",
     });
-
-    it("should respect limit option", async () => {
-      const results = await lite.search("API", { limit: 1 });
-      expect(results.length).toBeLessThanOrEqual(1);
-    });
+    if (result.mode === "answer") expect(result.sources.length).toBeGreaterThan(0);
+    expect(String(complete.mock.calls[0]?.[0])).toContain("What are hooks?");
   });
 
-  describe("getContext()", () => {
-    beforeEach(async () => {
-      await lite.index([
-        {
-          title: "Node.js Streams",
-          content: "Readable streams in Node.js are a fundamental pattern.",
-        },
-      ]);
+  it("ignores config files: llm.provider can be set through config", async () => {
+    const scope = lite({
+      dbPath: ":memory:",
+      provider: new MockEmbeddingProvider(),
+      config: { llm: { provider: "passthrough" } },
     });
+    await seed(scope);
+    expect((await scope.ask("What are hooks?")).mode).toBe("context");
+  });
+});
 
-    it("should return a context string", async () => {
-      const context = await lite.getContext("How do Node.js streams work?");
-      expect(typeof context).toBe("string");
-      expect(context.length).toBeGreaterThan(0);
+describe("createCodeChunker", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const chunks = [
+    { content: "function foo() {}", startLine: 1, endLine: 1, nodeType: "function_declaration" },
+    { content: "function bar() {}", startLine: 2, endLine: 2, nodeType: "function_declaration" },
+  ];
+
+  it("chunks code by the extension of the title", async () => {
+    const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk").mockResolvedValue(chunks);
+    const chunker = createCodeChunker();
+    const result = await chunker({ content: "src", title: "main.ts", source: "" });
+    expect(result).toEqual(["function foo() {}", "function bar() {}"]);
+    expect(chunkSpy).toHaveBeenCalledWith("src", "ts");
+  });
+
+  it("uses a fixed language when given", async () => {
+    const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk").mockResolvedValue(chunks);
+    await createCodeChunker({ language: "python" })({ content: "x", title: "Doc", source: "" });
+    expect(chunkSpy).toHaveBeenCalledWith("x", "python");
+  });
+
+  it("returns undefined for prose, unsupported languages and parse failures", async () => {
+    vi.spyOn(TreeSitterChunker.prototype, "chunk").mockRejectedValue(new Error("not installed"));
+    const chunker = createCodeChunker();
+    expect(await chunker({ content: "x", title: "Guide", source: "" })).toBeUndefined();
+    expect(await chunker({ content: "x", title: "main.rb", source: "" })).toBeUndefined();
+    expect(await chunker({ content: "x", title: "main.go", source: "" })).toBeUndefined();
+  });
+
+  it("is used by add when passed to createLite", async () => {
+    vi.spyOn(TreeSitterChunker.prototype, "chunk").mockResolvedValue(chunks);
+    const scope = createLite({
+      dbPath: ":memory:",
+      provider: new MockEmbeddingProvider(),
+      chunker: createCodeChunker(),
+    });
+    try {
+      const result = await scope.add({ content: "function foo() {}", title: "main.ts" });
+      expect(result.documents[0]!.chunkCount).toBe(2);
+    } finally {
+      scope.close();
+    }
+  });
+});
+
+describe("normalizeRawInput", () => {
+  it("passes text through", async () => {
+    expect(await normalizeRawInput({ type: "text", title: "T", content: "C" })).toEqual({
+      title: "T",
+      content: "C",
     });
   });
 
-  describe("ask()", () => {
-    it("should throw when no LlmProvider is configured", async () => {
-      await lite.index([{ title: "Test", content: "Some content for testing ask." }]);
-      await expect(lite.ask("What is this about?")).rejects.toThrow("No LlmProvider configured");
+  it("reads a buffer with the parser for its extension, else as text", async () => {
+    const md = await normalizeRawInput({
+      type: "buffer",
+      buffer: Buffer.from("# Heading\n\nBody"),
+      filename: "notes.md",
     });
+    expect(md.title).toBe("notes");
+    expect(md.content).toContain("Body");
 
-    it("should call LlmProvider.complete with context", async () => {
-      // Declare the spy separately so we never reference it as an object method
-      const completeSpy = vi.fn().mockResolvedValue({ text: "Mocked LLM response" });
-      const mockLlm: LlmProvider = { model: "test-model", complete: completeSpy };
-
-      const liteWithLlm = new LibScopeLite({
-        dbPath: ":memory:",
-        provider,
-        llmProvider: mockLlm,
-      });
-
-      await liteWithLlm.index([
-        { title: "Test Doc", content: "Information about testing patterns." },
-      ]);
-
-      const answer = await liteWithLlm.ask("What are testing patterns?");
-      expect(answer).toBe("Mocked LLM response");
-      expect(completeSpy).toHaveBeenCalledOnce();
-      expect(completeSpy.mock.calls[0]?.[0]).toContain("testing patterns");
-
-      liteWithLlm.close();
+    const code = await normalizeRawInput({
+      type: "buffer",
+      buffer: Buffer.from("const x = 1;"),
+      filename: "x.ts",
+      title: "x.ts",
     });
-
-    it("should allow llmProvider override in ask() opts", async () => {
-      const mockLlm: LlmProvider = {
-        model: "override-model",
-        complete: vi.fn().mockResolvedValue({ text: "Override response" }),
-      };
-
-      await lite.index([{ title: "Test", content: "Some content for LLM." }]);
-
-      const answer = await lite.ask("Question?", { llmProvider: mockLlm });
-      expect(answer).toBe("Override response");
-    });
-  });
-
-  describe("askStream()", () => {
-    it("should throw when no LlmProvider is configured", async () => {
-      await lite.index([{ title: "Test", content: "Content here." }]);
-      const gen = lite.askStream("Question?");
-      await expect(gen.next()).rejects.toThrow("No LlmProvider configured");
-    });
-
-    it("should throw when LlmProvider does not support streaming", async () => {
-      const mockLlm: LlmProvider = {
-        model: "no-stream",
-        complete: vi.fn().mockResolvedValue({ text: "done" }),
-        // No completeStream method
-      };
-
-      const liteWithLlm = new LibScopeLite({
-        dbPath: ":memory:",
-        provider,
-        llmProvider: mockLlm,
-      });
-
-      await liteWithLlm.index([{ title: "Test", content: "Content." }]);
-
-      const gen = liteWithLlm.askStream("Question?");
-      await expect(gen.next()).rejects.toThrow("does not support streaming");
-
-      liteWithLlm.close();
-    });
-
-    it("should stream tokens from LlmProvider", async () => {
-      const mockLlm: LlmProvider = {
-        model: "stream-model",
-        complete: vi.fn().mockResolvedValue({ text: "done" }),
-        completeStream: vi.fn().mockReturnValue(fakeStream()),
-      };
-
-      const liteWithLlm = new LibScopeLite({
-        dbPath: ":memory:",
-        provider,
-        llmProvider: mockLlm,
-      });
-
-      await liteWithLlm.index([{ title: "Test", content: "Test content." }]);
-
-      const tokens: string[] = [];
-      for await (const token of liteWithLlm.askStream("Question?")) {
-        tokens.push(token);
-      }
-
-      expect(tokens).toEqual(["Hello", " world"]);
-      liteWithLlm.close();
-    });
-  });
-
-  describe("rate()", () => {
-    it("should rate an indexed document", async () => {
-      await lite.index([{ title: "Rate Me", content: "Content to rate." }]);
-
-      // Find the doc ID via search
-      const results = await lite.search("rate");
-      expect(results.length).toBeGreaterThan(0);
-      const docId = results[0]?.docId;
-      expect(docId).toBeDefined();
-
-      // Should not throw
-      lite.rate(docId!, 5);
-    });
-
-    it("should throw for nonexistent document", () => {
-      expect(() => lite.rate("nonexistent-doc", 3)).toThrow();
-    });
-  });
-
-  describe("close()", () => {
-    it("should close the database without error", () => {
-      const instance = new LibScopeLite({ dbPath: ":memory:", provider });
-      expect(() => instance.close()).not.toThrow();
-    });
-  });
-
-  describe("index() with language/tree-sitter chunking", () => {
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
-    it("calls TreeSitterChunker.chunk() when language is set and supported", async () => {
-      vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(true);
-      const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk").mockResolvedValue([
-        {
-          content: "function foo() {}",
-          startLine: 1,
-          endLine: 3,
-          nodeType: "function_declaration",
-        },
-        {
-          content: "function bar() {}",
-          startLine: 5,
-          endLine: 7,
-          nodeType: "function_declaration",
-        },
-      ]);
-
-      await lite.index([
-        {
-          title: "src/main.ts",
-          content: "function foo() {}\nfunction bar() {}",
-          language: "typescript",
-        },
-      ]);
-
-      expect(chunkSpy).toHaveBeenCalledWith("function foo() {}\nfunction bar() {}", "typescript");
-    });
-
-    it("does not call chunk() when language is not set", async () => {
-      const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk");
-
-      await lite.index([{ title: "Doc", content: "Some content here." }]);
-
-      expect(chunkSpy).not.toHaveBeenCalled();
-    });
-
-    it("falls back silently when tree-sitter throws", async () => {
-      vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(true);
-      vi.spyOn(TreeSitterChunker.prototype, "chunk").mockRejectedValue(
-        new Error("tree-sitter not installed"),
-      );
-
-      // Should not throw — fallback to text chunker
-      await expect(
-        lite.index([
-          {
-            title: "src/main.go",
-            content: "package main\nfunc main() {}",
-            language: "go",
-          },
-        ]),
-      ).resolves.toBeUndefined();
-    });
-
-    it("does not call chunk() when language is set but not supported", async () => {
-      vi.spyOn(TreeSitterChunker.prototype, "supports").mockReturnValue(false);
-      const chunkSpy = vi.spyOn(TreeSitterChunker.prototype, "chunk");
-
-      await lite.index([
-        {
-          title: "src/main.rb",
-          content: "def hello; end",
-          language: "ruby",
-        },
-      ]);
-
-      expect(chunkSpy).not.toHaveBeenCalled();
-    });
+    expect(code).toEqual({ title: "x.ts", content: "const x = 1;" });
   });
 });

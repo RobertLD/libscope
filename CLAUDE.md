@@ -1,6 +1,6 @@
 # libscope — Agent Guidelines
 
-AI-powered knowledge base with MCP integration. TypeScript, Node.js >=20, CommonJS (ES2022 target).
+AI-powered knowledge base with MCP integration. TypeScript, Node.js >=20, ES modules (`"type": "module"`, NodeNext, ES2022 target).
 
 ## Build & Test
 
@@ -13,9 +13,13 @@ npm run format       # Auto-format
 npm test             # Run all tests via vitest
 npm run test:coverage # Coverage thresholds: statements 75%, branches 74%, functions 75%, lines 75%
 npm run build        # tsc — outputs to dist/
+npm run docs:gen     # After build: rewrite the generated blocks in docs/reference/*.md
+npm run docs:check   # After build: exit 1 if a generated block is out of date (CI runs this)
 ```
 
-CI runs on Node 20 and 22. CI checks: lint, format:check, typecheck, test:coverage, build. Build verifies `dist/mcp/server.js`, `dist/cli/index.js`, `dist/core/index.js` exist.
+CI runs on Node 20 and 22. CI checks: lint, format:check, typecheck, test:coverage, build, docs:check. Build verifies `dist/mcp/server.js`, `dist/cli/index.js`, `dist/core/index.js` exist.
+
+When you change a CLI command or option, an operation's input schema or summary, an MCP tool, a REST route or a config key, run `npm run build && npm run docs:gen` and commit the changed `docs/reference/*.md`. The generator is `scripts/gen-docs.mjs`; do not edit text between `<!-- generated:start ... -->` and `<!-- generated:end ... -->` by hand.
 
 **Before every push, run this exact sequence locally:**
 ```bash
@@ -67,37 +71,65 @@ When delegating to subagents for mechanical fixes:
 
 ## Project Structure
 
+Every feature is one **operation** in `src/core/operations/`. The CLI, MCP server, REST API and SDK are thin adapters over the operations: they parse input, call `runOperation(op, ctx, input)` (or `startOperationTask` for long-running operations), and format the result. Put logic in an operation or a core module, never in a surface.
+
 ```
 src/
-├── cli/           # Commander.js CLI
-│   ├── index.ts   # Main entry (#!/usr/bin/env node)
-│   └── commands/  # Each file exports registerCommands(program)
-├── mcp/           # MCP server
-│   ├── server.ts  # MCP entry point
-│   └── tools/     # Each file exports registerTools(server, db, provider)
-├── lite/          # libscope/lite — embeddable semantic search (no CLI/MCP/connectors)
-│   ├── index.ts              # Public entrypoint — exports LibScopeLite + types
-│   ├── core.ts               # LibScopeLite class (index, search, getContext, ask, rate)
-│   ├── types.ts              # LiteOptions, LiteDoc, LiteSearchResult, etc.
-│   ├── normalize.ts          # Raw input → markdown (dispatches to core/parsers/)
-│   └── chunker-treesitter.ts # Optional tree-sitter code chunker (TS/JS/Python)
-├── core/          # Business logic (documents, search, indexing, packs, topics, etc.)
-│   └── parsers/   # File format parsers (markdown, pdf, docx, html, epub, pptx, csv, yaml, json)
-├── api/           # REST API server (routes, middleware, openapi spec)
-├── web/           # Web UI / dashboard
-├── db/            # SQLite via better-sqlite3 (schema, migrations, connection)
-├── providers/     # Embedding providers (local/xenova, ollama, openai)
-├── registry/      # Git-backed pack registries (config, git, sync, publish, search, checksum)
-├── connectors/    # Third-party syncs (notion, slack, confluence, onenote, obsidian)
-├── config.ts      # Config loading: env vars > project .libscope.json > user ~/.libscope/config.json > defaults
-├── errors.ts      # Error hierarchy
-├── logger.ts      # Pino logger
-└── LibScope.ts    # Main public API class
+├── core/
+│   ├── operations/  # The operation layer: one file per group (documents, search, links, graph, tags,
+│   │                #   topics, searches, packs, registries, connectors, admin, analytics, webhooks, tasks)
+│   │   ├── types.ts     # defineOperation, runOperation, startOperationTask, createOperationContext, ListResult
+│   │   ├── schemas.ts   # Shared zod field schemas (documentId, topic, sourceType, limit, tags, ...)
+│   │   └── index.ts     # OPERATIONS (every operation, in surface order), getOperation(name)
+│   ├── bootstrap.ts     # One startup for every surface: config -> db path -> migrate -> provider -> vector table
+│   ├── ingest.ts        # add: content, file, directory, URL (+ spider) or repository
+│   ├── tasks.ts         # Background task registry (AbortSignal, progress, 1 h retention)
+│   ├── overview.ts      # Counts, topics, packs, index model, health
+│   ├── document-view.ts # get-document view (paged content, tags, links, ratings)
+│   ├── rag.ts           # answer() for ask (LLM or passthrough)
+│   ├── index.ts         # Package root exports: LibScope class, option/result types, errors
+│   ├── parsers/         # File format parsers (markdown, pdf, docx, html, epub, pptx, csv, yaml, json, text)
+│   └── ...              # Business logic used by operations (documents, search, indexing, packs, topics, ...)
+├── cli/
+│   ├── index.ts     # Program, global options (--json, --verbose, --log-level, --workspace), error handler; exports `program`
+│   └── commands/    # One file per command group; each exports register(program)
+├── mcp/
+│   ├── server.ts    # createMcpServer(): tools generated from operations (11 core + admin toolset); runStdioServer()
+│   ├── format.ts    # Compact text output of each tool
+│   ├── errors.ts    # withErrorHandling(), errorResponse()
+│   └── main.ts      # stdio entry point (npm run serve)
+├── api/
+│   ├── routes.ts    # API_ROUTES: one route per operation with `http`, plus /openapi.json and /api/v1/health
+│   ├── adapter.ts   # HTTP input -> operation input; 202 + task for long-running operations; error -> status
+│   ├── openapi.ts   # buildOpenApiSpec(API_ROUTES) from the operation schemas
+│   ├── middleware.ts
+│   └── server.ts    # startApiServer({ db, provider, config }, options)
+├── web/             # Dashboard server (server.ts) and page (dashboard.ts: do not edit)
+├── lite/            # libscope/lite: createLite() preset of LibScope, createCodeChunker(), TreeSitterChunker, normalizeRawInput()
+├── db/              # SQLite (schema.ts migrations, connection.ts, index-meta.ts embedding model of the index)
+├── providers/       # Embedding providers (local/xenova, ollama, openai)
+├── registry/        # Git-backed pack registries (config, git, sync, publish, search, resolve, checksum)
+├── connectors/      # notion, slack, confluence, onenote, obsidian, docs; registry.ts (types, saved connections, sync)
+├── config-schema.ts # The zod config schema: keys, defaults, env var names, docs table (getConfigKeyTable)
+├── config.ts        # loadConfig(), config get/set/unset, secrets.json
+├── errors.ts        # Error hierarchy
+├── logger.ts        # Pino logger (stderr)
+└── LibScope.ts      # SDK class: add/search/ask/askStream/overview + namespaces bound to operations
+scripts/gen-docs.mjs # Fills the generated blocks in docs/reference/*.md from dist/
 tests/
-├── unit/          # Fast, mocked — test modules in isolation
-├── integration/   # Real SQLite DB, full workflows
-└── fixtures/      # test-db.ts, mock-provider.ts, helpers.ts
+├── unit/            # Fast, mocked — test modules in isolation (operations: tests/unit/operations/)
+├── integration/     # Real SQLite DB, full workflows
+└── fixtures/        # test-db.ts, mock-provider.ts, helpers.ts
 ```
+
+### Adding or changing a feature
+
+1. Add or change the operation in `src/core/operations/<group>.ts` with `defineOperation({ name, group, summary, input, annotations, http, handler })`. Every input field has `.describe()`; defaults live in the schema only. Add it to the group's exported list (it then appears in `OPERATIONS`).
+2. REST: setting `http: { method, path }` creates the route and its OpenAPI entry. `annotations.longRunning` makes the route answer `202` with a task.
+3. MCP: tools are registered in `src/mcp/server.ts` (`registerCoreTools` / `registerAdminTools`) with a formatter from `format.ts`. Not every operation is a tool: saved searches, webhooks, analytics and registries are CLI/REST/SDK only.
+4. CLI: add or change the command in `src/cli/commands/<group>.ts`; it calls the operation and prints the result.
+5. SDK: add the operation to its namespace in `NAMESPACES` in `src/LibScope.ts`.
+6. Run `npm run build && npm run docs:gen` and commit the updated references. List removed or renamed names in `docs/migration-v2.md`.
 
 ## Error Handling
 
@@ -107,22 +139,23 @@ All custom errors extend `LibScopeError` with a `code` property and optional `ca
 LibScopeError
   ├── DatabaseError
   ├── EmbeddingError
-  ├── ValidationError
-  ├── FetchError
+  ├── ValidationError        (REST 400)
+  ├── FetchError             (REST 502)
   ├── ConfigError
-  ├── DocumentNotFoundError
-  ├── ChunkNotFoundError
-  └── TopicNotFoundError
+  └── NotFoundError          (REST 404; code names the resource, e.g. LINK_NOT_FOUND)
+        ├── DocumentNotFoundError
+        ├── ChunkNotFoundError
+        └── TopicNotFoundError
 ```
 
-Always use the appropriate error subclass. MCP tool handlers must be wrapped with `withErrorHandling()` from `src/mcp/errors.ts`.
+Always use the appropriate error subclass. MCP tool handlers are wrapped with `withErrorHandling()` from `src/mcp/errors.ts` (`registerOperationTool` does this). The CLI prints every error once in `src/cli/errors.ts` (`✗ message` and a hint).
 
 ## Database
 
 - **Engine:** better-sqlite3 + sqlite-vec for vector search
-- **Schema version:** 17 (migrations in `src/db/schema.ts`)
+- **Schema version:** 19 (migrations in `src/db/schema.ts`)
 - **Adding migrations:** Increment `SCHEMA_VERSION`, add entry to `MIGRATIONS` object with the new version number as key
-- **Key tables:** documents, chunks, chunks_fts (FTS5), chunk_embeddings (vector), topics, ratings, schema_version
+- **Key tables:** documents, chunks, chunks_fts (FTS5), chunk_embeddings (vector), index_meta (embedding model of the index), topics, tags, ratings, document_links, saved_searches, webhooks, packs, schema_version. `connector_configs` is unused.
 
 ## Testing Patterns
 
@@ -159,7 +192,7 @@ packs/<pack-name>/
 ```
 
 - Registry names: `/^[a-zA-Z0-9_-]+$/`, 2-64 chars
-- Git URLs: https://, ssh://, or git@host:path (no embedded credentials)
+- Registry URLs: https://, ssh://, SCP-style SSH (user@host:path) or file:/// (no embedded credentials)
 - Path segment validation: reject `..`, `/`, `\`, null bytes, non-alphanumeric (except `._-`)
 
 ## Logging
@@ -168,6 +201,6 @@ Use `getLogger()` from `src/logger.ts` (pino). Create child loggers with `create
 
 ## Configuration
 
-`loadConfig()` merges with precedence: env vars > project `.libscope.json` > user `~/.libscope/config.json` > defaults. 30-second cache TTL.
+`src/config-schema.ts` is the one zod schema for every config key: defaults, validation, `config get/set/unset`, env var names and the docs table. `loadConfig()` merges with precedence: env vars > project `.libscope.json` > user `~/.libscope/config.json` > defaults. API keys (`openai.apiKey`, `anthropic.apiKey`) are read only from env vars and `~/.libscope/secrets.json`. 30-second cache TTL.
 
-Key env vars: `LIBSCOPE_EMBEDDING_PROVIDER` (local|ollama|openai), `LIBSCOPE_LLM_PROVIDER` (openai|ollama|anthropic|passthrough), `LIBSCOPE_OPENAI_API_KEY`, `LIBSCOPE_ANTHROPIC_API_KEY`, `LIBSCOPE_OLLAMA_URL`, `LIBSCOPE_OLLAMA_MODEL`.
+Every key `section.field` has the env var `LIBSCOPE_<SECTION>_<FIELD>`. Key env vars: `LIBSCOPE_EMBEDDING_PROVIDER` (local|ollama|openai), `LIBSCOPE_EMBEDDING_MODEL`, `LIBSCOPE_EMBEDDING_URL`, `LIBSCOPE_LLM_PROVIDER` (auto|openai|anthropic|ollama|passthrough; default auto), `LIBSCOPE_LLM_MODEL`, `LIBSCOPE_LLM_URL`, `LIBSCOPE_OPENAI_API_KEY` (or `OPENAI_API_KEY`), `LIBSCOPE_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY`), `LIBSCOPE_MCP_TOOLSETS` (admin|all). Not config keys: `LIBSCOPE_WORKSPACE`, `LIBSCOPE_API_KEY` (REST auth), `LIBSCOPE_SECRET_KEY` (webhook secrets), `LIBSCOPE_VERBOSE`, `LIBSCOPE_GIT_TIMEOUT_MS`. Full list: `docs/reference/configuration.md`.

@@ -3,11 +3,13 @@ import { promisify } from "node:util";
 import { Agent } from "undici";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { FetchError } from "../errors.js";
+import { firstMarkdownHeading } from "../utils/markdown.js";
 import { getLogger } from "../logger.js";
+import { decodeHtmlEntities } from "./html-entities.js";
 
 /** Lazy singleton undici Agent that skips TLS certificate verification. */
 let _insecureAgent: Agent | undefined;
-function getInsecureAgent(): Agent {
+export function getInsecureAgent(): Agent {
   _insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } });
   return _insecureAgent;
 }
@@ -113,7 +115,7 @@ async function validateUrl(url: string, allowPrivateUrls = false): Promise<strin
   for (const addr of addresses) {
     if (!allowPrivateUrls && isPrivateIP(addr)) {
       throw new FetchError(
-        `Blocked request to private/internal IP ${addr} (resolved from ${hostname}). Set LIBSCOPE_ALLOW_PRIVATE_URLS=true to allow.`,
+        `Blocked request to private/internal IP ${addr} (resolved from ${hostname}). Set LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS=true to allow.`,
       );
     }
   }
@@ -136,17 +138,21 @@ async function readBodyWithLimit(response: Response, limit: number): Promise<str
   const chunks: Uint8Array[] = [];
   let received = 0;
 
-  try {
-    let result = await reader.read();
-    while (!result.done) {
-      const chunk = result.value;
-      received += chunk.byteLength;
-      if (received > limit) {
-        throw new FetchError(`Response body too large: exceeded ${limit} bytes`);
-      }
-      chunks.push(chunk);
-      result = await reader.read();
+  // Read chunk by chunk until the stream ends, stopping once the limit is exceeded.
+  const readChunks = async (): Promise<void> => {
+    const result = await reader.read();
+    if (result.done) return;
+    const chunk = result.value;
+    received += chunk.byteLength;
+    if (received > limit) {
+      throw new FetchError(`Response body too large: exceeded ${limit} bytes`);
     }
+    chunks.push(chunk);
+    return readChunks();
+  };
+
+  try {
+    await readChunks();
   } finally {
     await reader.cancel();
   }
@@ -158,21 +164,6 @@ async function readBodyWithLimit(response: Response, limit: number): Promise<str
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(combined);
-}
-
-/** Follow redirects manually so we can enforce a configurable limit. DNS-pinned to prevent rebinding. */
-async function fetchWithRedirects(
-  url: string,
-  timeout: number,
-  maxRedirects: number,
-  allowPrivateUrls: boolean,
-  allowSelfSignedCerts: boolean,
-): Promise<Response> {
-  // Pass a per-request undici Agent when self-signed certs are allowed.
-  // This is scoped to this specific request chain and does not affect other
-  // concurrent requests (unlike mutating process.env["NODE_TLS_REJECT_UNAUTHORIZED"]).
-  const dispatcher = allowSelfSignedCerts ? getInsecureAgent() : undefined;
-  return _fetchWithRedirects(url, timeout, maxRedirects, allowPrivateUrls, dispatcher);
 }
 
 /** Re-resolve DNS after a fetch to detect DNS rebinding attacks. */
@@ -201,7 +192,8 @@ async function checkDnsRebinding(hostname: string, allowPrivateUrls: boolean): P
   }
 }
 
-async function _fetchWithRedirects(
+/** Follow redirects manually so we can enforce a configurable limit. DNS-pinned to prevent rebinding. */
+async function fetchWithRedirects(
   url: string,
   timeout: number,
   maxRedirects: number,
@@ -266,12 +258,16 @@ export async function fetchRaw(url: string, options?: FetchOptions): Promise<Fet
   try {
     await validateUrl(url, allowPrivateUrls);
 
+    // Pass a per-request undici Agent when self-signed certs are allowed.
+    // This is scoped to this specific request chain and does not affect other
+    // concurrent requests (unlike mutating process.env["NODE_TLS_REJECT_UNAUTHORIZED"]).
+    const dispatcher = allowSelfSignedCerts ? getInsecureAgent() : undefined;
     const response = await fetchWithRedirects(
       url,
       timeout,
       maxRedirects,
       allowPrivateUrls,
-      allowSelfSignedCerts,
+      dispatcher,
     );
 
     if (!response.ok) {
@@ -279,18 +275,24 @@ export async function fetchRaw(url: string, options?: FetchOptions): Promise<Fet
     }
 
     const contentType = response.headers.get("content-type") ?? "";
+    // Stream the body while enforcing actual byte-size limit
     const body = await readBodyWithLimit(response, maxBodySize);
     // Derive final URL from redirect chain (fetchWithRedirects resolves relative locations)
     const finalUrl = response.url ?? url;
 
     return { body, contentType, finalUrl };
   } catch (err) {
-    if (err instanceof FetchError) throw err;
-    throw new FetchError(
-      `Failed to fetch URL: ${url} — ${err instanceof Error ? err.message : String(err)}`,
-      err,
-    );
+    throw toFetchError(url, err);
   }
+}
+
+/** Pass FetchErrors through unchanged; wrap anything else in a FetchError naming the URL. */
+function toFetchError(url: string, err: unknown): FetchError {
+  if (err instanceof FetchError) return err;
+  return new FetchError(
+    `Failed to fetch URL: ${url} — ${err instanceof Error ? err.message : String(err)}`,
+    err,
+  );
 }
 
 /**
@@ -304,29 +306,8 @@ export async function fetchAndConvert(
   const log = getLogger();
   log.info({ url }, "Fetching URL");
 
-  const { timeout, maxRedirects, maxBodySize, allowPrivateUrls, allowSelfSignedCerts } = {
-    ...DEFAULT_FETCH_OPTIONS,
-    ...options,
-  };
-
   try {
-    await validateUrl(url, allowPrivateUrls);
-
-    const response = await fetchWithRedirects(
-      url,
-      timeout,
-      maxRedirects,
-      allowPrivateUrls,
-      allowSelfSignedCerts,
-    );
-
-    if (!response.ok) {
-      throw new FetchError(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    // Stream the body while enforcing actual byte-size limit
-    const body = await readBodyWithLimit(response, maxBodySize);
+    const { body, contentType } = await fetchRaw(url, options);
 
     // If it's already markdown or plain text, return as-is
     if (contentType.includes("text/markdown") || contentType.includes("text/plain")) {
@@ -343,24 +324,20 @@ export async function fetchAndConvert(
       content: converted,
     };
   } catch (err) {
-    if (err instanceof FetchError) throw err;
-    throw new FetchError(
-      `Failed to fetch URL: ${url} — ${err instanceof Error ? err.message : String(err)}`,
-      err,
-    );
+    throw toFetchError(url, err);
   }
 }
 
 /** Extract title from HTML <title> tag. */
 function extractTitleFromHtml(html: string): string | null {
   const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-  return match?.[1]?.trim() ?? null;
+  const title = match?.[1]?.trim();
+  return title ? decodeHtmlEntities(title) : null;
 }
 
 /** Extract title from first markdown heading. */
 function extractTitleFromMarkdown(md: string): string | null {
-  const match = /^#\s+(.+)$/m.exec(md);
-  return match?.[1]?.trim() ?? null;
+  return firstMarkdownHeading(md)?.trim() ?? null;
 }
 
 /** Derive a title from the URL path. */

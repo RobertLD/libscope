@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb } from "../fixtures/test-db.js";
+import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
 import {
   createTopic,
   listTopics,
@@ -70,7 +70,7 @@ describe("topics", () => {
       createTopic(db, { name: "API" });
 
       const topics = listTopics(db);
-      expect(topics.length).toBe(3);
+      expect(topics).toHaveLength(3);
       // Should be alphabetical
       expect(topics[0]!.name).toBe("API");
       expect(topics[1]!.name).toBe("Auth");
@@ -84,12 +84,12 @@ describe("topics", () => {
       createTopic(db, { name: "Unrelated" });
 
       const children = listTopics(db, parent.id);
-      expect(children.length).toBe(2);
+      expect(children).toHaveLength(2);
     });
 
     it("should return empty array when no topics exist", () => {
       const topics = listTopics(db);
-      expect(topics.length).toBe(0);
+      expect(topics).toHaveLength(0);
     });
   });
 
@@ -141,6 +141,43 @@ describe("topics", () => {
       expect(doc).toBeUndefined();
     });
 
+    it("should delete vectors of deleted documents when deleteDocuments is true", () => {
+      const vdb = createTestDbWithVec();
+      createTopic(vdb, { name: "Vectors" });
+      const insertDoc = vdb.prepare(
+        "INSERT INTO documents (id, source_type, title, content, topic_id) VALUES (?, 'topic', ?, 'c', ?)",
+      );
+      insertDoc.run("doc-in", "In topic", "vectors");
+      insertDoc.run("doc-out", "Other", null);
+      const insertChunk = vdb.prepare(
+        "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, 'text', 0)",
+      );
+      insertChunk.run("chunk-in", "doc-in");
+      insertChunk.run("chunk-out", "doc-out");
+      const insertVec = vdb.prepare(
+        "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, x'00')",
+      );
+      insertVec.run("chunk-in");
+      insertVec.run("chunk-out");
+
+      deleteTopic(vdb, "vectors", { deleteDocuments: true });
+
+      const remaining = vdb.prepare("SELECT chunk_id FROM chunk_embeddings").all();
+      expect(remaining).toEqual([{ chunk_id: "chunk-out" }]);
+      vdb.close();
+    });
+
+    it("should delete documents when the vector table is missing", () => {
+      createTopic(db, { name: "NoVec" });
+      db.prepare(
+        "INSERT INTO documents (id, source_type, title, content, topic_id) VALUES ('d', 'topic', 'D', 'c', 'novec')",
+      ).run();
+
+      deleteTopic(db, "novec", { deleteDocuments: true });
+
+      expect(db.prepare("SELECT id FROM documents WHERE id = 'd'").get()).toBeUndefined();
+    });
+
     it("should set child topic parent_id to null on deletion", () => {
       const parent = createTopic(db, { name: "Parent" });
       createTopic(db, { name: "Child", parentId: parent.id });
@@ -180,7 +217,7 @@ describe("topics", () => {
       ).run("d2", "topic", "Doc B", "content B", "docs", "manual");
 
       const docs = getDocumentsByTopic(db, "docs");
-      expect(docs.length).toBe(2);
+      expect(docs).toHaveLength(2);
       expect(docs[0]!.title).toBeDefined();
     });
 
@@ -193,19 +230,19 @@ describe("topics", () => {
       }
 
       const page1 = getDocumentsByTopic(db, "paged", { limit: 2, offset: 0 });
-      expect(page1.length).toBe(2);
+      expect(page1).toHaveLength(2);
 
       const page2 = getDocumentsByTopic(db, "paged", { limit: 2, offset: 2 });
-      expect(page2.length).toBe(2);
+      expect(page2).toHaveLength(2);
 
       const page3 = getDocumentsByTopic(db, "paged", { limit: 2, offset: 4 });
-      expect(page3.length).toBe(1);
+      expect(page3).toHaveLength(1);
     });
 
     it("should return empty array for topic with no documents", () => {
       createTopic(db, { name: "Empty" });
       const docs = getDocumentsByTopic(db, "empty");
-      expect(docs.length).toBe(0);
+      expect(docs).toHaveLength(0);
     });
 
     it("should throw TopicNotFoundError for nonexistent topic", () => {
@@ -225,7 +262,7 @@ describe("topics", () => {
       ).run("s2", "topic", "Doc 2", "content", "alpha", "manual");
 
       const stats = getTopicStats(db);
-      expect(stats.length).toBe(2);
+      expect(stats).toHaveLength(2);
       const alpha = stats.find((s) => s.id === "alpha");
       const beta = stats.find((s) => s.id === "beta");
       expect(alpha!.documentCount).toBe(2);
@@ -234,7 +271,7 @@ describe("topics", () => {
 
     it("should return empty array when no topics exist", () => {
       const stats = getTopicStats(db);
-      expect(stats.length).toBe(0);
+      expect(stats).toHaveLength(0);
     });
   });
 });

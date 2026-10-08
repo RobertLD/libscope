@@ -2,12 +2,7 @@ import type Database from "better-sqlite3";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
 import { deleteDocument, listDocuments } from "./documents.js";
-import {
-  addTagsToDocument,
-  removeTagFromDocument,
-  getDocumentTags,
-  getDocumentTagsBatch,
-} from "./tags.js";
+import { addTagsToDocument, removeTagsFromDocument, getDocumentTagsBatch } from "./tags.js";
 
 export interface BulkSelector {
   topicId?: string;
@@ -132,14 +127,7 @@ export function bulkRetag(
           addTagsToDocument(db, id, addTags);
         }
         if (removeTags && removeTags.length > 0) {
-          const docTags = getDocumentTags(db, id);
-          for (const tagName of removeTags) {
-            const normalized = tagName.trim().toLowerCase();
-            const tag = docTags.find((t) => t.name === normalized);
-            if (tag) {
-              removeTagFromDocument(db, id, tag.id);
-            }
-          }
+          removeTagsFromDocument(db, id, removeTags);
         }
       }
     });

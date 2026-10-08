@@ -8,12 +8,14 @@
     "libscope": "./dist/cli/index.js"
   },
   "exports": {
-    ".": "./dist/core/index.js",
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
     "./mcp": "./dist/mcp/server.js",
     "./lite": {
-      "import": "./dist/lite/index.js",
-      "require": "./dist/lite/index.js",
-      "types": "./dist/lite/index.d.ts"
+      "types": "./dist/lite/index.d.ts",
+      "default": "./dist/lite/index.js"
     }
   },
   "files": [
@@ -31,7 +33,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "prepare": "husky",
-    "serve": "node dist/mcp/server.js",
+    "serve": "node dist/mcp/main.js",
+    "docs:gen": "node scripts/gen-docs.mjs",
+    "docs:check": "node scripts/gen-docs.mjs --check",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"

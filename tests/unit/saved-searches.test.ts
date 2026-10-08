@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb, createTestDbWithVec } from "../fixtures/test-db.js";
-import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
+import { createTestDb } from "../fixtures/test-db.js";
 import {
   createSavedSearch,
   listSavedSearches,
   getSavedSearch,
   deleteSavedSearch,
-  runSavedSearch,
+  recordSavedSearchRun,
 } from "../../src/core/saved-searches.js";
-import { indexDocument } from "../../src/core/indexing.js";
-import { ValidationError, DocumentNotFoundError } from "../../src/errors.js";
+import { ValidationError, NotFoundError } from "../../src/errors.js";
 import type Database from "better-sqlite3";
 import { initLogger } from "../../src/logger.js";
 
@@ -17,11 +15,9 @@ initLogger("silent");
 
 describe("saved-searches", () => {
   let db: Database.Database;
-  let provider: MockEmbeddingProvider;
 
   beforeEach(() => {
     db = createTestDb();
-    provider = new MockEmbeddingProvider();
   });
 
   describe("createSavedSearch", () => {
@@ -90,7 +86,7 @@ describe("saved-searches", () => {
     });
 
     it("should throw for nonexistent search", () => {
-      expect(() => getSavedSearch(db, "nonexistent")).toThrow(DocumentNotFoundError);
+      expect(() => getSavedSearch(db, "nonexistent")).toThrow(NotFoundError);
     });
   });
 
@@ -108,69 +104,17 @@ describe("saved-searches", () => {
     });
 
     it("should throw for nonexistent search", () => {
-      expect(() => deleteSavedSearch(db, "nonexistent")).toThrow(DocumentNotFoundError);
+      expect(() => deleteSavedSearch(db, "nonexistent")).toThrow(NotFoundError);
     });
   });
 
-  describe("runSavedSearch", () => {
-    it("should run a saved search and update metadata", async () => {
-      const vecDb = createTestDbWithVec();
-      const vecProvider = new MockEmbeddingProvider();
-
-      await indexDocument(vecDb, vecProvider, {
-        title: "TypeScript Guide",
-        content: "# TypeScript\n\nTypeScript is a typed superset of JavaScript.",
-        sourceType: "manual",
-      });
-
-      const saved = createSavedSearch(vecDb, "TS Search", "typescript");
+  describe("recordSavedSearchRun", () => {
+    it("records the run time and result count", () => {
+      const saved = createSavedSearch(db, "TS Search", "typescript");
       expect(saved.lastRunAt).toBeNull();
-      expect(saved.resultCount).toBe(0);
-
-      const { search, results } = await runSavedSearch(vecDb, vecProvider, saved.id);
-      expect(search.lastRunAt).toBeTruthy();
-      expect(search.resultCount).toBe(results.length);
-      expect(results.length).toBeGreaterThan(0);
-    });
-
-    it("should run by name", async () => {
-      const vecDb = createTestDbWithVec();
-      const vecProvider = new MockEmbeddingProvider();
-
-      await indexDocument(vecDb, vecProvider, {
-        title: "Test Doc",
-        content: "# Test\n\nSome test content here.",
-        sourceType: "manual",
-      });
-
-      createSavedSearch(vecDb, "Run By Name", "test");
-      const { search } = await runSavedSearch(vecDb, vecProvider, "Run By Name");
-      expect(search.name).toBe("Run By Name");
-      expect(search.lastRunAt).toBeTruthy();
-    });
-
-    it("should apply saved filters", async () => {
-      const vecDb = createTestDbWithVec();
-      const vecProvider = new MockEmbeddingProvider();
-
-      await indexDocument(vecDb, vecProvider, {
-        title: "Express Auth",
-        content: "# Auth\n\nAuthentication with Express.",
-        sourceType: "library",
-        library: "express",
-      });
-
-      const saved = createSavedSearch(vecDb, "Express Only", "auth", { library: "express" });
-      const { results } = await runSavedSearch(vecDb, vecProvider, saved.id);
-      for (const r of results) {
-        expect(r.library).toBe("express");
-      }
-    });
-
-    it("should throw for nonexistent search", async () => {
-      await expect(runSavedSearch(db, provider, "nonexistent")).rejects.toThrow(
-        DocumentNotFoundError,
-      );
+      const updated = recordSavedSearchRun(db, saved.id, 3);
+      expect(updated.lastRunAt).toBeTruthy();
+      expect(updated.resultCount).toBe(3);
     });
   });
 

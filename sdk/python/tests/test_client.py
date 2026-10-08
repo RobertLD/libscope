@@ -1,4 +1,7 @@
-"""Tests for libscope sync and async clients."""
+"""Tests for the libscope sync and async clients (HTTP mocked with respx)."""
+
+import asyncio
+import json
 
 import httpx
 import pytest
@@ -7,368 +10,316 @@ import respx
 from pylibscope.client import AsyncLibscopeClient, LibscopeClient
 from pylibscope.exceptions import (
     LibscopeConnectionError,
+    LibscopeError,
     NotFoundError,
     ServerError,
+    TaskFailedError,
     ValidationError,
 )
-from pylibscope.models import Analytics, AskResult, Document, SearchResult, Topic
 
 BASE = "http://localhost:3378"
 API = f"{BASE}/api/v1"
 
+HIT = {
+    "documentId": "d1",
+    "chunkId": "c1",
+    "title": "Doc 1",
+    "content": "hello",
+    "sourceType": "manual",
+    "score": 0.9,
+}
+DOC = {"documentId": "d1", "title": "Doc 1", "sourceType": "manual", "contentLength": 5}
+STARTED = {"taskId": "t1", "operation": "add", "status": "running"}
+ADD_RESULT = {"kind": "content", "documents": [{"documentId": "d1", "title": "Doc 1"}]}
 
-# ---------------------------------------------------------------------------
-# Synchronous client tests
-# ---------------------------------------------------------------------------
+
+def ok(data, status=200):
+    return httpx.Response(status, json={"data": data, "meta": {"took": 1}})
 
 
-class TestLibscopeClientSearch:
+def task(status, **extra):
+    return {"id": "t1", "operation": "add", "status": status, **extra}
+
+
+def body(route):
+    return json.loads(route.calls[0].request.content)
+
+
+class TestSearch:
     @respx.mock
-    def test_search(self):
-        respx.get(f"{API}/search").mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "data": {
-                        "results": [
-                            {"documentId": "d1", "title": "Doc 1", "content": "hello", "score": 0.9}
-                        ],
-                        "totalCount": 1,
-                    },
-                    "meta": {"took": 10},
-                },
-            )
-        )
-        with LibscopeClient() as client:
-            result = client.search("hello")
-        assert isinstance(result, SearchResult)
-        assert result.total_count == 1
-        assert result.results[0].score == 0.9
-
-    @respx.mock
-    def test_search_with_filters(self):
+    def test_search_sends_operation_names_and_parses_page(self):
         route = respx.get(f"{API}/search").mock(
-            return_value=httpx.Response(200, json={"data": {"results": [], "totalCount": 0}})
+            return_value=ok({"items": [HIT], "total": 1, "limit": 5, "offset": 0})
         )
         with LibscopeClient() as client:
-            client.search("test", topic="python", tags=["tutorial"], limit=5)
-        assert "topic=python" in str(route.calls[0].request.url)
-        assert "tag=tutorial" in str(route.calls[0].request.url)
-        assert "limit=5" in str(route.calls[0].request.url)
+            page = client.search(
+                "hello", limit=5, topic="py", source_type="library", tags=["a", "b"], min_rating=3
+            )
+        params = route.calls[0].request.url.params
+        assert params["query"] == "hello"
+        assert params["limit"] == "5"
+        assert params["sourceType"] == "library"
+        assert params.get_list("tags") == ["a", "b"]
+        assert params["minRating"] == "3"
+        assert page.total == 1
+        assert page.items[0].document_id == "d1"
+        assert page.items[0].chunk_id == "c1"
+
+
+class TestDocuments:
+    @respx.mock
+    def test_add_text_starts_a_task(self):
+        route = respx.post(f"{API}/documents").mock(return_value=ok(STARTED, 202))
+        with LibscopeClient() as client:
+            started = client.add_text("T", "C", topic="py", tags=["x"])
+        assert body(route) == {"title": "T", "content": "C", "topic": "py", "tags": ["x"]}
+        assert (started.id, started.status, started.operation) == ("t1", "running", "add")
 
     @respx.mock
-    def test_search_min_score_filter(self):
-        respx.get(f"{API}/search").mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "data": {
-                        "results": [
-                            {"documentId": "d1", "title": "High", "content": "", "score": 0.95},
-                            {"documentId": "d2", "title": "Low", "content": "", "score": 0.3},
-                        ],
-                        "totalCount": 2,
-                    }
-                },
-            )
-        )
+    def test_add_url_with_spider(self):
+        route = respx.post(f"{API}/documents").mock(return_value=ok(STARTED, 202))
         with LibscopeClient() as client:
-            result = client.search("test", min_score=0.5)
-        assert len(result.results) == 1
-        assert result.results[0].document_id == "d1"
-
-
-class TestLibscopeClientDocuments:
-    @respx.mock
-    def test_add_document_url(self):
-        respx.post(f"{API}/documents/url").mock(
-            return_value=httpx.Response(
-                201,
-                json={"data": {"id": "d1", "title": "Python Tutorial", "url": "https://example.com"}},
-            )
-        )
-        with LibscopeClient() as client:
-            doc = client.add_document("https://example.com")
-        assert isinstance(doc, Document)
-        assert doc.id == "d1"
-
-    @respx.mock
-    def test_add_text(self):
-        respx.post(f"{API}/documents").mock(
-            return_value=httpx.Response(
-                201, json={"data": {"id": "d2", "title": "My Doc"}}
-            )
-        )
-        with LibscopeClient() as client:
-            doc = client.add_text("My Doc", "Some content")
-        assert doc.title == "My Doc"
+            client.add_url("https://example.com", spider=True, max_pages=5)
+            client.add_url("https://example.com/page")
+        assert body(route) == {"url": "https://example.com", "spider": True, "maxPages": 5}
+        assert json.loads(route.calls[1].request.content) == {"url": "https://example.com/page"}
 
     @respx.mock
     def test_get_document(self):
-        respx.get(f"{API}/documents/d1").mock(
-            return_value=httpx.Response(200, json={"data": {"id": "d1", "title": "Test"}})
+        respx.get(f"{API}/documents/d%2F1").mock(
+            return_value=ok({"document": DOC, "content": "hello", "tags": ["a"], "nextOffset": None})
         )
         with LibscopeClient() as client:
-            doc = client.get_document("d1")
-        assert doc.id == "d1"
+            view = client.get_document("d/1")
+        assert view.document.title == "Doc 1"
+        assert view.content == "hello"
+        assert view.tags == ["a"]
 
     @respx.mock
     def test_list_documents(self):
-        respx.get(f"{API}/documents").mock(
-            return_value=httpx.Response(
-                200,
-                json={"data": [{"id": "d1", "title": "A"}, {"id": "d2", "title": "B"}]},
-            )
+        route = respx.get(f"{API}/documents").mock(
+            return_value=ok({"items": [DOC], "total": 1, "limit": 10, "offset": 0})
         )
         with LibscopeClient() as client:
-            docs = client.list_documents()
-        assert len(docs) == 2
+            page = client.list_documents(limit=10, library="react")
+        assert route.calls[0].request.url.params["library"] == "react"
+        assert page.items[0].content_length == 5
 
     @respx.mock
     def test_delete_document(self):
-        respx.delete(f"{API}/documents/d1").mock(
-            return_value=httpx.Response(200, json={"data": {"deleted": True}})
+        route = respx.delete(f"{API}/documents/d1").mock(
+            return_value=ok({"documentId": "d1", "deleted": True})
         )
         with LibscopeClient() as client:
-            client.delete_document("d1")  # should not raise
+            assert client.delete_document("d1") is None
+        assert route.called
 
 
-class TestLibscopeClientTopics:
+class TestTopicsTagsGraph:
     @respx.mock
-    def test_list_topics(self):
+    def test_topics(self):
         respx.get(f"{API}/topics").mock(
-            return_value=httpx.Response(
-                200,
-                json={"data": [{"id": "t1", "name": "Python"}, {"id": "t2", "name": "Rust"}]},
-            )
+            return_value=ok({"items": [{"id": "py", "name": "Python", "documentCount": 2}]})
         )
+        create = respx.post(f"{API}/topics").mock(return_value=ok({"id": "web", "name": "Web"}))
         with LibscopeClient() as client:
             topics = client.list_topics()
-        assert len(topics) == 2
-        assert all(isinstance(t, Topic) for t in topics)
+            created = client.create_topic("Web", parent="py")
+        assert topics[0].document_count == 2
+        assert body(create) == {"name": "Web", "parent": "py"}
+        assert created.id == "web"
 
     @respx.mock
-    def test_create_topic(self):
-        respx.post(f"{API}/topics").mock(
-            return_value=httpx.Response(201, json={"data": {"id": "t3", "name": "Go"}})
+    def test_tags(self):
+        add = respx.post(f"{API}/documents/d1/tags").mock(
+            return_value=ok({"documentId": "d1", "tags": ["a", "b"]})
         )
-        with LibscopeClient() as client:
-            topic = client.create_topic("Go")
-        assert topic.name == "Go"
-
-
-class TestLibscopeClientTags:
-    @respx.mock
-    def test_add_tags(self):
-        respx.post(f"{API}/documents/d1/tags").mock(
-            return_value=httpx.Response(200, json={"data": ["alpha", "beta"]})
+        remove = respx.delete(f"{API}/documents/d1/tags").mock(
+            return_value=ok({"documentId": "d1", "removed": ["b"], "tags": ["a"]})
         )
-        with LibscopeClient() as client:
-            client.add_tags("d1", ["alpha", "beta"])
-
-    @respx.mock
-    def test_list_tags(self):
         respx.get(f"{API}/tags").mock(
-            return_value=httpx.Response(200, json={"data": ["python", "tutorial"]})
+            return_value=ok({"items": [{"id": "1", "name": "a", "documentCount": 1}]})
         )
         with LibscopeClient() as client:
-            tags = client.list_tags()
-        assert tags == ["python", "tutorial"]
+            assert client.add_tags("d1", ["b"]) == ["a", "b"]
+            assert client.remove_tags("d1", ["b"]) == ["a"]
+            assert client.list_tags()[0].name == "a"
+        assert body(add) == {"tags": ["b"]}
+        assert remove.calls[0].request.url.params.get_list("tags") == ["b"]
 
-
-class TestLibscopeClientAnalytics:
     @respx.mock
-    def test_get_analytics(self):
-        respx.get(f"{API}/stats").mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "data": {
-                        "totalDocuments": 42,
-                        "totalChunks": 100,
-                        "totalTopics": 3,
-                        "totalTags": 7,
-                        "databaseSizeBytes": 2048,
-                    }
-                },
+    def test_graph(self):
+        route = respx.get(f"{API}/graph").mock(
+            return_value=ok(
+                {
+                    "nodes": [{"id": "d1", "label": "Doc", "type": "document"}],
+                    "edges": [{"source": "d1", "target": "t", "type": "has_tag", "weight": 1}],
+                }
             )
         )
         with LibscopeClient() as client:
-            stats = client.get_analytics()
-        assert isinstance(stats, Analytics)
-        assert stats.total_documents == 42
+            graph = client.get_graph(threshold=0.5)
+        assert route.calls[0].request.url.params["threshold"] == "0.5"
+        assert graph.nodes[0].type == "document"
+        assert graph.edges[0].weight == 1
 
 
-class TestLibscopeClientAsk:
+class TestOverviewAsk:
+    @respx.mock
+    def test_overview(self):
+        respx.get(f"{API}/overview").mock(
+            return_value=ok(
+                {
+                    "stats": {"totalDocuments": 3, "totalChunks": 9, "databaseSizeBytes": 4096},
+                    "topics": [],
+                    "packs": [],
+                    "health": {"database": "ok"},
+                }
+            )
+        )
+        with LibscopeClient() as client:
+            overview = client.overview()
+        assert overview.stats.total_documents == 3
+        assert overview.health["database"] == "ok"
+
     @respx.mock
     def test_ask(self):
-        respx.post(f"{API}/ask").mock(
-            return_value=httpx.Response(
-                200,
-                json={"data": {"answer": "Use decorators.", "sources": [{"id": "d1"}]}},
+        route = respx.post(f"{API}/ask").mock(
+            return_value=ok(
+                {
+                    "mode": "answer",
+                    "answer": "42",
+                    "model": "m",
+                    "sources": [{"documentId": "d1", "title": "Doc", "chunk": "x", "score": 0.5}],
+                }
             )
         )
         with LibscopeClient() as client:
-            result = client.ask("How to use decorators?")
-        assert isinstance(result, AskResult)
-        assert result.answer == "Use decorators."
+            result = client.ask("why?", top_k=3, source_type="manual")
+        assert body(route) == {"question": "why?", "topK": 3, "sourceType": "manual"}
+        assert result.answer == "42"
+        assert result.sources[0].document_id == "d1"
 
-
-class TestLibscopeClientHealth:
     @respx.mock
     def test_health(self):
+        respx.get(f"{API}/health").mock(return_value=ok({"status": "ok"}))
+        with LibscopeClient() as client:
+            assert client.health() == {"status": "ok"}
+
+
+class TestTasks:
+    @respx.mock
+    def test_wait_for_task_returns_the_parsed_result(self):
+        respx.get(f"{API}/tasks/t1").mock(
+            side_effect=[
+                ok(task("running", progress={"current": 1, "total": 2})),
+                ok(task("completed", result=json.dumps(ADD_RESULT))),
+            ]
+        )
+        with LibscopeClient() as client:
+            done = client.wait_for_task("t1", interval=0)
+        assert done.status == "completed"
+        assert done.result["documents"][0]["documentId"] == "d1"
+
+    @respx.mock
+    def test_wait_for_task_raises_when_the_task_failed(self):
+        respx.get(f"{API}/tasks/t1").mock(return_value=ok(task("failed", error="boom")))
+        with LibscopeClient() as client:
+            with pytest.raises(TaskFailedError, match="boom") as exc:
+                client.wait_for_task("t1", interval=0)
+        assert exc.value.task.status == "failed"
+
+    @respx.mock
+    def test_wait_for_task_times_out(self):
+        respx.get(f"{API}/tasks/t1").mock(return_value=ok(task("running")))
+        with LibscopeClient() as client:
+            with pytest.raises(TimeoutError):
+                client.wait_for_task("t1", timeout=0, interval=0)
+
+    @respx.mock
+    def test_sync_and_cancel(self):
+        sync = respx.post(f"{API}/sync").mock(return_value=ok({**STARTED, "operation": "sync"}, 202))
+        respx.post(f"{API}/tasks/t1/cancel").mock(
+            return_value=ok({"taskId": "t1", "cancelRequested": True, "status": "cancelled"})
+        )
+        with LibscopeClient() as client:
+            assert client.sync("notes").operation == "sync"
+            client.sync_all()
+            assert client.cancel_task("t1") is True
+        assert body(sync) == {"name": "notes"}
+        assert json.loads(sync.calls[1].request.content) == {"all": True}
+
+
+class TestErrors:
+    @pytest.mark.parametrize(
+        "status,error",
+        [(404, NotFoundError), (400, ValidationError), (500, ServerError)],
+    )
+    @respx.mock
+    def test_status_codes(self, status, error):
+        respx.get(f"{API}/documents/x").mock(
+            return_value=httpx.Response(status, json={"error": {"code": "C", "message": "msg"}})
+        )
+        with LibscopeClient() as client:
+            with pytest.raises(error, match="msg"):
+                client.get_document("x")
+
+    @respx.mock
+    def test_other_status_keeps_the_server_code(self):
         respx.get(f"{API}/health").mock(
-            return_value=httpx.Response(
-                200, json={"data": {"status": "ok", "docCount": 10}}
-            )
+            return_value=httpx.Response(401, json={"error": {"code": "UNAUTHORIZED", "message": "no"}})
         )
         with LibscopeClient() as client:
-            h = client.health()
-        assert h["status"] == "ok"
-
-
-class TestLibscopeClientErrors:
-    @respx.mock
-    def test_not_found(self):
-        respx.get(f"{API}/documents/missing").mock(
-            return_value=httpx.Response(
-                404, json={"error": {"code": "NOT_FOUND", "message": "Document not found"}}
-            )
-        )
-        with LibscopeClient() as client:
-            with pytest.raises(NotFoundError):
-                client.get_document("missing")
+            with pytest.raises(LibscopeError) as exc:
+                client.health()
+        assert exc.value.code == "UNAUTHORIZED"
 
     @respx.mock
-    def test_validation_error(self):
-        respx.post(f"{API}/documents").mock(
-            return_value=httpx.Response(
-                400,
-                json={"error": {"code": "VALIDATION_ERROR", "message": "title is required"}},
-            )
-        )
-        with LibscopeClient() as client:
-            with pytest.raises(ValidationError):
-                client.add_text("", "")
-
-    @respx.mock
-    def test_server_error(self):
-        respx.get(f"{API}/stats").mock(
-            return_value=httpx.Response(
-                500, json={"error": {"code": "INTERNAL_ERROR", "message": "oops"}}
-            )
-        )
-        with LibscopeClient() as client:
-            with pytest.raises(ServerError):
-                client.get_analytics()
-
     def test_connection_refused(self):
-        client = LibscopeClient(base_url="http://localhost:19999")
-        with pytest.raises(LibscopeConnectionError):
-            client.search("hello")
-        client.close()
-
-
-class TestLibscopeClientContextManager:
-    @respx.mock
-    def test_context_manager(self):
-        respx.get(f"{API}/health").mock(
-            return_value=httpx.Response(200, json={"data": {"status": "ok"}})
-        )
+        respx.get(f"{API}/health").mock(side_effect=httpx.ConnectError("refused"))
         with LibscopeClient() as client:
-            h = client.health()
-            assert h["status"] == "ok"
+            with pytest.raises(LibscopeConnectionError):
+                client.health()
+
+    @respx.mock
+    def test_api_key_is_sent_as_bearer_token(self):
+        route = respx.get("http://server:9000/api/v1/health").mock(return_value=ok({"status": "ok"}))
+        with LibscopeClient("http://server:9000/", api_key="secret") as client:
+            client.health()
+        assert route.calls[0].request.headers["Authorization"] == "Bearer secret"
 
 
-# ---------------------------------------------------------------------------
-# Async client tests
-# ---------------------------------------------------------------------------
-
-
-class TestAsyncLibscopeClient:
+class TestAsyncClient:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_search(self):
-        respx.get(f"{API}/search").mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "data": {
-                        "results": [
-                            {"documentId": "d1", "title": "Doc", "content": "hi", "score": 0.8}
-                        ],
-                        "totalCount": 1,
-                    }
-                },
-            )
+    async def test_add_wait_search(self):
+        respx.post(f"{API}/documents").mock(return_value=ok(STARTED, 202))
+        respx.get(f"{API}/tasks/t1").mock(
+            return_value=ok(task("completed", result=json.dumps(ADD_RESULT)))
         )
+        respx.get(f"{API}/search").mock(return_value=ok({"items": [HIT], "total": 1}))
         async with AsyncLibscopeClient() as client:
-            result = await client.search("hi")
-        assert result.total_count == 1
+            started = await client.add_text("T", "C")
+            done = await client.wait_for_task(started.id, interval=0)
+            page = await client.search("hello")
+        assert done.result["kind"] == "content"
+        assert page.items[0].title == "Doc 1"
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_add_text(self):
-        respx.post(f"{API}/documents").mock(
-            return_value=httpx.Response(201, json={"data": {"id": "d1", "title": "Test"}})
-        )
+    async def test_wait_for_task_is_bounded_by_the_caller(self):
+        respx.get(f"{API}/tasks/t1").mock(return_value=ok(task("running")))
         async with AsyncLibscopeClient() as client:
-            doc = await client.add_text("Test", "content")
-        assert doc.id == "d1"
+            waiting = client.wait_for_task("t1", interval=0)
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(waiting, timeout=0.05)
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_list_documents(self):
-        respx.get(f"{API}/documents").mock(
-            return_value=httpx.Response(
-                200, json={"data": [{"id": "d1", "title": "A"}]}
-            )
-        )
-        async with AsyncLibscopeClient() as client:
-            docs = await client.list_documents()
-        assert len(docs) == 1
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_error_handling(self):
-        respx.get(f"{API}/documents/bad").mock(
-            return_value=httpx.Response(
-                404, json={"error": {"code": "NOT_FOUND", "message": "not found"}}
-            )
+    async def test_errors(self):
+        respx.get(f"{API}/documents/x").mock(
+            return_value=httpx.Response(404, json={"error": {"code": "N", "message": "gone"}})
         )
         async with AsyncLibscopeClient() as client:
             with pytest.raises(NotFoundError):
-                await client.get_document("bad")
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_get_analytics(self):
-        respx.get(f"{API}/stats").mock(
-            return_value=httpx.Response(
-                200,
-                json={"data": {"totalDocuments": 5, "totalChunks": 20, "totalTopics": 1, "totalTags": 3, "databaseSizeBytes": 512}},
-            )
-        )
-        async with AsyncLibscopeClient() as client:
-            stats = await client.get_analytics()
-        assert stats.total_documents == 5
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_ask(self):
-        respx.post(f"{API}/ask").mock(
-            return_value=httpx.Response(200, json={"data": {"answer": "yes", "sources": []}})
-        )
-        async with AsyncLibscopeClient() as client:
-            result = await client.ask("is it?")
-        assert result.answer == "yes"
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_context_manager(self):
-        respx.get(f"{API}/health").mock(
-            return_value=httpx.Response(200, json={"data": {"status": "ok"}})
-        )
-        async with AsyncLibscopeClient() as client:
-            h = await client.health()
-            assert h["status"] == "ok"
+                await client.get_document("x")

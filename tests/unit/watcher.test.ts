@@ -73,8 +73,39 @@ describe("FileWatcher", () => {
     vi.restoreAllMocks();
   });
 
-  it("should export default watch extensions", () => {
-    expect(DEFAULT_WATCH_EXTENSIONS).toEqual([".md", ".mdx", ".txt", ".rst"]);
+  it("should derive default watch extensions from the parser registry", () => {
+    expect(DEFAULT_WATCH_EXTENSIONS).toEqual(
+      expect.arrayContaining([".md", ".mdx", ".txt", ".rst", ".pdf", ".docx"]),
+    );
+  });
+
+  it("should skip files whose extension has no parser without erroring", async () => {
+    const db = createMockDb();
+    const provider = createMockProvider();
+    const onIndex = vi.fn();
+    const onError = vi.fn();
+
+    mockStatSync.mockReturnValue({ isFile: () => true } as import("node:fs").Stats);
+
+    const watcher = new FileWatcher(db, provider, {
+      directory: "/tmp/docs",
+      extensions: [".rs"],
+      onIndex,
+      onError,
+    });
+
+    watcher.start();
+    watchCallback("change", "main.rs");
+
+    vi.advanceTimersByTime(500);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mockStatSync).toHaveBeenCalledTimes(1);
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+    expect(onIndex).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+
+    watcher.stop();
   });
 
   it("should filter files by extension", () => {

@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { getLogger } from "../logger.js";
+import { deleteChunkEmbeddings } from "./documents.js";
 
 export interface PruneResult {
   pruned: number;
@@ -28,12 +29,7 @@ export function pruneExpiredDocuments(db: Database.Database): PruneResult {
   const pruneTransaction = db.transaction(() => {
     // Remove embeddings first (foreign key dependency)
     try {
-      db.prepare(
-        `DELETE FROM chunk_embeddings
-         WHERE chunk_id IN (
-           SELECT id FROM chunks WHERE document_id IN (${placeholders})
-         )`,
-      ).run(...ids);
+      deleteChunkEmbeddings(db, ids);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("no such table")) {

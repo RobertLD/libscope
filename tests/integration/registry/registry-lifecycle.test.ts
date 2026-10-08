@@ -37,8 +37,6 @@ function makeEntry(name: string, url: string): RegistryEntry {
   return {
     name,
     url,
-    syncInterval: 3600,
-    priority: 1,
     lastSyncedAt: null,
   };
 }
@@ -188,7 +186,7 @@ describe("integration: registry lifecycle", () => {
 
     const { results } = searchRegistries("react");
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0]!.pack.name).toBe("react-docs");
+    expect(results[0]!.name).toBe("react-docs");
   });
 
   it("should remove a registry and clean up cache", async () => {
@@ -284,8 +282,8 @@ describe("integration: registry lifecycle", () => {
 
     // Search across both
     const { results } = searchRegistries("pack");
-    expect(results.length).toBe(2);
-    expect(results.map((r) => r.pack.name).sort((a, b) => a.localeCompare(b))).toEqual([
+    expect(results).toHaveLength(2);
+    expect(results.map((r) => r.name).sort((a, b) => a.localeCompare(b))).toEqual([
       "pack-from-reg1",
       "pack-from-reg2",
     ]);

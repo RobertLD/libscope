@@ -253,6 +253,12 @@ describe("extractDocTitle", () => {
       "My Library — Docs",
     ],
     [
+      "character references decoded",
+      "<html><head><title>Guide &#8212; Q&amp;A</title></head><body></body></html>",
+      "https://example.com/docs",
+      "Guide — Q&A",
+    ],
+    [
       "URL-derived fallback",
       "<html><body><p>content</p></body></html>",
       "https://example.com/docs/installation",
@@ -275,6 +281,18 @@ describe("extractDocTitle", () => {
       "<html><body></body></html>",
       "https://example.com/",
       "example.com",
+    ],
+    [
+      "H1 with character references",
+      "<h1>Tom &amp; Jerry &#8212; API</h1>",
+      "https://example.com/docs/api",
+      "Tom & Jerry — API",
+    ],
+    [
+      "<title> with character references",
+      "<html><head><title>textwrap &#8212; Python</title></head><body></body></html>",
+      "https://example.com/docs",
+      "textwrap — Python",
     ],
     [
       "H1 precedence over title",
@@ -341,7 +359,7 @@ describe("extractDocLinks", () => {
       '<a href="/docs/page#section">Three</a>',
     ].join("\n");
     const links = extractDocLinks(html, BASE, "/docs/");
-    expect(links.filter((l) => l.includes("/docs/page")).length).toBe(1);
+    expect(links.filter((l) => l.includes("/docs/page"))).toHaveLength(1);
   });
 
   it("returns empty array when no anchors found", () => {
@@ -402,7 +420,7 @@ describe("extractSitemapUrls", () => {
   <url><loc>https://docs.example.com/docs/page</loc></url>
 </urlset>`;
     const urls = extractSitemapUrls(xml, BASE, "/docs/");
-    expect(urls.length).toBe(1);
+    expect(urls).toHaveLength(1);
   });
 
   it("returns empty array for empty sitemap", () => {
@@ -796,6 +814,59 @@ describe("syncDocSite — mocked fetch", () => {
     expect(result2.pagesUpdated).toBe(0);
   });
 
+  it("recognises existing pages beyond the first 50 documents", async () => {
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root
+      .mockResolvedValueOnce(notFoundResponse()); // sitemap.xml
+    await syncDocSite(db, provider, { url: "https://docs.example.com/docs/" });
+
+    // Make the root doc the oldest of 61 docs-connector documents.
+    db.prepare("UPDATE documents SET updated_at = '2000-01-01 00:00:00'").run();
+    const insert = db.prepare(
+      "INSERT INTO documents (id, source_type, title, content, url, updated_at) VALUES (?, 'library', 'T', 'B', ?, '2030-01-01 00:00:00')",
+    );
+    for (let i = 0; i < 60; i++) {
+      insert.run(`filler-${i}`, `https://docs.example.com/docs/filler-${i}`);
+    }
+
+    mockFetch
+      .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root (unchanged)
+      .mockResolvedValueOnce(notFoundResponse()); // sitemap.xml
+    const result = await syncDocSite(db, provider, { url: "https://docs.example.com/docs/" });
+
+    expect(result.pagesSkipped).toBe(1);
+    expect(result.pagesIndexed).toBe(0);
+  });
+
+  it("stops crawling when the abort signal fires", async () => {
+    const controller = new AbortController();
+    const root = SPHINX_ROOT_SIMPLE.replace(
+      "</body>",
+      '<a href="https://docs.example.com/docs/p1">P1</a></body>',
+    );
+    mockFetch
+      .mockImplementationOnce(() => {
+        controller.abort();
+        return Promise.resolve(htmlResponse(root));
+      })
+      .mockResolvedValueOnce(notFoundResponse()); // sitemap.xml
+
+    await expect(
+      syncDocSite(
+        db,
+        provider,
+        { url: "https://docs.example.com/docs/" },
+        {
+          signal: controller.signal,
+        },
+      ),
+    ).rejects.toThrow();
+
+    expect(mockFetch).toHaveBeenCalledTimes(2); // root + sitemap, never p1
+    const row = db.prepare("SELECT status FROM connector_syncs").get() as { status: string };
+    expect(row.status).toBe("failed");
+  });
+
   it("records sync history in the connector_syncs table", async () => {
     mockFetch
       .mockResolvedValueOnce(htmlResponse(SPHINX_ROOT_SIMPLE)) // root
@@ -853,13 +924,13 @@ describe("disconnectDocSite", () => {
   it("removes all documents from the given site URL prefix", () => {
     // Seed some docs manually
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-1", "Page 1", "Content 1", "https://docs.example.com/docs/page1");
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-2", "Page 2", "Content 2", "https://docs.example.com/docs/page2");
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-3", "Other", "Content 3", "https://other.example.com/docs/page");
 
     const removed = disconnectDocSite(db, "https://docs.example.com/docs/");
@@ -868,6 +939,39 @@ describe("disconnectDocSite", () => {
 
     const remaining = db.prepare("SELECT COUNT(*) as n FROM documents").get() as { n: number };
     expect(remaining.n).toBe(1); // doc-3 should remain
+  });
+
+  it("keeps documents under the site URL that the connector did not index", () => {
+    const insert = db.prepare(
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insert.run("synced", "library", "Synced", "Body", "https://docs.example.com/docs/a", "crawler");
+    insert.run("added", "manual", "Added", "Body", "https://docs.example.com/docs/a/", "manual");
+    insert.run("by-model", "library", "Model", "Body", "https://docs.example.com/docs/b", "model");
+
+    const removed = disconnectDocSite(db, "https://docs.example.com/docs/");
+
+    expect(removed).toBe(1);
+    const ids = (
+      db.prepare("SELECT id FROM documents ORDER BY id").all() as Array<{ id: string }>
+    ).map((r) => r.id);
+    expect(ids).toEqual(["added", "by-model"]);
+  });
+
+  it("matches the site URL exactly, not as a LIKE pattern", () => {
+    const insert = db.prepare(
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', 'T', 'B', ?, 'crawler')",
+    );
+    insert.run("inside", "https://docs.example.com/my_docs/page");
+    insert.run("lookalike", "https://docs.example.com/myXdocs/page");
+
+    const removed = disconnectDocSite(db, "https://docs.example.com/my_docs/");
+
+    expect(removed).toBe(1);
+    const ids = (db.prepare("SELECT id FROM documents").all() as Array<{ id: string }>).map(
+      (r) => r.id,
+    );
+    expect(ids).toEqual(["lookalike"]);
   });
 
   it("returns 0 when no matching documents exist", () => {
@@ -881,7 +985,7 @@ describe("disconnectDocSite", () => {
 
   it("does not remove documents from other sites", () => {
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-1", "Page 1", "Content 1", "https://other.example.com/docs/page");
 
     const removed = disconnectDocSite(db, "https://docs.example.com/docs/");
@@ -893,7 +997,7 @@ describe("disconnectDocSite", () => {
 
   it("removes associated chunks", () => {
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', 'Title', 'Body', ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', 'Title', 'Body', ?, 'crawler')",
     ).run("doc-1", "https://docs.example.com/docs/page");
     db.prepare(
       "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",

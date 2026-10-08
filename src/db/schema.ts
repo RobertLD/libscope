@@ -1,8 +1,24 @@
 import type Database from "better-sqlite3";
 import { DatabaseError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import type { EmbeddingProvider } from "../providers/embedding.js";
+import {
+  INDEX_META_DDL,
+  assertValidVectorDimensions,
+  checkVectorIndexIdentity,
+  execCreateVectorTable,
+  getVectorTableDimensions,
+  toEmbeddingIdentity,
+  writeEmbeddingIdentity,
+} from "./index-meta.js";
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 19;
+
+/** Copy every chunk into chunks_fts, keyed by the chunk's rowid. */
+const FTS_BACKFILL_SQL = `
+  INSERT INTO chunks_fts(rowid, content, chunk_id, document_id)
+  SELECT rowid, content, id, document_id FROM chunks;
+`;
 
 const MIGRATIONS: Record<number, string> = {
   1: `
@@ -172,6 +188,9 @@ const MIGRATIONS: Record<number, string> = {
 
     INSERT INTO schema_version (version) VALUES (8);
   `,
+  // connector_configs is unused: no CLI, MCP, REST or scheduler code reads or writes it.
+  // Connector settings live in ~/.libscope/connectors/<name>.json. Only the exported
+  // save/load/deleteDbConnectorConfig helpers in src/connectors/index.ts touch it.
   9: `
     CREATE TABLE IF NOT EXISTS connector_configs (
       type TEXT PRIMARY KEY,
@@ -269,15 +288,83 @@ const MIGRATIONS: Record<number, string> = {
 
     INSERT INTO schema_version (version) VALUES (17);
   `,
+  // Rebuild chunks_fts keyed by chunks.rowid. The old triggers matched rows on the
+  // UNINDEXED chunk_id column, so every chunk delete scanned the whole FTS table.
+  // Repopulating from chunks also drops duplicate rows left by earlier backfills.
+  18: `
+    DROP TRIGGER IF EXISTS chunks_ai;
+    DROP TRIGGER IF EXISTS chunks_ad;
+    DROP TRIGGER IF EXISTS chunks_au;
+    DROP TABLE IF EXISTS chunks_fts;
+
+    CREATE VIRTUAL TABLE chunks_fts USING fts5(
+      content,
+      chunk_id UNINDEXED,
+      document_id UNINDEXED,
+      tokenize='porter unicode61'
+    );
+
+    -- The DELETE before each INSERT clears a stale row that may hold the same rowid.
+    CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE rowid = new.rowid;
+      INSERT INTO chunks_fts(rowid, content, chunk_id, document_id)
+      VALUES (new.rowid, new.content, new.id, new.document_id);
+    END;
+
+    CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE rowid = old.rowid;
+    END;
+
+    CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
+      DELETE FROM chunks_fts WHERE rowid = old.rowid;
+      INSERT INTO chunks_fts(rowid, content, chunk_id, document_id)
+      VALUES (new.rowid, new.content, new.id, new.document_id);
+    END;
+
+    ${FTS_BACKFILL_SQL}
+
+    -- Serves the title + length dedup lookup that runs on every index call.
+    CREATE INDEX IF NOT EXISTS idx_documents_title ON documents(title);
+
+    -- Records the embedding provider, model and vector size of chunk_embeddings.
+    ${INDEX_META_DDL};
+
+    INSERT INTO schema_version (version) VALUES (18);
+  `,
+  // Saved search filters use the search operation's field names: "source" -> "sourceType".
+  // Rows with invalid JSON or without "source" are left as they are.
+  19: `
+    UPDATE saved_searches
+    SET filters = json_remove(
+      json_set(filters, '$.sourceType', json_extract(filters, '$.source')),
+      '$.source'
+    )
+    WHERE CASE
+      WHEN json_valid(filters) THEN json_type(filters, '$.source') IS NOT NULL
+        AND json_type(filters, '$.sourceType') IS NULL
+      ELSE 0
+    END;
+
+    INSERT INTO schema_version (version) VALUES (19);
+  `,
 };
 
-const FTS_BACKFILL_SQL = `
-  INSERT INTO chunks_fts(content, chunk_id, document_id)
-  SELECT content, id, document_id FROM chunks;
-`;
+/**
+ * Populate chunks_fts from chunks, but only when the FTS index is empty (for example,
+ * right after it was created). A non-empty index is kept in sync by triggers, so
+ * backfilling it again would duplicate every row.
+ */
+function backfillFtsIfEmpty(db: Database.Database): void {
+  const hasFtsRows = db.prepare("SELECT 1 FROM chunks_fts LIMIT 1").get() !== undefined;
+  if (hasFtsRows) return;
+  db.exec(FTS_BACKFILL_SQL);
+}
 
-/** Run pending migrations on the database. */
-export function runMigrations(db: Database.Database): void {
+/**
+ * Run pending migrations on the database.
+ * @param targetVersion - Stop at this schema version (defaults to the latest). Used by tests.
+ */
+export function runMigrations(db: Database.Database, targetVersion: number = SCHEMA_VERSION): void {
   const log = getLogger();
 
   try {
@@ -294,15 +381,15 @@ export function runMigrations(db: Database.Database): void {
       currentVersion = row?.version ?? 0;
     }
 
-    if (currentVersion >= SCHEMA_VERSION) {
+    if (currentVersion >= targetVersion) {
       log.debug({ currentVersion }, "Database schema is up to date");
       return;
     }
 
-    log.info({ from: currentVersion, to: SCHEMA_VERSION }, "Running database migrations");
+    log.info({ from: currentVersion, to: targetVersion }, "Running database migrations");
 
     const migrate = db.transaction(() => {
-      for (let v = currentVersion + 1; v <= SCHEMA_VERSION; v++) {
+      for (let v = currentVersion + 1; v <= targetVersion; v++) {
         const sql = MIGRATIONS[v];
         if (!sql) {
           throw new DatabaseError(`Missing migration for version ${v}`);
@@ -315,7 +402,7 @@ export function runMigrations(db: Database.Database): void {
     migrate();
 
     try {
-      db.exec(FTS_BACKFILL_SQL);
+      backfillFtsIfEmpty(db);
     } catch (err) {
       log.warn({ err }, "FTS backfill failed — new chunks will still be indexed via triggers");
     }
@@ -327,20 +414,40 @@ export function runMigrations(db: Database.Database): void {
   }
 }
 
-/** Create the virtual table for vector search (requires sqlite-vec). */
-export function createVectorTable(db: Database.Database, dimensions: number): void {
-  if (!Number.isInteger(dimensions) || dimensions <= 0 || dimensions > 10000) {
-    throw new DatabaseError("Invalid vector dimensions: must be a positive integer <= 10000");
+/**
+ * Create the vector table (requires sqlite-vec) and record which embedding model it is for.
+ * Pass the provider rather than a bare vector size so that a change of provider or model
+ * is detected, not only a change of vector size.
+ *
+ * @throws ConfigError when the existing vector table was built for a different provider,
+ *   model or vector size. The message tells the user to run `libscope admin reindex --rebuild`.
+ * @throws DatabaseError when the vector size is invalid, or unknown (0) and no table exists.
+ */
+export function createVectorTable(
+  db: Database.Database,
+  source: number | Pick<EmbeddingProvider, "name" | "model" | "dimensions">,
+): void {
+  const configured = toEmbeddingIdentity(source);
+  const dimensions = configured.dimensions ?? 0;
+  // 0 means the provider learns its vector size from its first embedding.
+  if (dimensions !== 0) assertValidVectorDimensions(dimensions);
+
+  const tableDimensions = getVectorTableDimensions(db);
+  if (tableDimensions !== undefined) {
+    checkVectorIndexIdentity(db, configured, tableDimensions);
+    return;
   }
+  if (dimensions === 0) {
+    throw new DatabaseError(
+      "Invalid vector dimensions: the vector size of the embedding model is not known yet. " +
+        "Set embedding.dimensions in the config, or run `libscope admin reindex --rebuild` to detect it.",
+    );
+  }
+
   const log = getLogger();
   try {
-    // dimensions is validated as a positive integer above, so interpolation is safe here
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
-        chunk_id TEXT PRIMARY KEY,
-        embedding float[${dimensions}]
-      );
-    `);
+    execCreateVectorTable(db, dimensions);
+    writeEmbeddingIdentity(db, configured, true);
     log.info({ dimensions }, "Vector table ready");
   } catch (err) {
     log.warn({ err }, "Could not create vector table — vector search unavailable");

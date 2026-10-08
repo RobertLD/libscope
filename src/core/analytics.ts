@@ -73,7 +73,7 @@ export function logSearch(db: Database.Database, entry: SearchLogEntry): string 
   return id;
 }
 
-/** Return overview stats for the knowledge base. */
+/** Return overview stats for the knowledge base. `dbPath` defaults to the open database file (`db.name`). */
 export function getStats(db: Database.Database, dbPath?: string): OverviewStats {
   const StatsRowSchema = z.object({
     doc_count: z.number(),
@@ -99,10 +99,12 @@ export function getStats(db: Database.Database, dbPath?: string): OverviewStats 
     "getStats.row",
   );
 
+  // Default to the file this connection actually opened.
+  const sizePath = dbPath ?? (db.memory ? undefined : db.name);
   let databaseSizeBytes = 0;
-  if (dbPath) {
+  if (sizePath) {
     try {
-      databaseSizeBytes = statSync(dbPath).size;
+      databaseSizeBytes = statSync(sizePath).size;
     } catch {
       // Inaccessible paths report 0
     }

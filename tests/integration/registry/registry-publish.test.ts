@@ -29,12 +29,13 @@ vi.mock("node:os", async (importOriginal) => {
 const { loadRegistries, saveRegistries, getRegistry } =
   await import("../../../src/registry/config.js");
 const { syncRegistry } = await import("../../../src/registry/sync.js");
-const { publishPack, unpublishPack } = await import("../../../src/registry/publish.js");
+const { publishPack, publishPackToBranch, unpublishPack } =
+  await import("../../../src/registry/publish.js");
 const { verifyChecksum } = await import("../../../src/registry/checksum.js");
 const { getRegistryCacheDir } = await import("../../../src/registry/types.js");
 
 function makeEntry(name: string, url: string): RegistryEntry {
-  return { name, url, syncInterval: 3600, priority: 1, lastSyncedAt: null };
+  return { name, url, lastSyncedAt: null };
 }
 
 function addTestRegistry(entry: RegistryEntry): void {
@@ -164,6 +165,27 @@ describe("integration: registry publish", () => {
     const cacheDir = getRegistryCacheDir("rt-reg");
     const publishedFile = join(cacheDir, "packs", "rt-pack", "1.0.0", "rt-pack.json");
     expect(await verifyChecksum(publishedFile, result.checksum)).toBe(true);
+  });
+
+  it("should submit a pack on a pushed feature branch and return to the base branch", async () => {
+    const bareRepo = createBareRepo(tempDir);
+    addTestRegistry(makeEntry("submit-reg", bareRepo));
+    await syncRegistry(getRegistry("submit-reg")!);
+    const cacheDir = getRegistryCacheDir("submit-reg");
+    const baseBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: cacheDir }).toString();
+
+    const packFile = createPackFile(tempDir, "submitted-pack");
+    const result = await publishPackToBranch({
+      registryName: "submit-reg",
+      packFilePath: packFile,
+      version: "1.0.0",
+    });
+
+    expect(result.branch).toBe("feature/add-submitted-pack");
+    const remoteBranches = execSync("git branch --list", { cwd: bareRepo }).toString();
+    expect(remoteBranches).toContain("feature/add-submitted-pack");
+    const current = execSync("git rev-parse --abbrev-ref HEAD", { cwd: cacheDir }).toString();
+    expect(current).toBe(baseBranch);
   });
 
   it("should unpublish a pack version", async () => {
@@ -329,5 +351,114 @@ describe("integration: registry publish", () => {
         version: "1.0.0",
       }),
     ).rejects.toThrow(/not found/);
+  });
+});
+
+describe("integration: registry publish to a feature branch (--submit)", () => {
+  let tempDir: string;
+  let savedGlobalConfig: string | undefined;
+
+  /** Run git in `cwd` and return its trimmed output. */
+  function gitOut(args: string, cwd: string): string {
+    return execSync(`git ${args}`, { cwd, stdio: "pipe" }).toString().trim();
+  }
+
+  beforeEach(() => {
+    initLogger("silent");
+    tempDir = mkdtempSync(join(tmpdir(), "libscope-submit-"));
+    tempHome = join(tempDir, "home");
+    mkdirSync(tempHome, { recursive: true });
+    // Default git settings: no push.autoSetupRemote or other options from the user's config.
+    savedGlobalConfig = process.env["GIT_CONFIG_GLOBAL"];
+    const emptyConfig = join(tempDir, "gitconfig");
+    writeFileSync(emptyConfig, "", "utf-8");
+    process.env["GIT_CONFIG_GLOBAL"] = emptyConfig;
+  });
+
+  afterEach(() => {
+    if (savedGlobalConfig === undefined) delete process.env["GIT_CONFIG_GLOBAL"];
+    else process.env["GIT_CONFIG_GLOBAL"] = savedGlobalConfig;
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  async function setUpRegistry(name: string): Promise<{ bareRepo: string; cacheDir: string }> {
+    const bareRepo = createBareRepo(tempDir);
+    addTestRegistry(makeEntry(name, bareRepo));
+    await syncRegistry(getRegistry(name)!);
+    return { bareRepo, cacheDir: getRegistryCacheDir(name) };
+  }
+
+  it("pushes the pack to feature/add-<pack> and leaves the main branch unchanged", async () => {
+    const { bareRepo, cacheDir } = await setUpRegistry("submit-reg");
+    const mainBranch = gitOut("rev-parse --abbrev-ref HEAD", cacheDir);
+    const mainBefore = gitOut(`rev-parse ${mainBranch}`, bareRepo);
+
+    const result = await publishPackToBranch({
+      registryName: "submit-reg",
+      packFilePath: createPackFile(tempDir, "sub-pack", "1.2.0"),
+    });
+
+    expect(result).toMatchObject({
+      packName: "sub-pack",
+      version: "1.2.0",
+      branch: "feature/add-sub-pack",
+    });
+    // The remote has the branch with the pack files and the index entry.
+    const branch = "feature/add-sub-pack";
+    expect(gitOut(`log -1 --format=%s ${branch}`, bareRepo)).toBe("feat: add sub-pack@1.2.0");
+    expect(gitOut(`ls-tree -r --name-only ${branch}`, bareRepo).split("\n")).toEqual(
+      expect.arrayContaining([
+        "packs/sub-pack/pack.json",
+        "packs/sub-pack/1.2.0/sub-pack.json",
+        "packs/sub-pack/1.2.0/checksum.sha256",
+      ]),
+    );
+    const index = JSON.parse(gitOut(`show ${branch}:index.json`, bareRepo)) as PackSummary[];
+    expect(index.map((p) => p.name)).toEqual(["sub-pack"]);
+    // The main branch did not move, and the local clone is back on it, clean.
+    expect(gitOut(`rev-parse ${mainBranch}`, bareRepo)).toBe(mainBefore);
+    expect(gitOut("rev-parse --abbrev-ref HEAD", cacheDir)).toBe(mainBranch);
+    expect(gitOut("status --porcelain", cacheDir)).toBe("");
+    expect(gitOut("branch --list feature/*", cacheDir)).toBe("");
+    expect(existsSync(join(cacheDir, "packs", "sub-pack"))).toBe(false);
+  });
+
+  it("a later normal publish goes to the main branch", async () => {
+    const { bareRepo, cacheDir } = await setUpRegistry("submit-then-main");
+    const mainBranch = gitOut("rev-parse --abbrev-ref HEAD", cacheDir);
+    await publishPackToBranch({
+      registryName: "submit-then-main",
+      packFilePath: createPackFile(tempDir, "first-pack"),
+    });
+
+    await publishPack({
+      registryName: "submit-then-main",
+      packFilePath: createPackFile(tempDir, "second-pack"),
+    });
+
+    expect(gitOut(`log -1 --format=%s ${mainBranch}`, bareRepo)).toBe("publish: second-pack@1.0.0");
+    expect(gitOut("log -1 --format=%s feature/add-first-pack", bareRepo)).toBe(
+      "feat: add first-pack@1.0.0",
+    );
+  });
+
+  it("returns the clone to its branch when the publish fails", async () => {
+    const { bareRepo, cacheDir } = await setUpRegistry("submit-fail");
+    const mainBranch = gitOut("rev-parse --abbrev-ref HEAD", cacheDir);
+    const packFile = createPackFile(tempDir, "dup-pack");
+    await publishPack({ registryName: "submit-fail", packFilePath: packFile, version: "1.0.0" });
+
+    await expect(
+      publishPackToBranch({
+        registryName: "submit-fail",
+        packFilePath: packFile,
+        version: "1.0.0",
+      }),
+    ).rejects.toThrow(/already exists/);
+
+    expect(gitOut("rev-parse --abbrev-ref HEAD", cacheDir)).toBe(mainBranch);
+    expect(gitOut("status --porcelain", cacheDir)).toBe("");
+    expect(gitOut("branch --list feature/*", cacheDir)).toBe("");
+    expect(gitOut("branch --list feature/*", bareRepo)).toBe("");
   });
 });

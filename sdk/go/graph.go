@@ -1,4 +1,8 @@
 package libscope
 
-// Knowledge graph operations will be added as the REST API exposes graph endpoints.
-// This file is a placeholder for future knowledge graph operations.
+import "context"
+
+// GetGraph returns the knowledge graph. Params: WithTopic, WithTag, WithThreshold, WithMaxNodes.
+func (c *Client) GetGraph(ctx context.Context, params ...Param) (*Graph, error) {
+	return get[Graph](ctx, c, "/graph", query(fields(map[string]any{}, params)))
+}

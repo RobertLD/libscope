@@ -1,10 +1,19 @@
 import type Database from "better-sqlite3";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { DocumentNotFoundError, ValidationError } from "../errors.js";
-import { chunkContent, chunkContentStreaming, STREAMING_THRESHOLD } from "./indexing.js";
+import {
+  createChunkWriter,
+  embedChunks,
+  embeddingMetaChanged,
+  splitIntoChunks,
+  storeDocumentLinks,
+  type EmbeddingMeta,
+} from "./indexing.js";
 import { getLogger } from "../logger.js";
 import { saveVersion } from "./versioning.js";
+import { emitEvent } from "./events.js";
+import { buildTagFilter } from "./search.js";
 
 export interface Document {
   id: string;
@@ -21,36 +30,28 @@ export interface Document {
   updatedAt: string;
 }
 
-/** Get a document by ID. */
-export function getDocument(db: Database.Database, documentId: string): Document {
-  const row = db
-    .prepare(
-      `
-    SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
-    FROM documents WHERE id = ?
-  `,
-    )
-    .get(documentId) as
-    | {
-        id: string;
-        source_type: string;
-        library: string | null;
-        version: string | null;
-        topic_id: string | null;
-        title: string;
-        content: string;
-        url: string | null;
-        content_hash: string | null;
-        submitted_by: string;
-        created_at: string;
-        updated_at: string;
-      }
-    | undefined;
+/** Column list matching {@link DocumentRow}, for `SELECT ... FROM documents`. */
+export const DOC_COLUMNS =
+  "id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at";
 
-  if (!row) {
-    throw new DocumentNotFoundError(documentId);
-  }
+/** Raw `documents` row as returned by a `SELECT ${DOC_COLUMNS}` query. */
+export interface DocumentRow {
+  id: string;
+  source_type: string;
+  library: string | null;
+  version: string | null;
+  topic_id: string | null;
+  title: string;
+  content: string;
+  url: string | null;
+  content_hash: string | null;
+  submitted_by: string;
+  created_at: string;
+  updated_at: string;
+}
 
+/** Map a raw `documents` row to a {@link Document}. */
+export function rowToDocument(row: DocumentRow): Document {
   return {
     id: row.id,
     sourceType: row.source_type,
@@ -67,17 +68,37 @@ export function getDocument(db: Database.Database, documentId: string): Document
   };
 }
 
+/**
+ * Delete vector embeddings for every chunk of the given documents.
+ * Throws on any SQLite error (including a missing `chunk_embeddings` table);
+ * callers decide how to handle it.
+ */
+export function deleteChunkEmbeddings(db: Database.Database, docIds: string[]): void {
+  if (docIds.length === 0) return;
+  const placeholders = docIds.map(() => "?").join(", ");
+  db.prepare(
+    `DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id IN (${placeholders}))`,
+  ).run(...docIds);
+}
+
+/** Get a document by ID. */
+export function getDocument(db: Database.Database, documentId: string): Document {
+  const row = db.prepare(`SELECT ${DOC_COLUMNS} FROM documents WHERE id = ?`).get(documentId) as
+    | DocumentRow
+    | undefined;
+
+  if (!row) {
+    throw new DocumentNotFoundError(documentId);
+  }
+
+  return rowToDocument(row);
+}
+
 /** Delete a document and all its chunks/ratings (cascade). */
 export function deleteDocument(db: Database.Database, documentId: string): void {
   // Clean up chunk_embeddings (no foreign key cascade for virtual tables)
   try {
-    db.prepare(
-      `
-      DELETE FROM chunk_embeddings WHERE chunk_id IN (
-        SELECT id FROM chunks WHERE document_id = ?
-      )
-    `,
-    ).run(documentId);
+    deleteChunkEmbeddings(db, [documentId]);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("no such table")) {
@@ -94,79 +115,80 @@ export function deleteDocument(db: Database.Database, documentId: string): void 
   if (result.changes === 0) {
     throw new DocumentNotFoundError(documentId);
   }
+  emitEvent(db, "document.deleted", { documentId });
 }
 
-/** List documents with optional filters. */
-export function listDocuments(
-  db: Database.Database,
-  options?: {
-    library?: string | undefined;
-    topicId?: string | undefined;
-    sourceType?: string | undefined;
-    dateFrom?: string | undefined;
-    dateTo?: string | undefined;
-    limit?: number | undefined;
-  },
-): Document[] {
-  let sql = `
-    SELECT id, source_type, library, version, topic_id, title, content, url, content_hash, submitted_by, created_at, updated_at
-    FROM documents WHERE 1=1
-  `;
+/** Throw DocumentNotFoundError unless a document with this ID exists. */
+export function assertDocumentExists(db: Database.Database, documentId: string): void {
+  if (!db.prepare("SELECT 1 FROM documents WHERE id = ?").get(documentId)) {
+    throw new DocumentNotFoundError(documentId);
+  }
+}
+
+export interface DocumentFilters {
+  library?: string | undefined;
+  version?: string | undefined;
+  topicId?: string | undefined;
+  sourceType?: string | undefined;
+  /** Only documents carrying all of these tags. */
+  tags?: string[] | undefined;
+  dateFrom?: string | undefined;
+  dateTo?: string | undefined;
+}
+
+export interface ListDocumentsOptions extends DocumentFilters {
+  /** Default 50. */
+  limit?: number | undefined;
+  offset?: number | undefined;
+}
+
+/** WHERE clause (starting with "WHERE 1=1") and params for DocumentFilters on `documents d`. */
+function documentFilterSql(filters: DocumentFilters | undefined): {
+  where: string;
+  params: unknown[];
+} {
+  let where = "WHERE 1=1";
   const params: unknown[] = [];
+  const equals: Array<[string, string | undefined]> = [
+    ["d.library = ?", filters?.library],
+    ["d.version = ?", filters?.version],
+    ["d.topic_id = ?", filters?.topicId],
+    ["d.source_type = ?", filters?.sourceType],
+    ["d.created_at >= ?", filters?.dateFrom],
+    ["d.created_at <= ?", filters?.dateTo],
+  ];
+  for (const [clause, value] of equals) {
+    if (value) {
+      where += ` AND ${clause}`;
+      params.push(value);
+    }
+  }
+  const tagFilter = buildTagFilter(filters?.tags, "d");
+  return { where: where + tagFilter.clause, params: [...params, ...tagFilter.params] };
+}
 
-  if (options?.library) {
-    sql += " AND library = ?";
-    params.push(options.library);
-  }
-  if (options?.topicId) {
-    sql += " AND topic_id = ?";
-    params.push(options.topicId);
-  }
-  if (options?.sourceType) {
-    sql += " AND source_type = ?";
-    params.push(options.sourceType);
-  }
-  if (options?.dateFrom) {
-    sql += " AND created_at >= ?";
-    params.push(options.dateFrom);
-  }
-  if (options?.dateTo) {
-    sql += " AND created_at <= ?";
-    params.push(options.dateTo);
-  }
+/** List documents with optional filters, most recently updated first. */
+export function listDocuments(db: Database.Database, options?: ListDocumentsOptions): Document[] {
+  const { where, params } = documentFilterSql(options);
+  const columns = DOC_COLUMNS.split(", ")
+    .map((c) => `d.${c}`)
+    .join(", ");
+  const rows = db
+    .prepare(
+      `SELECT ${columns} FROM documents d ${where} ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
+    )
+    .all(...params, options?.limit ?? 50, options?.offset ?? 0) as DocumentRow[];
 
-  sql += " ORDER BY updated_at DESC LIMIT ?";
-  params.push(options?.limit ?? 50);
+  return rows.map((row) => rowToDocument(row));
+}
 
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: string;
-    source_type: string;
-    library: string | null;
-    version: string | null;
-    topic_id: string | null;
-    title: string;
-    content: string;
-    url: string | null;
-    content_hash: string | null;
-    submitted_by: string;
-    created_at: string;
-    updated_at: string;
-  }>;
-
-  return rows.map((row) => ({
-    id: row.id,
-    sourceType: row.source_type,
-    library: row.library,
-    version: row.version,
-    topicId: row.topic_id,
-    title: row.title,
-    content: row.content,
-    url: row.url,
-    contentHash: row.content_hash,
-    submittedBy: row.submitted_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+/** Number of documents matching the filters (for paging listDocuments). */
+export function countDocuments(db: Database.Database, filters?: DocumentFilters): number {
+  const { where, params } = documentFilterSql(filters);
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM documents d ${where}`).get(...params) as {
+    n: number;
+  };
+  return row.n;
 }
 
 export interface UpdateDocumentInput {
@@ -220,20 +242,20 @@ export async function updateDocument(
   // SQLite's datetime('now') uses the OS clock and cannot be mocked in unit tests.
   const updatedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
 
+  const newMeta = { title: newTitle, library: newLibrary, version: newVersion };
+
   if (contentChanged) {
     log.info({ docId: documentId }, "Content changed, re-chunking and re-indexing embeddings");
 
-    const useStreaming = newContent.length > STREAMING_THRESHOLD;
-    const chunks = useStreaming ? chunkContentStreaming(newContent) : chunkContent(newContent);
-    const embeddings = await provider.embedBatch(chunks);
+    const chunks = splitIntoChunks(newContent);
+    const embeddings = await embedChunks(provider, chunks, newMeta);
+    const writer = createChunkWriter(db);
 
     const transaction = db.transaction(() => {
       saveVersion(db, documentId);
 
       try {
-        db.prepare(
-          "DELETE FROM chunk_embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)",
-        ).run(documentId);
+        deleteChunkEmbeddings(db, [documentId]);
       } catch (err: unknown) {
         // chunk_embeddings table may not exist
         log.debug({ err, documentId }, "Skipped chunk_embeddings cleanup during update");
@@ -255,39 +277,62 @@ export async function updateDocument(
         documentId,
       );
 
-      const insertChunk = db.prepare(
-        "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",
-      );
-      const insertEmbedding = db.prepare(
-        "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?, ?)",
-      );
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkId = randomUUID();
-        insertChunk.run(chunkId, documentId, chunks[i] ?? "", i);
-
-        try {
-          const vecBuffer = Buffer.from(new Float32Array(embeddings[i] ?? []).buffer);
-          insertEmbedding.run(chunkId, vecBuffer);
-        } catch (err: unknown) {
-          // chunk_embeddings table may not exist
-          log.debug({ err, chunkId }, "Skipped embedding insertion during update");
-        }
-      }
+      writer.insertChunks(documentId, chunks, embeddings);
     });
 
     transaction();
+    storeDocumentLinks(db, documentId, newContent);
   } else {
+    // Title/library/version are part of the embedding text, so re-embed existing chunks
+    // (keeping their IDs) when they change.
+    const reembed = embeddingMetaChanged(existing, newMeta)
+      ? await embedExistingChunks(db, provider, documentId, newMeta)
+      : null;
+
     const transaction = db.transaction(() => {
       saveVersion(db, documentId);
 
       db.prepare(
         `UPDATE documents SET title = ?, library = ?, version = ?, url = ?, topic_id = ?, updated_at = ? WHERE id = ?`,
       ).run(newTitle, newLibrary, newVersion, newUrl, newTopicId, updatedAt, documentId);
+
+      reembed?.write();
     });
 
     transaction();
   }
 
+  emitEvent(db, "document.updated", {
+    documentId,
+    title: newTitle,
+    library: newLibrary,
+    version: newVersion,
+  });
   return getDocument(db, documentId);
+}
+
+/**
+ * Embed a document's existing chunks with new metadata. Returns a `write()` step that
+ * replaces the stored vectors; call it inside the caller's transaction.
+ */
+async function embedExistingChunks(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  documentId: string,
+  meta: EmbeddingMeta,
+): Promise<{ write: () => void }> {
+  const rows = db
+    .prepare("SELECT id, content FROM chunks WHERE document_id = ? ORDER BY chunk_index")
+    .all(documentId) as Array<{ id: string; content: string }>;
+  const embeddings = await embedChunks(
+    provider,
+    rows.map((r) => r.content),
+    meta,
+  );
+  const writer = createChunkWriter(db);
+  return {
+    write: (): void => {
+      rows.forEach((row, i) => writer.replaceEmbedding(row.id, embeddings[i] ?? []));
+    },
+  };
 }

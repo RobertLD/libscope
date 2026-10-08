@@ -1,51 +1,100 @@
-"""Synchronous and asynchronous clients for the libscope REST API."""
+"""Synchronous and asynchronous clients for the libscope REST API (``/api/v1``).
+
+Slow operations (adding documents, syncing connections) run on the server as background
+tasks: those methods return a :class:`Task`. Call ``wait_for_task(task.id)`` to wait for it.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import asyncio
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 
-from pylibscope.connectors import build_connector_config
 from pylibscope.exceptions import (
     LibscopeConnectionError,
     LibscopeError,
     NotFoundError,
     ServerError,
+    TaskFailedError,
     ValidationError,
 )
 from pylibscope.models import (
-    Analytics,
     AskResult,
     Document,
+    DocumentView,
     Graph,
-    GraphEdge,
-    GraphNode,
+    Overview,
+    Page,
     SearchHit,
-    SearchResult,
-    SyncResult,
+    Tag,
+    Task,
     Topic,
 )
 
 _API = "/api/v1"
-_PATH_DOCUMENTS = "/documents"
-_PATH_TOPICS = "/topics"
+_TAGS = "/tags"
+DEFAULT_BASE_URL = "http://localhost:3378"
+
+
+@dataclass(frozen=True)
+class _Call:
+    """One REST request and how to read its ``data``."""
+
+    method: str
+    path: str
+    parse: Callable[[Any], Any]
+    params: Optional[Dict[str, Any]] = None
+    json: Optional[Dict[str, Any]] = None
+
+
+def _defined(**values: Any) -> Dict[str, Any]:
+    """Drop None values (the server applies its defaults)."""
+    return {k: v for k, v in values.items() if v is not None}
+
+
+def _filters(
+    topic: Optional[str],
+    library: Optional[str],
+    version: Optional[str],
+    source_type: Optional[str],
+    tags: Optional[List[str]],
+) -> Dict[str, Any]:
+    return _defined(
+        topic=topic, library=library, version=version, sourceType=source_type, tags=tags
+    )
+
+
+def _query(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Query-string form: booleans as true/false; lists are sent as repeated keys."""
+    return {k: (str(v).lower() if isinstance(v, bool) else v) for k, v in params.items()}
+
+
+def _doc(document_id: str, rest: str = "") -> str:
+    return f"/documents/{quote(document_id, safe='')}{rest}"
+
+
+def _started(data: Any) -> Task:
+    return Task(id=data["taskId"], operation=data.get("operation"), status=data["status"])
+
+
+def _items(model: Any) -> Callable[[Any], Any]:
+    return lambda data: [model.model_validate(i) for i in data.get("items", [])]
 
 
 def _raise_for_error(response: httpx.Response) -> None:
-    """Translate HTTP error responses into SDK exceptions."""
+    """Translate an error response into an SDK exception."""
     if response.status_code < 400:
         return
-
     try:
-        body = response.json()
-    except Exception:
-        body = {}
-
-    error = body.get("error", {})
+        error = response.json().get("error", {})
+    except ValueError:
+        error = {}
     code = error.get("code", "UNKNOWN")
     message = error.get("message", response.text)
-
     if response.status_code == 404:
         raise NotFoundError(message)
     if response.status_code == 400:
@@ -55,70 +104,109 @@ def _raise_for_error(response: httpx.Response) -> None:
     raise LibscopeError(message, code=code)
 
 
-def _extract_data(response: httpx.Response) -> Any:
-    """Extract the ``data`` envelope from a JSON response."""
-    body = response.json()
-    return body.get("data", body)
+class _Calls:
+    """Request builders shared by both clients."""
 
+    @staticmethod
+    def health() -> _Call:
+        return _Call("GET", "/health", lambda d: d)
 
-# ---------------------------------------------------------------------------
-# Helpers for normalising API responses into SDK models
-# ---------------------------------------------------------------------------
+    @staticmethod
+    def overview() -> _Call:
+        return _Call("GET", "/overview", Overview.model_validate)
 
-def _parse_document(raw: Any) -> Document:
-    if isinstance(raw, dict):
-        return Document(
-            id=raw.get("id", ""),
-            title=raw.get("title", ""),
-            url=raw.get("url"),
-            topic=raw.get("topic"),
-            topic_id=raw.get("topicId"),
-            tags=raw.get("tags", []),
-            content_hash=raw.get("contentHash"),
-            source_type=raw.get("sourceType"),
-            created_at=raw.get("createdAt"),
-            updated_at=raw.get("updatedAt"),
+    @staticmethod
+    def search(query: str, limit: int, offset: int, min_rating: Optional[float], **f: Any) -> _Call:
+        params = _defined(query=query, limit=limit, offset=offset, minRating=min_rating)
+        return _Call(
+            "GET", "/search", Page[SearchHit].model_validate, params=_query({**params, **f})
         )
-    return Document.model_validate(raw)
+
+    @staticmethod
+    def ask(question: str, top_k: Optional[int], min_rating: Optional[float], **f: Any) -> _Call:
+        body = _defined(question=question, topK=top_k, minRating=min_rating)
+        return _Call("POST", "/ask", AskResult.model_validate, json={**body, **f})
+
+    @staticmethod
+    def add(body: Dict[str, Any]) -> _Call:
+        return _Call("POST", "/documents", _started, json=body)
+
+    @staticmethod
+    def get_document(document_id: str) -> _Call:
+        return _Call("GET", _doc(document_id), DocumentView.model_validate)
+
+    @staticmethod
+    def list_documents(limit: int, offset: int, **f: Any) -> _Call:
+        params = _query({"limit": limit, "offset": offset, **f})
+        return _Call("GET", "/documents", Page[Document].model_validate, params=params)
+
+    @staticmethod
+    def delete_document(document_id: str) -> _Call:
+        return _Call("DELETE", _doc(document_id), lambda d: None)
+
+    @staticmethod
+    def list_topics() -> _Call:
+        return _Call("GET", "/topics", _items(Topic))
+
+    @staticmethod
+    def create_topic(name: str, parent: Optional[str], description: Optional[str]) -> _Call:
+        body = _defined(name=name, parent=parent, description=description)
+        return _Call("POST", "/topics", Topic.model_validate, json=body)
+
+    @staticmethod
+    def add_tags(document_id: str, tags: List[str]) -> _Call:
+        path = _doc(document_id, _TAGS)
+        return _Call("POST", path, lambda d: list(d["tags"]), json={"tags": tags})
+
+    @staticmethod
+    def remove_tags(document_id: str, tags: List[str]) -> _Call:
+        path = _doc(document_id, _TAGS)
+        return _Call("DELETE", path, lambda d: list(d["tags"]), params={"tags": tags})
+
+    @staticmethod
+    def list_tags() -> _Call:
+        return _Call("GET", _TAGS, _items(Tag))
+
+    @staticmethod
+    def graph(
+        topic: Optional[str], tag: Optional[str], threshold: Optional[float], max_nodes: Optional[int]
+    ) -> _Call:
+        params = _defined(topic=topic, tag=tag, threshold=threshold, maxNodes=max_nodes)
+        return _Call("GET", "/graph", Graph.model_validate, params=params)
+
+    @staticmethod
+    def sync(body: Dict[str, Any]) -> _Call:
+        return _Call("POST", "/sync", _started, json=body)
+
+    @staticmethod
+    def get_task(task_id: str) -> _Call:
+        return _Call("GET", f"/tasks/{quote(task_id, safe='')}", Task.model_validate)
+
+    @staticmethod
+    def cancel_task(task_id: str) -> _Call:
+        return _Call("POST", f"/tasks/{quote(task_id, safe='')}/cancel", lambda d: bool(d["cancelRequested"]))
 
 
-def _parse_search_result(data: Any) -> SearchResult:
-    results = []
-    raw_results = data.get("results", []) if isinstance(data, dict) else []
-    for r in raw_results:
-        results.append(
-            SearchHit(
-                document_id=r.get("documentId"),
-                title=r.get("title"),
-                content=r.get("content"),
-                score=r.get("score", 0.0),
-            )
-        )
-    total = data.get("totalCount", len(results)) if isinstance(data, dict) else len(results)
-    return SearchResult(results=results, total_count=total)
+def _add_body(
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    url: Optional[str] = None,
+    spider: Optional[bool] = None,
+    max_pages: Optional[int] = None,
+    **f: Any,
+) -> Dict[str, Any]:
+    body = _defined(title=title, content=content, url=url, spider=spider, maxPages=max_pages)
+    return {**body, **f}
 
 
-def _parse_topic(raw: Any) -> Topic:
-    if isinstance(raw, dict):
-        return Topic(
-            id=raw.get("id", ""),
-            name=raw.get("name", ""),
-            parent_id=raw.get("parentId"),
-            document_count=raw.get("documentCount"),
-        )
-    return Topic.model_validate(raw)
+def _finished(task: Task) -> Task:
+    if task.status != "completed":
+        raise TaskFailedError(task)
+    return task
 
 
-def _parse_analytics(raw: Any) -> Analytics:
-    if isinstance(raw, dict):
-        return Analytics(
-            total_documents=raw.get("totalDocuments", 0),
-            total_chunks=raw.get("totalChunks", 0),
-            total_topics=raw.get("totalTopics", 0),
-            total_tags=raw.get("totalTags", 0),
-            database_size_bytes=raw.get("databaseSizeBytes", 0),
-        )
-    return Analytics.model_validate(raw)
+def _headers(api_key: Optional[str]) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
 # ---------------------------------------------------------------------------
@@ -127,17 +215,21 @@ def _parse_analytics(raw: Any) -> Analytics:
 
 
 class LibscopeClient:
-    """Synchronous client for the libscope REST API."""
+    """Synchronous client for the libscope REST API.
+
+    ``api_key`` is sent as ``Authorization: Bearer <key>`` (needed when the server sets
+    ``LIBSCOPE_API_KEY``).
+    """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:3378",
+        base_url: str = DEFAULT_BASE_URL,
         timeout: float = 30.0,
+        api_key: Optional[str] = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._client = httpx.Client(base_url=self._base_url, timeout=timeout)
-
-    # -- context manager -----------------------------------------------------
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/") + _API, timeout=timeout, headers=_headers(api_key)
+        )
 
     def __enter__(self) -> "LibscopeClient":
         return self
@@ -149,210 +241,172 @@ class LibscopeClient:
         """Close the underlying HTTP client."""
         self._client.close()
 
-    # -- helpers -------------------------------------------------------------
-
-    def _url(self, path: str) -> str:
-        return f"{_API}{path}"
-
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    def _run(self, call: _Call) -> Any:
         try:
-            resp = self._client.request(method, self._url(path), **kwargs)
+            resp = self._client.request(call.method, call.path, params=call.params, json=call.json)
         except httpx.ConnectError as exc:
             raise LibscopeConnectionError(str(exc)) from exc
         _raise_for_error(resp)
-        return resp
+        return call.parse(resp.json().get("data"))
 
-    # -- document operations -------------------------------------------------
+    def health(self) -> Dict[str, Any]:
+        """Liveness check: ``{"status": "ok"}``."""
+        return self._run(_Calls.health())
+
+    def overview(self) -> Overview:
+        """Counts, topics, installed packs, embedding index and health."""
+        return self._run(_Calls.overview())
 
     def search(
         self,
         query: str,
         *,
         limit: int = 10,
+        offset: int = 0,
         topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        min_score: Optional[float] = None,
-    ) -> SearchResult:
-        """Perform a semantic search across the knowledge base."""
-        params: Dict[str, Any] = {"q": query, "limit": limit}
-        if topic is not None:
-            params["topic"] = topic
-        if tags:
-            params["tag"] = tags[0]
-        resp = self._request("GET", "/search", params=params)
-        data = _extract_data(resp)
-        result = _parse_search_result(data)
-        if min_score is not None:
-            result.results = [h for h in result.results if h.score >= min_score]
-            result.total_count = len(result.results)
-        return result
+        min_rating: Optional[float] = None,
+    ) -> Page[SearchHit]:
+        """Search by meaning and keywords."""
+        f = _filters(topic, library, version, source_type, tags)
+        return self._run(_Calls.search(query, limit, offset, min_rating, **f))
 
-    def add_document(
+    def ask(
         self,
-        url: str,
+        question: str,
         *,
+        top_k: Optional[int] = None,
         topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-    ) -> Document:
-        """Index a document from a URL."""
-        payload: Dict[str, Any] = {"url": url}
-        if topic is not None:
-            payload["topic"] = topic
-        if tags:
-            payload["tags"] = tags
-        resp = self._request("POST", "/documents/url", json=payload)
-        return _parse_document(_extract_data(resp))
+        min_rating: Optional[float] = None,
+    ) -> AskResult:
+        """Answer a question from the knowledge base (needs an LLM on the server)."""
+        f = _filters(topic, library, version, source_type, tags)
+        return self._run(_Calls.ask(question, top_k, min_rating, **f))
 
     def add_text(
         self,
         title: str,
         content: str,
         *,
+        url: Optional[str] = None,
         topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-    ) -> Document:
-        """Index a document from raw text."""
-        payload: Dict[str, Any] = {"title": title, "content": content}
-        if topic is not None:
-            payload["topic"] = topic
-        if tags:
-            payload["tags"] = tags
-        resp = self._request("POST", _PATH_DOCUMENTS, json=payload)
-        return _parse_document(_extract_data(resp))
+    ) -> Task:
+        """Start adding a document from text. Returns the background task."""
+        f = _filters(topic, library, version, source_type, tags)
+        return self._run(_Calls.add(_add_body(title=title, content=content, url=url, **f)))
 
-    def get_document(self, doc_id: str) -> Document:
-        """Retrieve a single document by ID."""
-        resp = self._request("GET", f"/documents/{doc_id}")
-        return _parse_document(_extract_data(resp))
+    def add_url(
+        self,
+        url: str,
+        *,
+        spider: bool = False,
+        max_pages: Optional[int] = None,
+        topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> Task:
+        """Start adding a web page (``spider=True``: and the pages it links to) or a public
+        GitHub/GitLab repository. Returns the background task."""
+        f = _filters(topic, library, version, source_type, tags)
+        body = _add_body(url=url, spider=spider or None, max_pages=max_pages, **f)
+        return self._run(_Calls.add(body))
+
+    def get_document(self, document_id: str) -> DocumentView:
+        """Get a document with its content, tags, links and ratings."""
+        return self._run(_Calls.get_document(document_id))
 
     def list_documents(
         self,
         *,
-        topic: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[Document]:
-        """List documents, optionally filtered by topic."""
-        params: Dict[str, Any] = {"limit": limit, "offset": offset}
-        if topic is not None:
-            params["topic"] = topic
-        resp = self._request("GET", _PATH_DOCUMENTS, params=params)
-        data = _extract_data(resp)
-        if isinstance(data, list):
-            return [_parse_document(d) for d in data]
-        return []
+        topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> Page[Document]:
+        """List documents, newest first."""
+        f = _filters(topic, library, version, source_type, tags)
+        return self._run(_Calls.list_documents(limit, offset, **f))
 
-    def delete_document(self, doc_id: str) -> None:
-        """Delete a document by ID."""
-        self._request("DELETE", f"/documents/{doc_id}")
-
-    # -- topic operations ----------------------------------------------------
+    def delete_document(self, document_id: str) -> None:
+        """Delete a document."""
+        self._run(_Calls.delete_document(document_id))
 
     def list_topics(self) -> List[Topic]:
-        """List all topics."""
-        resp = self._request("GET", _PATH_TOPICS)
-        data = _extract_data(resp)
-        if isinstance(data, list):
-            return [_parse_topic(t) for t in data]
-        return []
+        """List topics with their document counts."""
+        return self._run(_Calls.list_topics())
 
-    def create_topic(self, name: str, *, parent_id: Optional[str] = None) -> Topic:
-        """Create a new topic."""
-        payload: Dict[str, Any] = {"name": name}
-        if parent_id is not None:
-            payload["parentId"] = parent_id
-        resp = self._request("POST", _PATH_TOPICS, json=payload)
-        return _parse_topic(_extract_data(resp))
+    def create_topic(
+        self, name: str, *, parent: Optional[str] = None, description: Optional[str] = None
+    ) -> Topic:
+        """Create a topic (``parent``: ID or name of the parent topic)."""
+        return self._run(_Calls.create_topic(name, parent, description))
 
-    # -- tag operations ------------------------------------------------------
+    def add_tags(self, document_id: str, tags: List[str]) -> List[str]:
+        """Add tags to a document. Returns the document's tags."""
+        return self._run(_Calls.add_tags(document_id, tags))
 
-    def add_tags(self, doc_id: str, tags: List[str]) -> None:
-        """Add tags to a document."""
-        self._request("POST", f"/documents/{doc_id}/tags", json={"tags": tags})
+    def remove_tags(self, document_id: str, tags: List[str]) -> List[str]:
+        """Remove tags from a document. Returns the document's remaining tags."""
+        return self._run(_Calls.remove_tags(document_id, tags))
 
-    def remove_tags(self, doc_id: str, tags: List[str]) -> None:
-        """Remove tags from a document.
+    def list_tags(self) -> List[Tag]:
+        """List tags with their document counts."""
+        return self._run(_Calls.list_tags())
 
-        Note: The REST API may not support tag removal yet.
-        This sends a DELETE request to the document tags endpoint.
-        """
-        self._request("DELETE", f"/documents/{doc_id}/tags", json={"tags": tags})
-
-    def list_tags(self) -> List[str]:
-        """List all tags in the knowledge base."""
-        resp = self._request("GET", "/tags")
-        data = _extract_data(resp)
-        if isinstance(data, list):
-            return [t if isinstance(t, str) else t.get("name", "") for t in data]
-        return []
-
-    # -- analytics -----------------------------------------------------------
-
-    def get_analytics(self) -> Analytics:
-        """Get knowledge base statistics."""
-        resp = self._request("GET", "/stats")
-        return _parse_analytics(_extract_data(resp))
-
-    # -- knowledge graph -----------------------------------------------------
-
-    def get_graph(self, *, min_similarity: float = 0.7) -> Graph:
-        """Get the knowledge graph.
-
-        Note: This endpoint may not be available in all server versions.
-        """
-        resp = self._request(
-            "GET", "/graph", params={"min_similarity": min_similarity}
-        )
-        data = _extract_data(resp)
-        nodes = [GraphNode(**n) for n in data.get("nodes", [])] if isinstance(data, dict) else []
-        edges = [GraphEdge(**e) for e in data.get("edges", [])] if isinstance(data, dict) else []
-        return Graph(nodes=nodes, edges=edges)
-
-    # -- RAG Q&A -------------------------------------------------------------
-
-    def ask(
+    def get_graph(
         self,
-        question: str,
         *,
         topic: Optional[str] = None,
-    ) -> AskResult:
-        """Ask a question using RAG-powered Q&A."""
-        payload: Dict[str, Any] = {"question": question}
-        if topic is not None:
-            payload["topic"] = topic
-        resp = self._request("POST", "/ask", json=payload)
-        data = _extract_data(resp)
-        if isinstance(data, dict):
-            return AskResult(
-                answer=data.get("answer", ""),
-                sources=data.get("sources", []),
-            )
-        return AskResult()
+        tag: Optional[str] = None,
+        threshold: Optional[float] = None,
+        max_nodes: Optional[int] = None,
+    ) -> Graph:
+        """Knowledge graph of documents, topics and tags."""
+        return self._run(_Calls.graph(topic, tag, threshold, max_nodes))
 
-    # -- connector operations ------------------------------------------------
+    def sync(self, name: str) -> Task:
+        """Start syncing a saved connector connection. Returns the background task."""
+        return self._run(_Calls.sync({"name": name}))
 
-    def sync_connector(self, connector: str, **config: Any) -> SyncResult:
-        """Trigger a connector sync.
+    def sync_all(self) -> Task:
+        """Start syncing every saved connection. Returns the background task."""
+        return self._run(_Calls.sync({"all": True}))
 
-        Note: This endpoint may not be available in all server versions.
-        """
-        payload = build_connector_config(connector, **config)
-        resp = self._request("POST", "/connectors/sync", json=payload)
-        data = _extract_data(resp)
-        if isinstance(data, dict):
-            return SyncResult(
-                connector=data.get("connector", connector),
-                documents_synced=data.get("documentsSynced", 0),
-                errors=data.get("errors", []),
-            )
-        return SyncResult(connector=connector)
+    def get_task(self, task_id: str) -> Task:
+        """Status, progress and result of a background task."""
+        return self._run(_Calls.get_task(task_id))
 
-    # -- health --------------------------------------------------------------
+    def cancel_task(self, task_id: str) -> bool:
+        """Request cancellation. Returns True when the task was still pending or running."""
+        return self._run(_Calls.cancel_task(task_id))
 
-    def health(self) -> Dict[str, Any]:
-        """Check server health."""
-        resp = self._request("GET", "/health")
-        return _extract_data(resp)
+    def wait_for_task(self, task_id: str, *, timeout: float = 300.0, interval: float = 1.0) -> Task:
+        """Poll a task until it finishes. Raises TaskFailedError when it failed or was
+        cancelled, and TimeoutError after ``timeout`` seconds."""
+        deadline = time.monotonic() + timeout
+        while True:
+            task = self.get_task(task_id)
+            if task.done:
+                return _finished(task)
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Task {task_id} did not finish in {timeout} s")
+            time.sleep(interval)
 
 
 # ---------------------------------------------------------------------------
@@ -361,15 +415,17 @@ class LibscopeClient:
 
 
 class AsyncLibscopeClient:
-    """Asynchronous client for the libscope REST API."""
+    """Asynchronous client for the libscope REST API. Same methods as LibscopeClient."""
 
     def __init__(
         self,
-        base_url: str = "http://localhost:3378",
+        base_url: str = DEFAULT_BASE_URL,
         timeout: float = 30.0,
+        api_key: Optional[str] = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=timeout)
+        self._client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/") + _API, timeout=timeout, headers=_headers(api_key)
+        )
 
     async def __aenter__(self) -> "AsyncLibscopeClient":
         return self
@@ -381,179 +437,149 @@ class AsyncLibscopeClient:
         """Close the underlying HTTP client."""
         await self._client.aclose()
 
-    def _url(self, path: str) -> str:
-        return f"{_API}{path}"
-
-    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+    async def _run(self, call: _Call) -> Any:
         try:
-            resp = await self._client.request(method, self._url(path), **kwargs)
+            resp = await self._client.request(
+                call.method, call.path, params=call.params, json=call.json
+            )
         except httpx.ConnectError as exc:
             raise LibscopeConnectionError(str(exc)) from exc
         _raise_for_error(resp)
-        return resp
+        return call.parse(resp.json().get("data"))
 
-    # -- document operations -------------------------------------------------
+    async def health(self) -> Dict[str, Any]:
+        return await self._run(_Calls.health())
+
+    async def overview(self) -> Overview:
+        return await self._run(_Calls.overview())
 
     async def search(
         self,
         query: str,
         *,
         limit: int = 10,
+        offset: int = 0,
         topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        min_score: Optional[float] = None,
-    ) -> SearchResult:
-        params: Dict[str, Any] = {"q": query, "limit": limit}
-        if topic is not None:
-            params["topic"] = topic
-        if tags:
-            params["tag"] = tags[0]
-        resp = await self._request("GET", "/search", params=params)
-        data = _extract_data(resp)
-        result = _parse_search_result(data)
-        if min_score is not None:
-            result.results = [h for h in result.results if h.score >= min_score]
-            result.total_count = len(result.results)
-        return result
+        min_rating: Optional[float] = None,
+    ) -> Page[SearchHit]:
+        f = _filters(topic, library, version, source_type, tags)
+        return await self._run(_Calls.search(query, limit, offset, min_rating, **f))
 
-    async def add_document(
+    async def ask(
         self,
-        url: str,
+        question: str,
         *,
+        top_k: Optional[int] = None,
         topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-    ) -> Document:
-        payload: Dict[str, Any] = {"url": url}
-        if topic is not None:
-            payload["topic"] = topic
-        if tags:
-            payload["tags"] = tags
-        resp = await self._request("POST", "/documents/url", json=payload)
-        return _parse_document(_extract_data(resp))
+        min_rating: Optional[float] = None,
+    ) -> AskResult:
+        f = _filters(topic, library, version, source_type, tags)
+        return await self._run(_Calls.ask(question, top_k, min_rating, **f))
 
     async def add_text(
         self,
         title: str,
         content: str,
         *,
+        url: Optional[str] = None,
         topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-    ) -> Document:
-        payload: Dict[str, Any] = {"title": title, "content": content}
-        if topic is not None:
-            payload["topic"] = topic
-        if tags:
-            payload["tags"] = tags
-        resp = await self._request("POST", _PATH_DOCUMENTS, json=payload)
-        return _parse_document(_extract_data(resp))
+    ) -> Task:
+        f = _filters(topic, library, version, source_type, tags)
+        return await self._run(_Calls.add(_add_body(title=title, content=content, url=url, **f)))
 
-    async def get_document(self, doc_id: str) -> Document:
-        resp = await self._request("GET", f"/documents/{doc_id}")
-        return _parse_document(_extract_data(resp))
+    async def add_url(
+        self,
+        url: str,
+        *,
+        spider: bool = False,
+        max_pages: Optional[int] = None,
+        topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> Task:
+        f = _filters(topic, library, version, source_type, tags)
+        body = _add_body(url=url, spider=spider or None, max_pages=max_pages, **f)
+        return await self._run(_Calls.add(body))
+
+    async def get_document(self, document_id: str) -> DocumentView:
+        return await self._run(_Calls.get_document(document_id))
 
     async def list_documents(
         self,
         *,
-        topic: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[Document]:
-        params: Dict[str, Any] = {"limit": limit, "offset": offset}
-        if topic is not None:
-            params["topic"] = topic
-        resp = await self._request("GET", _PATH_DOCUMENTS, params=params)
-        data = _extract_data(resp)
-        if isinstance(data, list):
-            return [_parse_document(d) for d in data]
-        return []
+        topic: Optional[str] = None,
+        library: Optional[str] = None,
+        version: Optional[str] = None,
+        source_type: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> Page[Document]:
+        f = _filters(topic, library, version, source_type, tags)
+        return await self._run(_Calls.list_documents(limit, offset, **f))
 
-    async def delete_document(self, doc_id: str) -> None:
-        await self._request("DELETE", f"/documents/{doc_id}")
-
-    # -- topic operations ----------------------------------------------------
+    async def delete_document(self, document_id: str) -> None:
+        await self._run(_Calls.delete_document(document_id))
 
     async def list_topics(self) -> List[Topic]:
-        resp = await self._request("GET", _PATH_TOPICS)
-        data = _extract_data(resp)
-        if isinstance(data, list):
-            return [_parse_topic(t) for t in data]
-        return []
+        return await self._run(_Calls.list_topics())
 
-    async def create_topic(self, name: str, *, parent_id: Optional[str] = None) -> Topic:
-        payload: Dict[str, Any] = {"name": name}
-        if parent_id is not None:
-            payload["parentId"] = parent_id
-        resp = await self._request("POST", _PATH_TOPICS, json=payload)
-        return _parse_topic(_extract_data(resp))
+    async def create_topic(
+        self, name: str, *, parent: Optional[str] = None, description: Optional[str] = None
+    ) -> Topic:
+        return await self._run(_Calls.create_topic(name, parent, description))
 
-    # -- tag operations ------------------------------------------------------
+    async def add_tags(self, document_id: str, tags: List[str]) -> List[str]:
+        return await self._run(_Calls.add_tags(document_id, tags))
 
-    async def add_tags(self, doc_id: str, tags: List[str]) -> None:
-        await self._request("POST", f"/documents/{doc_id}/tags", json={"tags": tags})
+    async def remove_tags(self, document_id: str, tags: List[str]) -> List[str]:
+        return await self._run(_Calls.remove_tags(document_id, tags))
 
-    async def remove_tags(self, doc_id: str, tags: List[str]) -> None:
-        await self._request("DELETE", f"/documents/{doc_id}/tags", json={"tags": tags})
+    async def list_tags(self) -> List[Tag]:
+        return await self._run(_Calls.list_tags())
 
-    async def list_tags(self) -> List[str]:
-        resp = await self._request("GET", "/tags")
-        data = _extract_data(resp)
-        if isinstance(data, list):
-            return [t if isinstance(t, str) else t.get("name", "") for t in data]
-        return []
-
-    # -- analytics -----------------------------------------------------------
-
-    async def get_analytics(self) -> Analytics:
-        resp = await self._request("GET", "/stats")
-        return _parse_analytics(_extract_data(resp))
-
-    # -- knowledge graph -----------------------------------------------------
-
-    async def get_graph(self, *, min_similarity: float = 0.7) -> Graph:
-        resp = await self._request(
-            "GET", "/graph", params={"min_similarity": min_similarity}
-        )
-        data = _extract_data(resp)
-        nodes = [GraphNode(**n) for n in data.get("nodes", [])] if isinstance(data, dict) else []
-        edges = [GraphEdge(**e) for e in data.get("edges", [])] if isinstance(data, dict) else []
-        return Graph(nodes=nodes, edges=edges)
-
-    # -- RAG Q&A -------------------------------------------------------------
-
-    async def ask(
+    async def get_graph(
         self,
-        question: str,
         *,
         topic: Optional[str] = None,
-    ) -> AskResult:
-        payload: Dict[str, Any] = {"question": question}
-        if topic is not None:
-            payload["topic"] = topic
-        resp = await self._request("POST", "/ask", json=payload)
-        data = _extract_data(resp)
-        if isinstance(data, dict):
-            return AskResult(
-                answer=data.get("answer", ""),
-                sources=data.get("sources", []),
-            )
-        return AskResult()
+        tag: Optional[str] = None,
+        threshold: Optional[float] = None,
+        max_nodes: Optional[int] = None,
+    ) -> Graph:
+        return await self._run(_Calls.graph(topic, tag, threshold, max_nodes))
 
-    # -- connector operations ------------------------------------------------
+    async def sync(self, name: str) -> Task:
+        return await self._run(_Calls.sync({"name": name}))
 
-    async def sync_connector(self, connector: str, **config: Any) -> SyncResult:
-        payload = build_connector_config(connector, **config)
-        resp = await self._request("POST", "/connectors/sync", json=payload)
-        data = _extract_data(resp)
-        if isinstance(data, dict):
-            return SyncResult(
-                connector=data.get("connector", connector),
-                documents_synced=data.get("documentsSynced", 0),
-                errors=data.get("errors", []),
-            )
-        return SyncResult(connector=connector)
+    async def sync_all(self) -> Task:
+        return await self._run(_Calls.sync({"all": True}))
 
-    # -- health --------------------------------------------------------------
+    async def get_task(self, task_id: str) -> Task:
+        return await self._run(_Calls.get_task(task_id))
 
-    async def health(self) -> Dict[str, Any]:
-        resp = await self._request("GET", "/health")
-        return _extract_data(resp)
+    async def cancel_task(self, task_id: str) -> bool:
+        return await self._run(_Calls.cancel_task(task_id))
+
+    async def wait_for_task(self, task_id: str, *, interval: float = 1.0) -> Task:
+        """Poll a task until it finishes. Raises TaskFailedError when it failed or was
+        cancelled. It has no time limit: set one with ``asyncio.wait_for(..., timeout)``, or
+        ``async with asyncio.timeout(...)`` on Python 3.11+."""
+        while True:
+            task = await self.get_task(task_id)
+            if task.done:
+                return _finished(task)
+            await asyncio.sleep(interval)

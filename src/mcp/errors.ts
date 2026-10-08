@@ -26,6 +26,11 @@ export function errorResponse(err: unknown): {
 
 export type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
+/** Wrap plain text as a single-item MCP tool result. */
+export function textResult(text: string): ToolResult {
+  return { content: [{ type: "text" as const, text }] };
+}
+
 /** Wraps a tool handler so that thrown errors are converted to MCP error responses. */
 export function withErrorHandling<P>(
   handler: (params: P) => ToolResult | Promise<ToolResult>,

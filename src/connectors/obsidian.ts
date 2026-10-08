@@ -5,13 +5,15 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
-import { createTopic, listTopics } from "../core/topics.js";
+import { createTopic } from "../core/topics.js";
 import { addTagsToDocument, createTag } from "../core/tags.js";
 import { createLink, resolveDocumentByTitle } from "../core/links.js";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
-import { startSync, completeSync, failSync } from "./sync-tracker.js";
+import { findWikilinks, replaceWikilinks } from "./obsidian-wikilinks.js";
+import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 export interface ObsidianConfig {
   vaultPath: string;
@@ -131,14 +133,7 @@ function buildVaultFileMap(vaultFiles: string[]): Map<string, string> {
 
 /** Collect all [[wikilinks]] from the body text. */
 function collectWikilinks(body: string): string[] {
-  const wikilinks: string[] = [];
-  const wikilinkRegex = /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g;
-  let wlMatch;
-  while ((wlMatch = wikilinkRegex.exec(body)) !== null) {
-    const link = wlMatch[1] ?? "";
-    wikilinks.push(link);
-  }
-  return wikilinks;
+  return findWikilinks(body).map((w) => w.link);
 }
 
 /** Apply Obsidian-specific markdown transformations: embeds, wikilinks, comments, callouts. */
@@ -152,14 +147,11 @@ function transformObsidianBody(body: string, fileMap: Map<string, string>): stri
   });
 
   // Resolve [[wikilinks]]
-  result = result.replaceAll(
-    /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
-    (_match, link: string, display?: string) => {
-      const displayText = display ?? link;
-      const slug = link.toLowerCase().replaceAll(/\s+/g, "-");
-      return `[${displayText}](${slug})`;
-    },
-  );
+  result = replaceWikilinks(result, ({ link, display }) => {
+    const displayText = display ?? link;
+    const slug = link.toLowerCase().replaceAll(/\s+/g, "-");
+    return `[${displayText}](${slug})`;
+  });
 
   // Strip %%comments%%
   result = result.replaceAll(/%%[\s\S]*?%%/g, "");
@@ -199,19 +191,24 @@ function collectTags(body: string, frontmatter: Record<string, unknown>): string
   return [...tagSet];
 }
 
-export function parseObsidianMarkdown(
-  content: string,
-  vaultFiles: string[],
-): {
+interface ParsedObsidianMarkdown {
   frontmatter: Record<string, unknown>;
   body: string;
   tags: string[];
   wikilinks: string[];
-} {
+}
+
+export function parseObsidianMarkdown(
+  content: string,
+  vaultFiles: string[],
+): ParsedObsidianMarkdown {
+  return parseWithFileMap(content, buildVaultFileMap(vaultFiles));
+}
+
+function parseWithFileMap(content: string, fileMap: Map<string, string>): ParsedObsidianMarkdown {
   const safeContent = content.length > MAX_PARSE_SIZE ? content.slice(0, MAX_PARSE_SIZE) : content;
 
   const { frontmatter, body: rawBody } = extractFrontmatter(safeContent);
-  const fileMap = buildVaultFileMap(vaultFiles);
   const wikilinks = collectWikilinks(rawBody);
   const body = transformObsidianBody(rawBody, fileMap);
   const tags = collectTags(body, frontmatter);
@@ -222,15 +219,9 @@ export function parseObsidianMarkdown(
 function resolveEmbeds(
   body: string,
   vaultPath: string,
-  vaultFiles: string[],
+  fileMap: Map<string, string>,
   _visited: Set<string> = new Set(),
 ): string {
-  const fileMap = new Map<string, string>();
-  for (const f of vaultFiles) {
-    const name = basename(f, ".md");
-    fileMap.set(name.toLowerCase(), f);
-  }
-
   return body.replace(
     /!\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
     (_match, link: string, display?: string) => {
@@ -261,13 +252,9 @@ function folderToTopic(relPath: string): string | undefined {
   return dir;
 }
 
+/** createTopic returns the existing topic when the name is already taken (ON CONFLICT). */
 function getOrCreateTopic(db: Database.Database, topicPath: string): string {
-  const existing = listTopics(db);
-  const found = existing.find((t) => t.name === topicPath);
-  if (found) return found.id;
-
-  const topic = createTopic(db, { name: topicPath });
-  return topic.id;
+  return createTopic(db, { name: topicPath }).id;
 }
 
 /** Determine the topic ID for a file based on the topic mapping strategy. */
@@ -345,7 +332,7 @@ async function processVaultFile(
   provider: EmbeddingProvider,
   config: ObsidianConfig,
   relPath: string,
-  vaultFiles: string[],
+  fileMap: Map<string, string>,
   tracked: VaultFileEntry | undefined,
   log: ReturnType<typeof getLogger>,
 ): Promise<{ entry: VaultFileEntry; isUpdate: boolean } | "unchanged"> {
@@ -356,8 +343,8 @@ async function processVaultFile(
   if (tracked?.mtime === mtime) return "unchanged";
 
   const rawContent = readFileSync(fullPath, "utf-8");
-  const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, vaultFiles);
-  const parsed = parseObsidianMarkdown(contentWithEmbeds, vaultFiles);
+  const contentWithEmbeds = resolveEmbeds(rawContent, config.vaultPath, fileMap);
+  const parsed = parseWithFileMap(contentWithEmbeds, fileMap);
 
   const title =
     typeof parsed.frontmatter.title === "string"
@@ -421,25 +408,31 @@ function applyVaultFileOutcome(
   }
 }
 
+interface SyncVaultFilesContext {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  config: ObsidianConfig;
+  vaultFiles: string[];
+  trackedFiles: Record<string, VaultFileEntry>;
+  newTrackedFiles: Record<string, VaultFileEntry>;
+  result: SyncResult;
+  signal: AbortSignal | undefined;
+}
+
 /** Sync all vault files, populating result and newTrackedFiles. */
-async function syncVaultFiles(
-  db: Database.Database,
-  provider: EmbeddingProvider,
-  config: ObsidianConfig,
-  vaultFiles: string[],
-  trackedFiles: Record<string, VaultFileEntry>,
-  newTrackedFiles: Record<string, VaultFileEntry>,
-  result: SyncResult,
-): Promise<void> {
+async function syncVaultFiles(ctx: SyncVaultFilesContext): Promise<void> {
+  const { db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result, signal } = ctx;
   const log = getLogger();
-  for (const relPath of vaultFiles) {
+  const fileMap = buildVaultFileMap(vaultFiles);
+  await forEachSequential(vaultFiles, async (relPath) => {
+    signal?.throwIfAborted();
     try {
       const outcome = await processVaultFile(
         db,
         provider,
         config,
         relPath,
-        vaultFiles,
+        fileMap,
         trackedFiles[relPath],
         log,
       );
@@ -453,13 +446,34 @@ async function syncVaultFiles(
         newTrackedFiles[relPath] = tracked;
       }
     }
-  }
+  });
 }
 
 export async function syncObsidianVault(
   db: Database.Database,
   provider: EmbeddingProvider,
   config: ObsidianConfig,
+  options: ConnectorSyncOptions = {},
+): Promise<SyncResult> {
+  return trackSync(
+    db,
+    "obsidian",
+    options.syncName ?? config.vaultPath,
+    () => runObsidianSync(db, provider, config, options.signal),
+    (result) => ({
+      added: result.added,
+      updated: result.updated,
+      deleted: result.deleted,
+      errored: result.errors.length,
+    }),
+  );
+}
+
+async function runObsidianSync(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  config: ObsidianConfig,
+  signal: AbortSignal | undefined,
 ): Promise<SyncResult> {
   const log = getLogger();
   const result: SyncResult = { added: 0, updated: 0, deleted: 0, errors: [] };
@@ -468,60 +482,52 @@ export async function syncObsidianVault(
     throw new ValidationError("Vault path is required");
   }
 
-  const syncId = startSync(db, "obsidian", config.vaultPath);
+  const excludePatterns = [...DEFAULT_EXCLUDE, ...config.excludePatterns];
+  const vaultFiles = findMarkdownFiles(config.vaultPath, excludePatterns);
 
-  try {
-    const excludePatterns = [...DEFAULT_EXCLUDE, ...config.excludePatterns];
-    const vaultFiles = findMarkdownFiles(config.vaultPath, excludePatterns);
+  log.info({ vaultPath: config.vaultPath, fileCount: vaultFiles.length }, "Syncing Obsidian vault");
 
-    log.info(
-      { vaultPath: config.vaultPath, fileCount: vaultFiles.length },
-      "Syncing Obsidian vault",
-    );
+  const connectorConfig = loadConnectorConfig();
+  const vaultKey = `obsidian:${config.vaultPath}`;
+  const existingState = connectorConfig[vaultKey] as VaultState | undefined;
+  const trackedFiles = existingState?.files ?? {};
+  const newTrackedFiles: Record<string, VaultFileEntry> = {};
+  const currentFileSet = new Set(vaultFiles);
 
-    const connectorConfig = loadConnectorConfig();
-    const vaultKey = `obsidian:${config.vaultPath}`;
-    const existingState = connectorConfig[vaultKey] as VaultState | undefined;
-    const trackedFiles = existingState?.files ?? {};
-    const newTrackedFiles: Record<string, VaultFileEntry> = {};
-    const currentFileSet = new Set(vaultFiles);
+  await syncVaultFiles({
+    db,
+    provider,
+    config,
+    vaultFiles,
+    trackedFiles,
+    newTrackedFiles,
+    result,
+    signal,
+  });
 
-    await syncVaultFiles(db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result);
+  result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
 
-    result.deleted = deleteRemovedFiles(db, trackedFiles, currentFileSet);
+  connectorConfig[vaultKey] = {
+    type: "obsidian",
+    vaultPath: config.vaultPath,
+    lastSync: new Date().toISOString(),
+    topicMapping: config.topicMapping,
+    excludePatterns: config.excludePatterns,
+    files: newTrackedFiles,
+  } satisfies VaultState;
+  saveConnectorConfig(connectorConfig);
 
-    connectorConfig[vaultKey] = {
-      type: "obsidian",
-      vaultPath: config.vaultPath,
-      lastSync: new Date().toISOString(),
-      topicMapping: config.topicMapping,
-      excludePatterns: config.excludePatterns,
-      files: newTrackedFiles,
-    } satisfies VaultState;
-    saveConnectorConfig(connectorConfig);
-
-    log.info(
-      {
-        added: result.added,
-        updated: result.updated,
-        deleted: result.deleted,
-        errors: result.errors.length,
-      },
-      "Obsidian vault sync complete",
-    );
-
-    completeSync(db, syncId, {
+  log.info(
+    {
       added: result.added,
       updated: result.updated,
       deleted: result.deleted,
-      errored: result.errors.length,
-    });
+      errors: result.errors.length,
+    },
+    "Obsidian vault sync complete",
+  );
 
-    return result;
-  } catch (err) {
-    failSync(db, syncId, err instanceof Error ? err.message : String(err));
-    throw err;
-  }
+  return result;
 }
 
 export function disconnectVault(db: Database.Database, vaultPath: string): number {

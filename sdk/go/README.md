@@ -1,12 +1,14 @@
 # libscope Go SDK
 
-A lightweight, idiomatic Go client for the [libscope](https://github.com/RobertLD/libscope) REST API. Zero external dependencies — built entirely on the Go standard library.
+A small Go client for the [libscope](https://github.com/RobertLD/libscope) REST API (`/api/v1`). It uses only the Go standard library.
 
 ## Installation
 
 ```bash
 go get github.com/RobertLD/libscope/sdk/go
 ```
+
+Start a server with `libscope serve api` (default `http://localhost:3378`).
 
 ## Quick Start
 
@@ -17,46 +19,36 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	libscope "github.com/RobertLD/libscope/sdk/go"
 )
 
 func main() {
+	ctx := context.Background()
 	client := libscope.NewClient()
 
-	// Add a document from a URL
-	doc, err := client.AddDocument(context.Background(), "https://go.dev/doc/")
+	// Adding runs as a background task on the server. WaitForTask polls it.
+	task, err := client.AddURL(ctx, "https://go.dev/doc/", libscope.WithTags("go"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Indexed: %s (%s)\n", doc.Title, doc.ID)
+	task, err = client.WaitForTask(ctx, task.ID, time.Second)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var added libscope.IngestResult
+	if err := task.DecodeResult(&added); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Indexed: %s (%s)\n", added.Documents[0].Title, added.Documents[0].DocumentID)
 
-	// Add a text document
-	doc, err = client.AddText(context.Background(), "Go Concurrency", "Goroutines are lightweight threads...")
+	page, err := client.Search(ctx, "goroutines", libscope.WithLimit(5))
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Added: %s\n", doc.ID)
-
-	// Search
-	results, err := client.Search(context.Background(), "goroutines",
-		libscope.WithLimit(5),
-		libscope.WithMinScore(0.5),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, hit := range results.Results {
-		fmt.Printf("  %s: %.2f\n", hit.Document.Title, hit.Score)
-	}
-
-	// List all topics
-	topics, err := client.ListTopics(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, t := range topics {
-		fmt.Printf("  Topic: %s\n", t.Name)
+	for _, hit := range page.Items {
+		fmt.Printf("  %s: %.2f\n", hit.Title, hit.Score)
 	}
 }
 ```
@@ -64,76 +56,56 @@ func main() {
 ## Configuration
 
 ```go
-// Custom base URL
 client := libscope.NewClient(
 	libscope.WithBaseURL("http://my-server:3378"),
-)
-
-// Custom timeout
-client := libscope.NewClient(
-	libscope.WithTimeout(10 * time.Second),
-)
-
-// Custom HTTP client
-client := libscope.NewClient(
-	libscope.WithHTTPClient(&http.Client{
-		Transport: myTransport,
-	}),
+	libscope.WithTimeout(10*time.Second),
+	libscope.WithAPIKey(os.Getenv("LIBSCOPE_API_KEY")), // "Authorization: Bearer <key>"
+	libscope.WithHTTPClient(&http.Client{Transport: myTransport}),
 )
 ```
 
+## Background tasks
+
+`AddText`, `AddURL`, `Sync` and `SyncAll` return a `*Task` at once (the server answers `202`). `WaitForTask(ctx, taskID, interval)` polls `GET /api/v1/tasks/:taskId` until the task finishes. It returns `*TaskError` when the task failed or was cancelled. Bound the wait with `context.WithTimeout`. `Task.DecodeResult` decodes the operation result (`*IngestResult` for `AddText` and `AddURL`). `GetTask` and `CancelTask` are also available.
+
 ## API Reference
 
-### Documents
+Optional fields are `Param` values, for example `WithTopic("go")`. The same `Param` works on every method that accepts the field.
 
-| Method                                  | Description                          |
-| --------------------------------------- | ------------------------------------ |
-| `AddDocument(ctx, url, opts...)`        | Index a document from a URL          |
-| `AddText(ctx, title, content, opts...)` | Index raw text content               |
-| `GetDocument(ctx, id)`                  | Get a document by ID                 |
-| `ListDocuments(ctx, opts...)`           | List documents with optional filters |
-| `DeleteDocument(ctx, id)`               | Delete a document                    |
+| Method                                    | Description                                                                            | Params                                                  |
+| ----------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `Search(ctx, query, params...)`           | Search by meaning and keywords (`*Page[SearchHit]`)                                    | `WithLimit`, `WithOffset`, `WithMinRating`, filters     |
+| `Ask(ctx, question, params...)`           | Answer a question from the knowledge base (the server needs an LLM)                    | `WithTopK`, `WithMinRating`, filters                    |
+| `AddText(ctx, title, content, params...)` | Start adding a document from text (`*Task`)                                            | `WithURL`, filters                                      |
+| `AddURL(ctx, url, params...)`             | Start adding a web page, a crawled site or a public GitHub/GitLab repository (`*Task`) | `WithSpider`, `WithMaxPages`, filters                   |
+| `GetDocument(ctx, id)`                    | Document with content, tags, links and ratings (`*DocumentView`)                       |                                                         |
+| `ListDocuments(ctx, params...)`           | List documents (`*Page[Document]`)                                                     | `WithLimit`, `WithOffset`, filters                      |
+| `DeleteDocument(ctx, id)`                 | Delete a document                                                                      |                                                         |
+| `ListTopics(ctx)`                         | Topics with document counts                                                            |                                                         |
+| `CreateTopic(ctx, name, params...)`       | Create a topic                                                                         | `WithParent`, `WithDescription`                         |
+| `ListTags(ctx)`                           | Tags with document counts                                                              |                                                         |
+| `AddTags(ctx, id, tags)`                  | Add tags; returns the document's tags                                                  |                                                         |
+| `RemoveTags(ctx, id, tags)`               | Remove tags; returns the document's tags                                               |                                                         |
+| `GetGraph(ctx, params...)`                | Knowledge graph                                                                        | `WithTopic`, `WithTag`, `WithThreshold`, `WithMaxNodes` |
+| `Sync(ctx, name)` / `SyncAll(ctx)`        | Start syncing saved connector connections (`*Task`)                                    |                                                         |
+| `GetTask` / `CancelTask` / `WaitForTask`  | Background tasks                                                                       |                                                         |
+| `Overview(ctx)`                           | Counts, topics, installed packs, index and health                                      |                                                         |
+| `Health(ctx)`                             | Liveness check                                                                         |                                                         |
 
-### Search
-
-| Method                        | Description                      |
-| ----------------------------- | -------------------------------- |
-| `Search(ctx, query, opts...)` | Semantic search across documents |
-
-Search options: `WithLimit(n)`, `WithTopic(t)`, `WithTags(tags...)`, `WithMinScore(s)`
-
-### Topics
-
-| Method                            | Description        |
-| --------------------------------- | ------------------ |
-| `ListTopics(ctx)`                 | List all topics    |
-| `CreateTopic(ctx, name, opts...)` | Create a new topic |
-
-### Tags
-
-| Method                                | Description            |
-| ------------------------------------- | ---------------------- |
-| `ListTags(ctx)`                       | List all tags          |
-| `AddTagsToDocument(ctx, docID, tags)` | Add tags to a document |
-
-### Analytics
-
-| Method          | Description             |
-| --------------- | ----------------------- |
-| `GetStats(ctx)` | Get instance statistics |
-| `Health(ctx)`   | Health check            |
+Filters: `WithTopic`, `WithLibrary`, `WithVersion`, `WithSourceType`, `WithTags`. On `AddText` and `AddURL` they set the new document's fields.
 
 ## Error Handling
 
-All methods return `(*T, error)`. API errors are returned as `*libscope.Error`:
+API errors are returned as `*libscope.Error`. `errors.Is` matches by HTTP status (`ErrNotFound`, `ErrBadRequest`, `ErrServerError`):
 
 ```go
-doc, err := client.GetDocument(ctx, "nonexistent")
-if err != nil {
-	var apiErr *libscope.Error
-	if errors.As(err, &apiErr) {
-		fmt.Printf("API error %d: %s\n", apiErr.StatusCode, apiErr.Message)
-	}
+_, err := client.GetDocument(ctx, "nonexistent")
+if errors.Is(err, libscope.ErrNotFound) {
+	// ...
+}
+var apiErr *libscope.Error
+if errors.As(err, &apiErr) {
+	fmt.Printf("API error %d %s: %s\n", apiErr.StatusCode, apiErr.Code, apiErr.Message)
 }
 ```
 
@@ -144,4 +116,4 @@ cd sdk/go
 go test ./... -v -count=1
 ```
 
-All tests use `httptest.NewServer` — no running libscope instance required.
+The tests use `httptest.NewServer`. They do not need a running libscope server.
