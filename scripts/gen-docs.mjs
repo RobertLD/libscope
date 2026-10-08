@@ -39,12 +39,16 @@ const DOCS = {
 // ---------------------------------------------------------------------------------------------
 // Markdown helpers
 
+/** A `|` escaped for a table cell, and the same between two alternatives. */
+const PIPE = String.raw`\|`;
+const OR = ` ${PIPE} `;
+
 /** Text for a table cell or a paragraph: no HTML or Vue interpolation, no broken tables. */
 function text(value) {
   return String(value ?? "")
     .replaceAll(homedir(), "~")
     .replaceAll("\n", " ")
-    .replaceAll("|", "\\|")
+    .replaceAll("|", PIPE)
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("{{", "{ {");
@@ -52,7 +56,7 @@ function text(value) {
 
 /** Inline code; the content keeps `<` and `|` (escaped for tables). */
 function code(value) {
-  return `\`${String(value).replaceAll(homedir(), "~").replaceAll("|", "\\|")}\``;
+  return `\`${String(value).replaceAll(homedir(), "~").replaceAll("|", PIPE)}\``;
 }
 
 /** Text that ends with a period when `withPeriod` (when more text follows in the cell). */
@@ -150,8 +154,8 @@ async function cliBlocks() {
 
 function schemaType(s) {
   if (!s || typeof s !== "object") return "any";
-  if (s.enum) return s.enum.map((v) => code(v)).join(" \\| ");
-  if (s.anyOf) return s.anyOf.map(schemaType).join(" \\| ");
+  if (s.enum) return s.enum.map((v) => code(v)).join(OR);
+  if (s.anyOf) return s.anyOf.map(schemaType).join(OR);
   if (s.type === "array") return `${schemaType(s.items)}[]`;
   if (s.type === "string" && s.format) return `string (${s.format})`;
   return s.type ?? "any";
@@ -245,7 +249,7 @@ function configType(type) {
   const list = type.startsWith("list of ");
   const values = list ? type.slice("list of ".length) : type;
   if (!list && !values.includes(" | ")) return values;
-  const choices = values.split(" | ").map(code).join(" \\| ");
+  const choices = values.split(" | ").map(code).join(OR);
   return list ? `list of ${choices}` : choices;
 }
 
@@ -339,6 +343,60 @@ async function formatBlock(content, file) {
   return format(content, { ...options, parser: "markdown", filepath: file });
 }
 
+const REQUIRED_BLOCKS = {
+  cli: ["cli:global"],
+  mcp: ["mcp:core", "mcp:admin"],
+  config: ["config:keys"],
+  rest: ["rest:routes"],
+};
+
+/** The generated text of a block, with blank lines around it as prettier writes them. */
+async function blockBody(generator, name, file) {
+  return `\n${await formatBlock(generator.render(name), file)}\n`;
+}
+
+/** Each top-level command needs a `cli:<cmd>` block. */
+function uncoveredCommands(relPath, seen, commands) {
+  const covered = new Set(
+    [...seen].filter((n) => n !== "cli:global").flatMap((n) => n.slice(4).split(",")),
+  );
+  return commands
+    .filter((command) => !covered.has(command))
+    .map((command) => `${relPath}: no block documents "libscope ${command}"`);
+}
+
+/** Regenerate the blocks of one doc file: its original and updated text, and its problems. */
+async function updateFile(kind, relPath, generator, check) {
+  const file = join(ROOT, relPath);
+  const original = readFileSync(file, "utf8");
+  const matches = [...original.matchAll(BLOCK)];
+  const bodies = await Promise.all(
+    matches.map(([, name]) =>
+      name.split(":")[0] === kind ? blockBody(generator, name, file) : null,
+    ),
+  );
+  const problems = [];
+  const seen = new Set();
+  let updated = original;
+  matches.forEach(([whole, name, current], i) => {
+    const body = bodies[i];
+    if (body === null) {
+      problems.push(`${relPath}: block "${name}" does not belong in this file`);
+      return;
+    }
+    seen.add(name);
+    if (current === body) return;
+    if (check) problems.push(`${relPath}: block "${name}" is out of date`);
+    const block = `<!-- generated:start ${name} -->\n${body}<!-- generated:end ${name} -->`;
+    updated = updated.replace(whole, () => block);
+  });
+  for (const name of REQUIRED_BLOCKS[kind]) {
+    if (!seen.has(name)) problems.push(`${relPath}: missing block "${name}"`);
+  }
+  if (kind === "cli") problems.push(...uncoveredCommands(relPath, seen, generator.commands));
+  return { file, original, updated, problems };
+}
+
 async function main() {
   const check = process.argv.includes("--check");
   const generators = {
@@ -347,53 +405,20 @@ async function main() {
     config: await configBlocks(),
     rest: await restBlocks(),
   };
-  const problems = [];
-  const required = {
-    cli: ["cli:global"],
-    mcp: ["mcp:core", "mcp:admin"],
-    config: ["config:keys"],
-    rest: ["rest:routes"],
-  };
-
-  for (const [kind, relPath] of Object.entries(DOCS)) {
-    const file = join(ROOT, relPath);
-    const original = readFileSync(file, "utf8");
-    const seen = new Set();
-    let updated = original;
-    for (const match of original.matchAll(BLOCK)) {
-      const [whole, name, current] = match;
-      const prefix = name.split(":")[0];
-      if (prefix !== kind) {
-        problems.push(`${relPath}: block "${name}" does not belong in this file`);
-        continue;
-      }
-      seen.add(name);
-      // Blank lines around the markers, as prettier writes them.
-      const body = `\n${await formatBlock(generators[kind].render(name), file)}\n`;
-      if (current !== body) {
-        if (check) problems.push(`${relPath}: block "${name}" is out of date`);
-        const block = `<!-- generated:start ${name} -->\n${body}<!-- generated:end ${name} -->`;
-        updated = updated.replace(whole, () => block);
-      }
-    }
-    for (const name of required[kind]) {
-      if (!seen.has(name)) problems.push(`${relPath}: missing block "${name}"`);
-    }
-    if (kind === "cli") {
-      const covered = new Set(
-        [...seen].filter((n) => n !== "cli:global").flatMap((n) => n.slice(4).split(",")),
-      );
-      for (const command of generators.cli.commands) {
-        if (!covered.has(command))
-          problems.push(`${relPath}: no block documents "libscope ${command}"`);
-      }
-    }
-    if (!check && updated !== original) {
+  const results = await Promise.all(
+    Object.entries(DOCS).map(([kind, relPath]) =>
+      updateFile(kind, relPath, generators[kind], check),
+    ),
+  );
+  if (!check) {
+    for (const { file, original, updated } of results) {
+      if (updated === original) continue;
       writeFileSync(file, updated);
       console.log(`updated ${relative(ROOT, file)}`);
     }
   }
 
+  const problems = results.flatMap((r) => r.problems);
   if (problems.length > 0) {
     for (const p of problems) console.error(`✗ ${p}`);
     if (check) console.error("Run `npm run build && npm run docs:gen` and commit the result.");

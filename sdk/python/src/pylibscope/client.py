@@ -36,6 +36,7 @@ from pylibscope.models import (
 )
 
 _API = "/api/v1"
+_TAGS = "/tags"
 DEFAULT_BASE_URL = "http://localhost:3378"
 
 
@@ -154,17 +155,17 @@ class _Calls:
 
     @staticmethod
     def add_tags(document_id: str, tags: List[str]) -> _Call:
-        path = _doc(document_id, "/tags")
+        path = _doc(document_id, _TAGS)
         return _Call("POST", path, lambda d: list(d["tags"]), json={"tags": tags})
 
     @staticmethod
     def remove_tags(document_id: str, tags: List[str]) -> _Call:
-        path = _doc(document_id, "/tags")
+        path = _doc(document_id, _TAGS)
         return _Call("DELETE", path, lambda d: list(d["tags"]), params={"tags": tags})
 
     @staticmethod
     def list_tags() -> _Call:
-        return _Call("GET", "/tags", _items(Tag))
+        return _Call("GET", _TAGS, _items(Tag))
 
     @staticmethod
     def graph(
@@ -573,14 +574,12 @@ class AsyncLibscopeClient:
     async def cancel_task(self, task_id: str) -> bool:
         return await self._run(_Calls.cancel_task(task_id))
 
-    async def wait_for_task(
-        self, task_id: str, *, timeout: float = 300.0, interval: float = 1.0
-    ) -> Task:
-        deadline = time.monotonic() + timeout
+    async def wait_for_task(self, task_id: str, *, interval: float = 1.0) -> Task:
+        """Poll a task until it finishes. Raises TaskFailedError when it failed or was
+        cancelled. It has no time limit: set one with ``asyncio.wait_for(..., timeout)``, or
+        ``async with asyncio.timeout(...)`` on Python 3.11+."""
         while True:
             task = await self.get_task(task_id)
             if task.done:
                 return _finished(task)
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"Task {task_id} did not finish in {timeout} s")
             await asyncio.sleep(interval)

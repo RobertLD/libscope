@@ -36,7 +36,8 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: "https://registry.npmjs.org"
-      - run: npm ci
+      # tsc and npm publish load no native addon.
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm publish --provenance --access public
         env:
