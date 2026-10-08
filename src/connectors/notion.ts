@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { ValidationError, FetchError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
@@ -186,12 +187,13 @@ async function fetchBlockChildren(
   }
 
   // Recursively fetch children
-  for (const block of allBlocks) {
-    if (block.has_children) {
+  await forEachSequential(
+    allBlocks.filter((block) => block.has_children),
+    async (block) => {
       const children = await fetchBlockChildren(token, block.id, depth + 1, maxDepth);
       (block as Record<string, unknown>)["children"] = children;
-    }
-  }
+    },
+  );
 
   return allBlocks;
 }
@@ -471,9 +473,9 @@ async function syncNotionDatabase(
   const dbTitle = extractTitle(item);
   const rows = await queryDatabase(token, item.id);
 
-  for (const row of rows) {
+  await forEachSequential(rows, async (row) => {
     signal?.throwIfAborted();
-    if (excludeSet.has(row.id)) continue;
+    if (excludeSet.has(row.id)) return;
 
     const rowTitle = extractTitle(row);
     const tags = row.properties ? extractPropertyMetadata(row.properties) : [];
@@ -484,7 +486,7 @@ async function syncNotionDatabase(
     const fullContent = `# ${rowTitle}${metadataSection}\n\n${content}`;
 
     await upsertNotionDocument(db, provider, row.id, `${dbTitle} — ${rowTitle}`, fullContent);
-  }
+  });
 
   log.debug({ id: item.id, title: dbTitle, rows: rows.length }, "Indexed Notion database");
 }
@@ -553,11 +555,11 @@ async function runNotionSync(
   const searchResults = await searchNotion(config.token, config.lastSync, signal);
   log.info({ count: searchResults.length }, "Found Notion objects");
 
-  for (const item of searchResults) {
+  await forEachSequential(searchResults, async (item) => {
     signal?.throwIfAborted();
     if (excludeSet.has(item.id)) {
       log.debug({ id: item.id }, "Skipping excluded page");
-      continue;
+      return;
     }
 
     try {
@@ -569,7 +571,7 @@ async function runNotionSync(
       result.errors.push({ page: title, error: message });
       log.warn({ id: item.id, err }, "Failed to index Notion item");
     }
-  }
+  });
 
   log.info(
     {

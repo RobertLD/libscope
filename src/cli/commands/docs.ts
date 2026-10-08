@@ -27,10 +27,9 @@ import {
   defined,
   documentInput,
   splitList,
-  toNumber,
   type DocumentFlags,
 } from "../options.js";
-import { call, plural, printList, run } from "../run.js";
+import { call, libraryLabel, plural, printList, run } from "../run.js";
 
 /** Tags given as separate words and/or comma-separated. */
 function tagList(tags: string[]): string[] {
@@ -46,7 +45,7 @@ function printDocumentList(result: ListResult<DocumentSummary>): void {
   console.log(`Documents ${result.offset + 1}-${last} of ${result.total}:\n`);
   for (const d of result.items) {
     console.log(`${d.documentId}  ${d.title}`);
-    const lib = d.library ? ` | ${d.library}${d.version ? ` ${d.version}` : ""}` : "";
+    const lib = d.library ? ` | ${libraryLabel(d.library, d.version)}` : "";
     const url = d.url ? ` | ${d.url}` : "";
     console.log(`    ${d.sourceType}${lib}${url} | updated ${d.updatedAt}`);
   }
@@ -57,7 +56,7 @@ function printDocument(view: DocumentView): void {
   console.log(`# ${d.title}\n`);
   console.log(`ID:        ${d.documentId}`);
   console.log(`Type:      ${d.sourceType}`);
-  if (d.library) console.log(`Library:   ${d.library}${d.version ? ` ${d.version}` : ""}`);
+  if (d.library) console.log(`Library:   ${libraryLabel(d.library, d.version)}`);
   if (d.topicId) console.log(`Topic:     ${d.topicId}`);
   if (d.url) console.log(`URL:       ${d.url}`);
   console.log(`Added by:  ${d.submittedBy}  (${d.createdAt}, updated ${d.updatedAt})`);
@@ -111,7 +110,7 @@ export function updateInput(documentId: string, flags: UpdateFlags): Record<stri
 
 function registerViewCommands(docs: Command): void {
   addDocumentOptions(docs.command("list").description("List documents, newest first"))
-    .option("--offset <n>", "Documents to skip (paging)", toNumber)
+    .option("--offset <n>", "Documents to skip (paging)", Number)
     .action(async (flags: DocumentFlags & { offset?: number }) => {
       await run(
         listDocumentsOperation,
@@ -123,8 +122,8 @@ function registerViewCommands(docs: Command): void {
   docs
     .command("show <documentId>")
     .description("Show a document with its tags, links and ratings")
-    .option("--offset <n>", "Start the content at this character", toNumber)
-    .option("--max-length <n>", "Show at most this many characters of content", toNumber)
+    .option("--offset <n>", "Start the content at this character", Number)
+    .option("--max-length <n>", "Show at most this many characters of content", Number)
     .action(async (documentId: string, flags: { offset?: number; maxLength?: number }) => {
       await run(
         getDocumentOperation,
@@ -304,7 +303,7 @@ function registerTagCommands(docs: Command): void {
   docs
     .command("suggest-tags <documentId>")
     .description("Suggest tags from a document's content")
-    .option("-n, --limit <n>", "Maximum suggestions", toNumber)
+    .option("-n, --limit <n>", "Maximum suggestions", Number)
     .action(async (documentId: string, flags: { limit?: number }) => {
       await run(suggestTagsOperation, defined({ documentId, limit: flags.limit }), (r) =>
         printList(r.suggestions, "No suggestions.", (t) => console.log(`  ${t}`)),

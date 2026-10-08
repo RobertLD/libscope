@@ -7,18 +7,18 @@ import {
   leaveInterruptsToCommand,
   untilInterrupted,
 } from "../context.js";
-import { toNumber } from "../options.js";
 
 const MODES = ["mcp", "api", "dashboard"] as const;
 
 async function serveMcp(): Promise<void> {
   const { workspace, logLevel, verbose } = getGlobalOptions();
+  const level = verbose ? "debug" : logLevel;
   // stdout carries the MCP protocol: print nothing here. The server handles Ctrl+C itself.
   leaveInterruptsToCommand();
   const mcp = await import("../../mcp/server.js");
   await mcp.runStdioServer({
     ...(workspace ? { workspace } : {}),
-    ...(verbose ? { logLevel: "debug" } : logLevel ? { logLevel } : {}),
+    ...(level ? { logLevel: level } : {}),
   });
 }
 
@@ -28,7 +28,7 @@ export function register(program: Command): void {
     .description(
       "Start the MCP server on stdio (mcp, default), the REST API (api, port 3378) or the web dashboard (dashboard, port 3377)",
     )
-    .option("--port <n>", "Port (api and dashboard)", toNumber)
+    .option("--port <n>", "Port (api and dashboard)", Number)
     .option("--host <host>", "Host to listen on (default localhost)")
     .action(async (mode: string | undefined, flags: { port?: number; host?: string }) => {
       const selected = mode ?? "mcp";

@@ -7,6 +7,7 @@
 import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLogger } from "../logger.js";
+import { runConcurrent } from "../utils/async.js";
 import type { RegistryEntry, RegistrySyncStatus } from "./types.js";
 import { getRegistryCacheDir } from "./types.js";
 import { loadRegistries, updateRegistrySyncTime } from "./config.js";
@@ -146,26 +147,6 @@ export async function syncRegistry(entry: RegistryEntry): Promise<RegistrySyncSt
 
 /** Maximum number of concurrent git fetch operations. */
 const SYNC_CONCURRENCY = 3;
-
-/**
- * Run async tasks with a concurrency limit (worker-pool pattern).
- * Returns results in the same order as the input tasks.
- */
-async function runConcurrent<T>(tasks: Array<() => Promise<T>>, concurrency: number): Promise<T[]> {
-  const results: T[] = Array.from<T>({ length: tasks.length });
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (nextIndex < tasks.length) {
-      const index = nextIndex++;
-      results[index] = await tasks[index]!();
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
-  await Promise.all(workers);
-  return results;
-}
 
 /** Sync all configured registries concurrently. Returns status for each. */
 export async function syncAllRegistries(): Promise<RegistrySyncStatus[]> {

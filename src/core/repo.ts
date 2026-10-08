@@ -4,6 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { FetchError, ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { forEachSequential } from "../utils/async.js";
 import { isPrivateIP } from "./url-fetcher.js";
 import { indexDocument } from "./indexing.js";
 import { promises as dns } from "node:dns";
@@ -219,11 +220,12 @@ async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Pr
   const headers = buildApiHeaders(token, accept);
   let lastError: Error | undefined;
 
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  /** One request: the response, or undefined when it should be retried. */
+  const tryFetch = async (attempt: number): Promise<Response | undefined> => {
     try {
       const response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) });
       const shouldRetry = await handleRateLimit(response);
-      if (shouldRetry) continue;
+      if (shouldRetry) return undefined;
 
       checkResponseStatus(response, url);
       return response;
@@ -233,13 +235,21 @@ async function fetchWithRetry({ url, token, accept }: FetchWithRetryOptions): Pr
       if (attempt < MAX_RETRIES - 1) {
         await sleep(RETRY_DELAY_MS * Math.pow(2, attempt));
       }
+      return undefined;
     }
-  }
+  };
 
-  throw new FetchError(
-    `Failed to fetch ${url} after ${MAX_RETRIES} retries: ${lastError?.message ?? "unknown error"}`,
-    lastError,
-  );
+  const fetchFrom = async (attempt: number): Promise<Response> => {
+    if (attempt >= MAX_RETRIES) {
+      throw new FetchError(
+        `Failed to fetch ${url} after ${MAX_RETRIES} retries: ${lastError?.message ?? "unknown error"}`,
+        lastError,
+      );
+    }
+    return (await tryFetch(attempt)) ?? fetchFrom(attempt + 1);
+  };
+
+  return fetchFrom(0);
 }
 
 // ── Tree Fetching ────────────────────────────────────────────────────────────
@@ -334,21 +344,37 @@ async function fetchGitHubContents(
 
   onProgress?.(`Found ${docFiles.length} docs`);
 
+  const rawBase = `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}`;
+  return fetchFileContents(docFiles, (path) => `${rawBase}/${path}`, token, onProgress);
+}
+
+/**
+ * Download each file in order from `fileUrl(path)`, reporting progress. A file that cannot be
+ * fetched is logged and skipped.
+ */
+async function fetchFileContents(
+  docFiles: Array<{ path: string }>,
+  fileUrl: (path: string) => string,
+  token: string | undefined,
+  onProgress?: (message: string) => void,
+): Promise<RepoFile[]> {
+  const log = getLogger();
   const files: RepoFile[] = [];
-  for (let i = 0; i < docFiles.length; i++) {
-    const item = docFiles[i]!;
+  await forEachSequential(docFiles, async (item, i) => {
     onProgress?.(`Fetching [${i + 1}/${docFiles.length}] ${item.path}`);
 
     try {
-      const rawUrl = `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}/${item.path}`;
-      const contentResponse = await fetchWithRetry({ url: rawUrl, token, accept: "text/plain" });
+      const contentResponse = await fetchWithRetry({
+        url: fileUrl(item.path),
+        token,
+        accept: "text/plain",
+      });
       const content = await contentResponse.text();
       files.push({ path: item.path, content });
     } catch (err) {
       log.warn({ path: item.path, err }, "Failed to fetch file content, skipping");
     }
-  }
-
+  });
   return files;
 }
 
@@ -361,7 +387,6 @@ async function fetchGitLabContents(
   token: string | undefined,
   onProgress?: (message: string) => void,
 ): Promise<RepoFile[]> {
-  const log = getLogger();
   const projectId = encodeURIComponent(`${owner}/${repo}`);
 
   onProgress?.("Fetching tree...");
@@ -375,22 +400,14 @@ async function fetchGitLabContents(
 
   onProgress?.(`Found ${docFiles.length} docs`);
 
-  const files: RepoFile[] = [];
-  for (let i = 0; i < docFiles.length; i++) {
-    const item = docFiles[i]!;
-    onProgress?.(`Fetching [${i + 1}/${docFiles.length}] ${item.path}`);
-
-    try {
-      const fileUrl = `https://gitlab.com/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(item.path)}/raw?ref=${encodeURIComponent(branch)}`;
-      const contentResponse = await fetchWithRetry({ url: fileUrl, token, accept: "text/plain" });
-      const content = await contentResponse.text();
-      files.push({ path: item.path, content });
-    } catch (err) {
-      log.warn({ path: item.path, err }, "Failed to fetch file content, skipping");
-    }
-  }
-
-  return files;
+  const ref = encodeURIComponent(branch);
+  return fetchFileContents(
+    docFiles,
+    (path) =>
+      `https://gitlab.com/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(path)}/raw?ref=${ref}`,
+    token,
+    onProgress,
+  );
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -417,9 +434,8 @@ export async function indexRepository(
   const files = await fetchRepoContents(options, onProgress);
   const result: RepoResult = { indexed: 0, skipped: 0, errors: [], documents: [] };
 
-  for (let i = 0; i < files.length; i++) {
+  await forEachSequential(files, async (file, i) => {
     options.signal?.throwIfAborted();
-    const file = files[i]!;
     onProgress?.(`Indexing [${i + 1}/${files.length}] ${file.path}`);
 
     try {
@@ -432,7 +448,7 @@ export async function indexRepository(
 
       if (existing?.content_hash === contentHash) {
         result.skipped++;
-        continue;
+        return;
       }
 
       const title =
@@ -464,7 +480,7 @@ export async function indexRepository(
       result.errors.push(message);
       log.warn({ path: file.path, err }, "Failed to index file");
     }
-  }
+  });
 
   log.info({ library, ...result }, "Repository indexing complete");
   return result;

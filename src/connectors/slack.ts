@@ -4,6 +4,7 @@ import type { EmbeddingProvider } from "../providers/embedding.js";
 import { indexDocument } from "../core/indexing.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError, ValidationError } from "../errors.js";
+import { forEachSequential, mapSequential } from "../utils/async.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 import { deleteDocumentRows } from "./index.js";
@@ -174,39 +175,55 @@ export async function resolveUserMentions(text: string, token: string): Promise<
   const mentions = [...text.matchAll(mentionRegex)];
   let result = text;
 
-  for (const match of mentions) {
+  await forEachSequential(mentions, async (match) => {
     const userId = match[1];
     if (userId) {
       const displayName = await resolveUser(token, userId);
       result = result.replace(match[0], `@${displayName}`);
     }
-  }
+  });
 
   return result;
 }
 
-async function listChannels(token: string, signal?: AbortSignal): Promise<SlackChannel[]> {
-  const channels: SlackChannel[] = [];
-  let cursor: string | undefined;
+/**
+ * Call a paginated Slack method and collect `pick(response)` from every page, one page at a
+ * time with the rate-limit delay after each call.
+ */
+async function slackApiAllPages<T>(
+  method: string,
+  token: string,
+  params: Record<string, string>,
+  pick: (data: SlackApiResponse) => T[] | undefined,
+  signal: AbortSignal | undefined,
+): Promise<T[]> {
+  const items: T[] = [];
 
-  do {
+  const fetchPage = async (cursor: string | undefined): Promise<void> => {
     signal?.throwIfAborted();
-    const params: Record<string, string> = {
-      types: "public_channel,private_channel",
-      limit: "200",
-    };
-    if (cursor) params["cursor"] = cursor;
+    const pageParams = cursor ? { ...params, cursor } : params;
 
-    const data = await slackApi("conversations.list", token, params);
+    const data = await slackApi(method, token, pageParams);
     await delay(rateLimitDelayMs);
 
-    if (data.channels) {
-      channels.push(...data.channels);
-    }
-    cursor = data.response_metadata?.next_cursor ?? undefined;
-  } while (cursor);
+    const page = pick(data);
+    if (page) items.push(...page);
+    const next = data.response_metadata?.next_cursor ?? undefined;
+    if (next) await fetchPage(next);
+  };
 
-  return channels;
+  await fetchPage(undefined);
+  return items;
+}
+
+function listChannels(token: string, signal?: AbortSignal): Promise<SlackChannel[]> {
+  return slackApiAllPages(
+    "conversations.list",
+    token,
+    { types: "public_channel,private_channel", limit: "200" },
+    (data) => data.channels,
+    signal,
+  );
 }
 
 function filterChannels(
@@ -229,34 +246,19 @@ function filterChannels(
   return filtered.filter((ch) => !excludeSet.has(ch.name.toLowerCase()) && !excludeSet.has(ch.id));
 }
 
-async function fetchMessages(
+function fetchMessages(
   token: string,
   channelId: string,
   oldest?: string,
   signal?: AbortSignal,
 ): Promise<SlackMessage[]> {
-  const messages: SlackMessage[] = [];
-  let cursor: string | undefined;
+  const params: Record<string, string> = {
+    channel: channelId,
+    limit: "200",
+  };
+  if (oldest) params["oldest"] = oldest;
 
-  do {
-    signal?.throwIfAborted();
-    const params: Record<string, string> = {
-      channel: channelId,
-      limit: "200",
-    };
-    if (oldest) params["oldest"] = oldest;
-    if (cursor) params["cursor"] = cursor;
-
-    const data = await slackApi("conversations.history", token, params);
-    await delay(rateLimitDelayMs);
-
-    if (data.messages) {
-      messages.push(...data.messages);
-    }
-    cursor = data.response_metadata?.next_cursor ?? undefined;
-  } while (cursor);
-
-  return messages;
+  return slackApiAllPages("conversations.history", token, params, (data) => data.messages, signal);
 }
 
 async function fetchThreadReplies(
@@ -300,13 +302,12 @@ async function buildThreadDocument(
   channelName: string,
   replies: SlackMessage[],
 ): Promise<string> {
-  const lines: string[] = [];
-  for (const reply of replies) {
+  const lines = await mapSequential(replies, async (reply) => {
     const username = reply.user ? await resolveUser(token, reply.user) : "unknown";
     const timestamp = formatTimestamp(reply.ts);
     const text = reply.text ? convertSlackMrkdwn(await resolveUserMentions(reply.text, token)) : "";
-    lines.push(`**${username}** (${timestamp}):\n${text}`);
-  }
+    return `**${username}** (${timestamp}):\n${text}`;
+  });
   return `# Thread in #${channelName}\n\n${lines.join("\n\n---\n\n")}`;
 }
 
@@ -329,21 +330,44 @@ async function fetchAllThreadReplies(
   userIds: Set<string>,
 ): Promise<Map<string, SlackMessage[]>> {
   const threadRepliesMap = new Map<string, SlackMessage[]>();
-  for (const threadParent of threadParents) {
+  await forEachSequential(threadParents, async (threadParent) => {
     const replies = await fetchThreadReplies(token, channelId, threadParent.ts);
     threadRepliesMap.set(threadParent.ts, replies);
     collectUserIds(replies, userIds);
-  }
+  });
   return threadRepliesMap;
 }
 
 /** Batch-resolve all user IDs that are not already cached. */
 async function batchResolveUsers(token: string, userIds: Set<string>): Promise<void> {
-  for (const userId of userIds) {
-    if (!userCache.has(userId)) {
-      await resolveUser(token, userId);
-    }
-  }
+  await forEachSequential(
+    [...userIds].filter((userId) => !userCache.has(userId)),
+    (userId) => resolveUser(token, userId),
+  );
+}
+
+/**
+ * Index one message with text as its own document, titled
+ * "<label> — <user>: <start of the text>".
+ */
+async function indexMessage(
+  db: Database.Database,
+  provider: EmbeddingProvider,
+  token: string,
+  msg: SlackMessage & { text: string },
+  label: string,
+  url: string,
+): Promise<void> {
+  const username = msg.user ? await resolveUser(token, msg.user) : "unknown";
+  const text = convertSlackMrkdwn(await resolveUserMentions(msg.text, token));
+
+  await indexDocument(db, provider, {
+    title: `${label} — ${username}: ${truncateTitle(msg.text)}`,
+    content: `**${username}** (${formatTimestamp(msg.ts)}):\n${text}`,
+    sourceType: "manual",
+    url,
+    submittedBy: "crawler",
+  });
 }
 
 /** Index a single standalone message. Returns true if indexed. */
@@ -355,18 +379,15 @@ async function indexStandaloneMessage(
   msg: SlackMessage,
 ): Promise<boolean> {
   if (!msg.text) return false;
-
-  const username = msg.user ? await resolveUser(token, msg.user) : "unknown";
-  const text = convertSlackMrkdwn(await resolveUserMentions(msg.text, token));
-  const title = `#${channelName} — ${username}: ${truncateTitle(msg.text)}`;
-
-  await indexDocument(db, provider, {
-    title,
-    content: `**${username}** (${formatTimestamp(msg.ts)}):\n${text}`,
-    sourceType: "manual",
-    url: `slack://${channelName}/${msg.ts}`,
-    submittedBy: "crawler",
-  });
+  const message = { ...msg, text: msg.text };
+  await indexMessage(
+    db,
+    provider,
+    token,
+    message,
+    `#${channelName}`,
+    `slack://${channelName}/${msg.ts}`,
+  );
   return true;
 }
 
@@ -380,7 +401,7 @@ async function indexThreadsAggregate(
   threadRepliesMap: Map<string, SlackMessage[]>,
 ): Promise<number> {
   let threadsIndexed = 0;
-  for (const threadParent of threadParents) {
+  await forEachSequential(threadParents, async (threadParent) => {
     const replies = threadRepliesMap.get(threadParent.ts) ?? [];
     const content = await buildThreadDocument(token, channelName, replies);
     const parentText = threadParent.text ?? "";
@@ -394,7 +415,7 @@ async function indexThreadsAggregate(
       submittedBy: "crawler",
     });
     threadsIndexed++;
-  }
+  });
   return threadsIndexed;
 }
 
@@ -409,26 +430,22 @@ async function indexThreadsSeparate(
 ): Promise<[number, number]> {
   let messagesIndexed = 0;
   let threadsIndexed = 0;
-  for (const threadParent of threadParents) {
+  await forEachSequential(threadParents, async (threadParent) => {
     const replies = threadRepliesMap.get(threadParent.ts) ?? [];
-    for (const reply of replies) {
-      if (!reply.text) continue;
-
-      const username = reply.user ? await resolveUser(token, reply.user) : "unknown";
-      const text = convertSlackMrkdwn(await resolveUserMentions(reply.text, token));
-      const title = `#${channelName} thread reply — ${username}: ${truncateTitle(reply.text)}`;
-
-      await indexDocument(db, provider, {
-        title,
-        content: `**${username}** (${formatTimestamp(reply.ts)}):\n${text}`,
-        sourceType: "manual",
-        url: `slack://${channelName}/thread/${threadParent.ts}/${reply.ts}`,
-        submittedBy: "crawler",
-      });
+    await forEachSequential(replies, async (reply) => {
+      if (!reply.text) return;
+      await indexMessage(
+        db,
+        provider,
+        token,
+        { ...reply, text: reply.text },
+        `#${channelName} thread reply`,
+        `slack://${channelName}/thread/${threadParent.ts}/${reply.ts}`,
+      );
       messagesIndexed++;
-    }
+    });
     threadsIndexed++;
-  }
+  });
   return [messagesIndexed, threadsIndexed];
 }
 
@@ -483,11 +500,11 @@ async function syncChannel(
 
   await batchResolveUsers(config.token, allUserIds);
 
-  for (const msg of standaloneMessages) {
+  await forEachSequential(standaloneMessages, async (msg) => {
     signal?.throwIfAborted();
     const indexed = await indexStandaloneMessage(db, provider, config.token, channel.name, msg);
     if (indexed) result.messagesIndexed++;
-  }
+  });
 
   if (config.threadMode === "aggregate") {
     result.threadsIndexed += await indexThreadsAggregate(
@@ -563,7 +580,7 @@ async function runSlackSync(
 
   log.info({ channelCount: channels.length }, "Processing Slack channels");
 
-  for (const channel of channels) {
+  await forEachSequential(channels, async (channel) => {
     signal?.throwIfAborted();
     try {
       log.info({ channel: channel.name }, "Syncing channel");
@@ -574,7 +591,7 @@ async function runSlackSync(
       log.error({ channel: channel.name, err }, "Error syncing Slack channel");
       result.errors.push({ channel: channel.name, error: errMsg });
     }
-  }
+  });
 
   log.info(
     {

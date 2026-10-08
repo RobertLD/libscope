@@ -53,6 +53,11 @@ export function preview(text: string, max = 200): string {
   return flat.length > max ? `${flat.slice(0, max)}...` : flat;
 }
 
+/** "library 1.2" / "library". */
+export function libraryLabel(library: string, version: string | null | undefined): string {
+  return version ? `${library} ${version}` : library;
+}
+
 /** "1 document" / "3 documents". */
 export function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;

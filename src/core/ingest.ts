@@ -10,6 +10,7 @@ import { readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
 import { globToRegExp, toPosixPath } from "../utils/glob.js";
 import {
   indexDocument,
@@ -22,7 +23,7 @@ import {
 } from "./indexing.js";
 import { getParserForFile } from "./parsers/index.js";
 import { fetchAndConvert, type FetchOptions } from "./url-fetcher.js";
-import { spiderUrl, type SpiderOptions } from "./spider.js";
+import { spiderUrl, type SpiderOptions, type SpiderStats } from "./spider.js";
 import { indexRepository, isRepoUrl } from "./repo.js";
 import { addTagsToDocument } from "./tags.js";
 
@@ -255,7 +256,7 @@ async function ingestDirectory(ctx: IngestContext, input: IngestInput): Promise<
   }
   if (input.dryRun) return { ...result, planned: supported };
 
-  for (const [i, file] of supported.entries()) {
+  await forEachSequential(supported, async (file, i) => {
     ctx.signal?.throwIfAborted();
     try {
       const doc = await indexFile(ctx.db, ctx.provider, file, {
@@ -274,7 +275,7 @@ async function ingestDirectory(ctx: IngestContext, input: IngestInput): Promise<
       result.errors.push({ source: file, error: errorMessage(err) });
     }
     ctx.onProgress?.({ done: i + 1, total: supported.length, message: file });
-  }
+  });
   return result;
 }
 
@@ -321,8 +322,11 @@ export async function spiderAndIndex(
   if (input.dryRun) return { ...result, planned: [url] };
   const defaults = documentDefaults(input, ctx);
   const gen = spiderUrl(url, spiderOptions(ctx, input));
-  let next = await gen.next();
-  while (!next.done) {
+
+  // Index each crawled page as it arrives; resolves to the crawl stats when the crawl ends.
+  const indexPages = async (): Promise<SpiderStats> => {
+    const next = await gen.next();
+    if (next.done) return next.value;
     const page = next.value;
     try {
       const doc = await indexDocument(ctx.db, ctx.provider, {
@@ -336,9 +340,10 @@ export async function spiderAndIndex(
       result.errors.push({ source: page.url, error: errorMessage(err) });
     }
     ctx.onProgress?.({ done: result.documents.length + result.errors.length, message: page.url });
-    next = await gen.next();
-  }
-  const stats = next.value;
+    return indexPages();
+  };
+
+  const stats = await indexPages();
   result.crawl = {
     pagesCrawled: stats.pagesCrawled,
     pagesSkipped: stats.pagesSkipped,

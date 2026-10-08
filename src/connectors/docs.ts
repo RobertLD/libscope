@@ -629,6 +629,70 @@ async function discoverUrls(
   }
 }
 
+interface CrawlEntry {
+  url: string;
+  depth: number;
+}
+
+/** State shared by the pages of one documentation crawl. */
+interface CrawlState {
+  page: PageContext;
+  fetchOptions: FetchOptions;
+  visited: Set<string>;
+  queue: CrawlEntry[];
+  maxPages: number;
+  maxDepth: number;
+  pathPrefix: string;
+}
+
+/** Fetch and index one queued page, then queue its unvisited links within the depth budget. */
+async function crawlPage({ url, depth }: CrawlEntry, crawl: CrawlState): Promise<void> {
+  const { visited, queue, maxPages, maxDepth, pathPrefix } = crawl;
+  if (visited.size > maxPages) return;
+
+  let html: string;
+  let contentType: string;
+  try {
+    const raw = await fetchRaw(url, crawl.fetchOptions);
+    html = raw.body;
+    contentType = raw.contentType;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    getLogger().warn({ url, error: msg }, "Failed to fetch documentation page");
+    crawl.page.result.errors.push({ url, error: msg });
+    return;
+  }
+
+  // Only process HTML pages (skip binary/asset responses that slipped through)
+  if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+    return;
+  }
+
+  await processPage(url, html, crawl.page);
+
+  // Continue link discovery if within depth budget
+  if (depth < maxDepth) {
+    for (const link of extractDocLinks(html, url, pathPrefix)) {
+      if (!visited.has(link)) {
+        visited.add(link);
+        queue.push({ url: link, depth: depth + 1 });
+      }
+    }
+  }
+}
+
+/** Crawl the queue in batches of `concurrency` pages until it is empty or maxPages is reached. */
+async function crawlQueue(
+  crawl: CrawlState,
+  options: { concurrency: number; signal: AbortSignal | undefined },
+): Promise<void> {
+  if (crawl.queue.length === 0 || crawl.visited.size > crawl.maxPages) return;
+  options.signal?.throwIfAborted();
+  const batch = crawl.queue.splice(0, options.concurrency);
+  await Promise.allSettled(batch.map((entry) => crawlPage(entry, crawl)));
+  return crawlQueue(crawl, options);
+}
+
 export async function syncDocSite(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -724,46 +788,13 @@ async function runDocSiteSync(
   await processPage(rootNormalised, rootHtml, ctx);
 
   // --- BFS crawl ---
-  while (queue.length > 0 && visited.size <= maxPages) {
-    signal?.throwIfAborted();
-    const batch = queue.splice(0, concurrency);
-
-    await Promise.allSettled(
-      batch.map(async ({ url, depth }) => {
-        if (visited.size > maxPages) return;
-
-        let html: string;
-        let contentType: string;
-        try {
-          const raw = await fetchRaw(url, fetchOptions);
-          html = raw.body;
-          contentType = raw.contentType;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.warn({ url, error: msg }, "Failed to fetch documentation page");
-          result.errors.push({ url, error: msg });
-          return;
-        }
-
-        // Only process HTML pages (skip binary/asset responses that slipped through)
-        if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
-          return;
-        }
-
-        await processPage(url, html, ctx);
-
-        // Continue link discovery if within depth budget
-        if (depth < maxDepth) {
-          for (const link of extractDocLinks(html, url, pathPrefix)) {
-            if (!visited.has(link)) {
-              visited.add(link);
-              queue.push({ url: link, depth: depth + 1 });
-            }
-          }
-        }
-      }),
-    );
-  }
+  await crawlQueue(
+    { page: ctx, fetchOptions, visited, queue, maxPages, maxDepth, pathPrefix },
+    {
+      concurrency,
+      signal,
+    },
+  );
 
   log.info(
     {

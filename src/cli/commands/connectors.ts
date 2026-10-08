@@ -16,7 +16,7 @@ import {
 import { authenticateDeviceCode } from "../../connectors/onenote.js";
 import { ValidationError } from "../../errors.js";
 import { confirmOrCancel } from "../confirm.js";
-import { defined, splitList, toNumber } from "../options.js";
+import { defined, splitList } from "../options.js";
 import { plural, printList, run } from "../run.js";
 
 export interface ConnectFlags {
@@ -50,6 +50,82 @@ function requireSource(type: string, source: string | undefined, what: string): 
   return source;
 }
 
+/** Settings given on the command line for each connector type; undefined where not given. */
+const FLAG_SETTINGS: Record<
+  ConnectorType,
+  (source: string | undefined, flags: ConnectFlags) => Record<string, unknown>
+> = {
+  notion: (_source, flags) => ({ token: flags.token, excludePages: list(flags.exclude) }),
+  slack: (_source, flags) => ({
+    token: flags.token,
+    channels: list(flags.channels),
+    excludeChannels: list(flags.exclude),
+    threadMode: flags.threadMode,
+  }),
+  confluence: (source, flags) => ({
+    baseUrl: source,
+    type: flags.server ? "server" : undefined,
+    email: flags.email,
+    token: flags.token,
+    spaces: list(flags.spaces),
+    excludeSpaces: list(flags.exclude),
+  }),
+  obsidian: (source, flags) => ({
+    vaultPath: source && resolve(source),
+    topicMapping: flags.topicMapping,
+    excludePatterns: list(flags.exclude),
+  }),
+  onenote: (_source, flags) => ({
+    clientId: flags.clientId,
+    tenantId: flags.tenantId,
+    notebooks: flags.notebook === undefined ? undefined : [flags.notebook],
+    excludeSections: undefined,
+    // A token given by hand cannot be refreshed.
+    ...(flags.token === undefined
+      ? {}
+      : { accessToken: flags.token, refreshToken: undefined, tokenExpiry: undefined }),
+  }),
+  docs: (source, flags) => ({
+    url: source,
+    type: flags.siteType,
+    library: flags.library,
+    version: flags.libVersion,
+    maxPages: flags.maxPages,
+    maxDepth: flags.maxDepth,
+    pathPrefix: flags.pathPrefix,
+  }),
+};
+
+/** What the source argument is, for connector types that need it for a new connection. */
+const REQUIRED_SOURCE: Partial<Record<ConnectorType, string>> = {
+  confluence: "base URL",
+  obsidian: "vault path",
+  docs: "site URL",
+};
+
+/** Values a new connection gets for the settings that no flag sets (fresh objects each call). */
+const NEW_CONNECTION_DEFAULTS: Partial<Record<ConnectorType, () => Record<string, unknown>>> = {
+  slack: () => ({ channels: ["all"], threadMode: "aggregate" }),
+  confluence: () => ({ type: "cloud", spaces: ["all"] }),
+  obsidian: () => ({ topicMapping: "folder", excludePatterns: [] }),
+  onenote: () => ({ clientId: "", tenantId: "common", notebooks: ["all"], excludeSections: [] }),
+};
+
+/** `settings` of a new connection: checks the source and fills in the defaults. */
+function newConnectionSettings(
+  type: ConnectorType,
+  source: string | undefined,
+  settings: Record<string, unknown>,
+): Record<string, unknown> {
+  const what = REQUIRED_SOURCE[type];
+  if (what) requireSource(type, source, what);
+  const merged = { ...settings };
+  for (const [key, value] of Object.entries(NEW_CONNECTION_DEFAULTS[type]?.() ?? {})) {
+    merged[key] ??= value;
+  }
+  return merged;
+}
+
 /**
  * Settings for connector `type` from the command line. Unset values are undefined, so the
  * saved settings of the connection (if any) are kept; `defaults` apply to a new connection.
@@ -60,56 +136,8 @@ export function connectSettings(
   flags: ConnectFlags,
   isNew: boolean,
 ): Record<string, unknown> {
-  const exclude = list(flags.exclude);
-  switch (type) {
-    case "notion":
-      return { token: flags.token, excludePages: exclude };
-    case "slack":
-      return {
-        token: flags.token,
-        channels: list(flags.channels) ?? (isNew ? ["all"] : undefined),
-        excludeChannels: exclude,
-        threadMode: flags.threadMode ?? (isNew ? "aggregate" : undefined),
-      };
-    case "confluence":
-      return {
-        baseUrl: isNew ? requireSource(type, source, "base URL") : source,
-        type: flags.server ? "server" : isNew ? "cloud" : undefined,
-        email: flags.email,
-        token: flags.token,
-        spaces: list(flags.spaces) ?? (isNew ? ["all"] : undefined),
-        excludeSpaces: exclude,
-      };
-    case "obsidian":
-      return {
-        vaultPath: isNew
-          ? resolve(requireSource(type, source, "vault path"))
-          : source && resolve(source),
-        topicMapping: flags.topicMapping ?? (isNew ? "folder" : undefined),
-        excludePatterns: exclude ?? (isNew ? [] : undefined),
-      };
-    case "onenote":
-      return {
-        clientId: flags.clientId ?? (isNew ? "" : undefined),
-        tenantId: flags.tenantId ?? (isNew ? "common" : undefined),
-        notebooks: flags.notebook === undefined ? (isNew ? ["all"] : undefined) : [flags.notebook],
-        excludeSections: isNew ? [] : undefined,
-        // A token given by hand cannot be refreshed.
-        ...(flags.token === undefined
-          ? {}
-          : { accessToken: flags.token, refreshToken: undefined, tokenExpiry: undefined }),
-      };
-    case "docs":
-      return {
-        url: isNew ? requireSource(type, source, "site URL") : source,
-        type: flags.siteType,
-        library: flags.library,
-        version: flags.libVersion,
-        maxPages: flags.maxPages,
-        maxDepth: flags.maxDepth,
-        pathPrefix: flags.pathPrefix,
-      };
-  }
+  const settings = FLAG_SETTINGS[type](source, flags);
+  return isNew ? newConnectionSettings(type, source, settings) : settings;
 }
 
 /** OneNote without a usable token: sign in with a device code (interactive). */
@@ -183,8 +211,8 @@ function registerConnect(program: Command): void {
     .option("--site-type <type>", "docs: auto, sphinx, vitepress, doxygen or generic")
     .option("--library <name>", "docs: library name for the pages")
     .option("--lib-version <version>", "docs: library version for the pages")
-    .option("--max-pages <n>", "docs: page limit (default 500)", toNumber)
-    .option("--max-depth <n>", "docs: link depth (default 10)", toNumber)
+    .option("--max-pages <n>", "docs: page limit (default 500)", Number)
+    .option("--max-depth <n>", "docs: link depth (default 10)", Number)
     .option("--path-prefix <path>", "docs: only pages under this path")
     .action(async (type: string, source: string | undefined, flags: ConnectFlags) => {
       const connector = getConnector(type);

@@ -54,7 +54,11 @@ export async function fetchWithRetry(
   const dispatcher = config.indexing.allowSelfSignedCerts ? getInsecureAgent() : undefined;
   const fetchOptions = buildFetchOptions(options, dispatcher);
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  const attemptFetch = async (attempt: number): Promise<Response> => {
+    // False only for a negative (or NaN) maxRetries: no attempt is allowed at all.
+    const allowed = attempt <= maxRetries;
+    if (!allowed) throw new FetchError("fetchWithRetry: unexpected code path");
+
     const response = await fetch(url, fetchOptions);
 
     if (!isRetryableStatus(response.status)) return response;
@@ -70,8 +74,8 @@ export async function fetchWithRetry(
       "Retrying after transient error",
     );
     await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
+    return attemptFetch(attempt + 1);
+  };
 
-  // Unreachable, but satisfies TypeScript
-  throw new FetchError("fetchWithRetry: unexpected code path");
+  return attemptFetch(0);
 }

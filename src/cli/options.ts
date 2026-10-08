@@ -2,11 +2,6 @@
 import type { Command } from "commander";
 import { SOURCE_TYPES } from "../core/indexing.js";
 
-/** Commander parser for numeric options; the operation schema validates the value. */
-export function toNumber(value: string): number {
-  return Number(value);
-}
-
 /** "a, b,c" -> ["a", "b", "c"] (empty entries dropped). */
 export function splitList(value: string): string[] {
   return value
@@ -58,7 +53,7 @@ export function addDocumentOptions(cmd: Command, config: DocumentOptionsConfig =
         : "Only documents with all these tags (comma-separated)",
     );
   if (config.limit !== false) {
-    cmd.option("-n, --limit <n>", config.limit ?? "Maximum results", toNumber);
+    cmd.option("-n, --limit <n>", config.limit ?? "Maximum results", Number);
   }
   return cmd;
 }

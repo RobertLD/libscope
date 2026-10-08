@@ -81,59 +81,85 @@ export async function reindex(
   let completed = 0;
   let failed = 0;
   const failedChunkIds: string[] = [];
+  const batchContext: BatchContext = { db, provider, writer, failedChunkIds };
 
-  for (let i = 0; i < total; i += batchSize) {
+  // One batch at a time: each batch writes in its own transaction.
+  const reindexFrom = async (start: number): Promise<void> => {
+    if (start >= total) return;
     options.signal?.throwIfAborted();
-    const batch = chunks.slice(i, i + batchSize);
-    const texts = batch.map((c) => buildEmbeddingText(c.content, c));
-    const ids = batch.map((c) => c.id);
-
-    try {
-      const embeddings = await provider.embedBatch(texts);
-
-      let batchFailed = 0;
-      let batchSucceeded = 0;
-      const upsert = db.transaction(() => {
-        for (let j = 0; j < ids.length; j++) {
-          const chunkId = ids[j]!;
-          const embedding = embeddings[j];
-          if (!embedding) {
-            failedChunkIds.push(chunkId);
-            batchFailed++;
-            continue;
-          }
-          try {
-            writer.replaceEmbedding(chunkId, embedding);
-            batchSucceeded++;
-          } catch (err) {
-            log.warn({ chunkId, err }, "Failed to update embedding for chunk");
-            failedChunkIds.push(chunkId);
-            batchFailed++;
-          }
-        }
-      });
-
-      upsert();
-      failed += batchFailed;
-      completed += batchSucceeded;
-    } catch (err) {
-      log.error({ err, batchStart: i }, "Batch embedding failed");
-      for (const id of ids) {
-        failedChunkIds.push(id);
-      }
-      failed += ids.length;
-    }
+    const batch = chunks.slice(start, start + batchSize);
+    const counts = await reindexBatch(batch, start, batchContext);
+    failed += counts.failed;
+    completed += counts.succeeded;
 
     options.onProgress?.({
       total,
       completed: completed,
       failed,
-      currentChunkId: ids[ids.length - 1],
+      currentChunkId: batch.at(-1)?.id,
     });
-  }
+    return reindexFrom(start + batchSize);
+  };
+
+  await reindexFrom(0);
 
   log.info({ total, completed, failed }, "Reindex complete");
   return { total, completed, failed, failedChunkIds };
+}
+
+interface BatchContext {
+  db: Database.Database;
+  provider: EmbeddingProvider;
+  writer: ReturnType<typeof createChunkWriter>;
+  /** Receives the IDs of chunks that could not be re-embedded. */
+  failedChunkIds: string[];
+}
+
+/** Embed one batch of chunks and replace their vectors. Returns the per-batch counts. */
+async function reindexBatch(
+  batch: ChunkRow[],
+  batchStart: number,
+  ctx: BatchContext,
+): Promise<{ succeeded: number; failed: number }> {
+  const log = getLogger();
+  const { failedChunkIds, writer } = ctx;
+  const texts = batch.map((c) => buildEmbeddingText(c.content, c));
+  const ids = batch.map((c) => c.id);
+
+  try {
+    const embeddings = await ctx.provider.embedBatch(texts);
+
+    let batchFailed = 0;
+    let batchSucceeded = 0;
+    const upsert = ctx.db.transaction(() => {
+      for (let j = 0; j < ids.length; j++) {
+        const chunkId = ids[j]!;
+        const embedding = embeddings[j];
+        if (!embedding) {
+          failedChunkIds.push(chunkId);
+          batchFailed++;
+          continue;
+        }
+        try {
+          writer.replaceEmbedding(chunkId, embedding);
+          batchSucceeded++;
+        } catch (err) {
+          log.warn({ chunkId, err }, "Failed to update embedding for chunk");
+          failedChunkIds.push(chunkId);
+          batchFailed++;
+        }
+      }
+    });
+
+    upsert();
+    return { succeeded: batchSucceeded, failed: batchFailed };
+  } catch (err) {
+    log.error({ err, batchStart }, "Batch embedding failed");
+    for (const id of ids) {
+      failedChunkIds.push(id);
+    }
+    return { succeeded: 0, failed: ids.length };
+  }
 }
 
 /** Build and execute the chunk query applying optional filters. */

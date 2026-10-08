@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { EmbeddingError } from "../errors.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import { getLogger } from "../logger.js";
+import { mapSequential } from "../utils/async.js";
 
 /** Minimal typed interface for the @xenova/transformers feature-extraction pipeline output. */
 interface TransformersOutput {
@@ -95,10 +96,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
       }
     }
     // Process sequentially to avoid memory issues with local model
-    const results: number[][] = [];
-    for (const text of texts) {
-      results.push(await this.embed(text));
-    }
-    return results;
+    return await mapSequential(texts, (text) => this.embed(text));
   }
 }

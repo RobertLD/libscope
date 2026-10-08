@@ -13,7 +13,7 @@ import {
 import type { RegistrySearchResult, RegistrySyncStatus } from "../../registry/types.js";
 import { confirmOrCancel } from "../confirm.js";
 import { defined } from "../options.js";
-import { printList, run } from "../run.js";
+import { plural, printList, run } from "../run.js";
 import { printWarnings } from "./pack.js";
 
 /** Truncate a string to a max length, adding "..." if truncated. */
@@ -29,7 +29,7 @@ function padColumns(cols: string[]): string {
 }
 
 function packCount(packs: number | null): string {
-  return packs === null ? "not synced" : `${packs} pack${packs === 1 ? "" : "s"}`;
+  return packs === null ? "not synced" : plural(packs, "pack");
 }
 
 /** One line per sync result; a registry that could not be synced sets exit code 1. */

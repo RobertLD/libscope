@@ -6,13 +6,7 @@ import {
   runSavedSearchOperation,
   saveSearchOperation,
 } from "../../core/operations/index.js";
-import {
-  addDocumentOptions,
-  defined,
-  documentInput,
-  toNumber,
-  type DocumentFlags,
-} from "../options.js";
+import { addDocumentOptions, defined, documentInput, type DocumentFlags } from "../options.js";
 import { printList, run } from "../run.js";
 import { printSearchItem } from "./search.js";
 
@@ -22,7 +16,7 @@ export function register(program: Command): void {
   addDocumentOptions(
     searches.command("save <name> <query>").description("Save a query and its filters"),
   )
-    .option("--min-rating <n>", "Only documents rated at least this (1-5)", toNumber)
+    .option("--min-rating <n>", "Only documents rated at least this (1-5)", Number)
     .action(async (name: string, query: string, flags: DocumentFlags & { minRating?: number }) => {
       const input = {
         name,
@@ -38,8 +32,8 @@ export function register(program: Command): void {
   searches
     .command("list")
     .description("List saved searches")
-    .option("-n, --limit <n>", "Maximum results", toNumber)
-    .option("--offset <n>", "Results to skip (paging)", toNumber)
+    .option("-n, --limit <n>", "Maximum results", Number)
+    .option("--offset <n>", "Results to skip (paging)", Number)
     .action(async (flags: { limit?: number; offset?: number }) => {
       await run(listSavedSearchesOperation, defined({ ...flags }), (r) =>
         printList(r.items, "No saved searches.", (s) => {

@@ -53,7 +53,7 @@ export interface SchedulerStatus {
  * Reads schedule config from connector config files (~/.libscope/connectors/<name>.json).
  */
 export class ConnectorScheduler {
-  private jobs = new Map<string, ScheduledJob>();
+  private readonly jobs = new Map<string, ScheduledJob>();
   private started = false;
 
   constructor(

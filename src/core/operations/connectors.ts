@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ValidationError } from "../../errors.js";
+import { mapSequential } from "../../utils/async.js";
 import { listNamedConnectorConfigs } from "../../connectors/index.js";
 import {
   disconnectConnection,
@@ -54,22 +55,23 @@ export const syncOperation = defineOperation({
     }
     // One failing connection does not stop the others; each run is recorded in connector_syncs.
     const names = listNamedConnectorConfigs().map((c) => c.name);
-    const items: SyncOutcome[] = [];
-    for (const [i, name] of names.entries()) {
+    const items = await mapSequential(names, async (name, i): Promise<SyncOutcome> => {
       ctx.signal?.throwIfAborted();
+      let outcome: SyncOutcome;
       try {
         const result = await syncConnection(ctx.db, ctx.provider, name, { signal: ctx.signal });
-        items.push({ ...result, status: "completed" });
+        outcome = { ...result, status: "completed" };
       } catch (err) {
         if (ctx.signal?.aborted) throw err;
-        items.push({
+        outcome = {
           name,
           status: "failed",
           error: err instanceof Error ? err.message : String(err),
-        });
+        };
       }
       ctx.onProgress?.({ done: i + 1, total: names.length, message: name });
-    }
+      return outcome;
+    });
     return { items };
   },
 });

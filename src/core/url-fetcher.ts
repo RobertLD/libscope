@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { Agent } from "undici";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { FetchError } from "../errors.js";
+import { firstMarkdownHeading } from "../utils/markdown.js";
 import { getLogger } from "../logger.js";
 import { decodeHtmlEntities } from "./html-entities.js";
 
@@ -137,17 +138,21 @@ async function readBodyWithLimit(response: Response, limit: number): Promise<str
   const chunks: Uint8Array[] = [];
   let received = 0;
 
-  try {
-    let result = await reader.read();
-    while (!result.done) {
-      const chunk = result.value;
-      received += chunk.byteLength;
-      if (received > limit) {
-        throw new FetchError(`Response body too large: exceeded ${limit} bytes`);
-      }
-      chunks.push(chunk);
-      result = await reader.read();
+  // Read chunk by chunk until the stream ends, stopping once the limit is exceeded.
+  const readChunks = async (): Promise<void> => {
+    const result = await reader.read();
+    if (result.done) return;
+    const chunk = result.value;
+    received += chunk.byteLength;
+    if (received > limit) {
+      throw new FetchError(`Response body too large: exceeded ${limit} bytes`);
     }
+    chunks.push(chunk);
+    return readChunks();
+  };
+
+  try {
+    await readChunks();
   } finally {
     await reader.cancel();
   }
@@ -332,8 +337,7 @@ function extractTitleFromHtml(html: string): string | null {
 
 /** Extract title from first markdown heading. */
 function extractTitleFromMarkdown(md: string): string | null {
-  const match = /^#\s+(.+)$/m.exec(md);
-  return match?.[1]?.trim() ?? null;
+  return firstMarkdownHeading(md)?.trim() ?? null;
 }
 
 /** Derive a title from the URL path. */

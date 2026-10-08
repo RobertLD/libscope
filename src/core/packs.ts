@@ -24,6 +24,7 @@ import { deleteChunkEmbeddings } from "./documents.js";
 import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { suggestTagsFromText } from "./tags.js";
 import { fetchAndConvert } from "./url-fetcher.js";
+import { forEachSequential } from "../utils/async.js";
 import { globToRegExp, toPosixPath } from "../utils/glob.js";
 
 export interface PackDocument {
@@ -731,57 +732,76 @@ async function fetchUrlToPackDoc(url: string): Promise<PackDocument | null> {
   return { title: fetched.title, content: fetched.content.trimEnd(), source: url, tags };
 }
 
-/** Process all file sources, collecting documents and errors. */
-async function processFileSources(
-  allFiles: string[],
-  totalCount: number,
-  onProgress: CreatePackFromSourceOptions["onProgress"],
-): Promise<{ documents: PackDocument[]; errors: Array<{ source: string; error: string }> }> {
-  const log = getLogger();
+interface SourceResults {
+  documents: PackDocument[];
+  errors: Array<{ source: string; error: string }>;
+}
+
+/**
+ * Load each source in order with `load`, collecting documents and errors. A source that fails
+ * is reported to `onError` and skipped. `indexOffset` is added to the progress index.
+ */
+async function processSources(
+  sources: string[],
+  progress: {
+    indexOffset: number;
+    totalCount: number;
+    onProgress: CreatePackFromSourceOptions["onProgress"];
+  },
+  load: (source: string) => Promise<PackDocument | null>,
+  onError: (source: string, message: string) => void,
+): Promise<SourceResults> {
   const documents: PackDocument[] = [];
   const errors: Array<{ source: string; error: string }> = [];
 
-  for (let i = 0; i < allFiles.length; i++) {
-    const filePath = allFiles[i]!;
-    onProgress?.({ file: filePath, index: i, total: totalCount });
+  await forEachSequential(sources, async (source, i) => {
+    progress.onProgress?.({
+      file: source,
+      index: progress.indexOffset + i,
+      total: progress.totalCount,
+    });
     try {
-      const doc = await parseFileToPackDoc(filePath);
+      const doc = await load(source);
       if (doc) documents.push(doc);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ file: filePath, err: msg }, "Failed to parse file, skipping");
-      errors.push({ source: filePath, error: msg });
+      onError(source, msg);
+      errors.push({ source, error: msg });
     }
-  }
+  });
 
   return { documents, errors };
 }
 
+/** Process all file sources, collecting documents and errors. */
+function processFileSources(
+  allFiles: string[],
+  totalCount: number,
+  onProgress: CreatePackFromSourceOptions["onProgress"],
+): Promise<SourceResults> {
+  const log = getLogger();
+  return processSources(
+    allFiles,
+    { indexOffset: 0, totalCount, onProgress },
+    parseFileToPackDoc,
+    (file, msg) => log.warn({ file, err: msg }, "Failed to parse file, skipping"),
+  );
+}
+
 /** Process all URL sources, collecting documents and errors. */
-async function processUrlSources(
+function processUrlSources(
   urls: string[],
   fileOffset: number,
   totalCount: number,
   onProgress: CreatePackFromSourceOptions["onProgress"],
-): Promise<{ documents: PackDocument[]; errors: Array<{ source: string; error: string }> }> {
+): Promise<SourceResults> {
   const log = getLogger();
-  const documents: PackDocument[] = [];
-  const errors: Array<{ source: string; error: string }> = [];
-
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i]!;
-    onProgress?.({ file: url, index: fileOffset + i, total: totalCount });
-    try {
-      const doc = await fetchUrlToPackDoc(url);
-      if (doc) documents.push(doc);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn({ url, err: msg }, "Failed to fetch URL, skipping");
-      errors.push({ source: url, error: msg });
-    }
-  }
-
-  return { documents, errors };
+  return processSources(
+    urls,
+    { indexOffset: fileOffset, totalCount, onProgress },
+    fetchUrlToPackDoc,
+    (url, msg) => log.warn({ url, err: msg }, "Failed to fetch URL, skipping"),
+  );
 }
 
 /** Validate that at least one document was created, throwing if none. */
