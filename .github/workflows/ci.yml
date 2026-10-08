@@ -38,9 +38,11 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci --ignore-scripts
-      # Build only the native addons the tests load: better-sqlite3, and sharp
-      # (@xenova/transformers loads it in the neural retrieval-quality suite).
-      - run: npm rebuild better-sqlite3 sharp
+      # Build only the native addon the tests load: better-sqlite3. sharp and
+      # onnxruntime-node (@huggingface/transformers, used by the neural
+      # retrieval-quality suite) ship prebuilt binaries; the onnxruntime-node
+      # install script only downloads optional CUDA libraries.
+      - run: npm rebuild better-sqlite3
       - run: npm run test:coverage
       - name: Upload coverage
         if: matrix.node-version == 22

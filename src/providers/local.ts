@@ -1,32 +1,38 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { EmbeddingError } from "../errors.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import { getLogger } from "../logger.js";
 import { mapSequential } from "../utils/async.js";
 
-/** Minimal typed interface for the @xenova/transformers feature-extraction pipeline output. */
+/** Minimal typed interface for the @huggingface/transformers feature-extraction pipeline output. */
 interface TransformersOutput {
   data: Float32Array;
 }
 
-/** Minimal typed interface for the @xenova/transformers feature-extraction pipeline function. */
+/** Minimal typed interface for the @huggingface/transformers feature-extraction pipeline function. */
 type FeatureExtractionPipeline = (
   input: string,
   options: { pooling: string; normalize: boolean },
 ) => Promise<TransformersOutput>;
 
-/** Download events from @xenova/transformers while the model is fetched (first use only). */
+/** Download events from @huggingface/transformers while the model is fetched (first use only). */
 export interface ModelDownloadEvent {
-  /** "initiate" | "download" | "progress" | "done" per file, then "ready". */
+  /** "initiate" | "download" | "progress" | "done" per file, "progress_total" for all files, then "ready". */
   status: string;
   file?: string | undefined;
-  /** Percent of `file` downloaded (status "progress"). */
+  /** Percent of `file` downloaded (status "progress"), or of all files (status "progress_total"). */
   progress?: number | undefined;
 }
 
+/** Directory where the local embedding model is cached (`~/.libscope/models`). */
+export function getModelCacheDir(): string {
+  return join(homedir(), ".libscope", "models");
+}
+
 /**
- * Local embedding provider using @xenova/transformers (all-MiniLM-L6-v2).
+ * Local embedding provider using @huggingface/transformers (all-MiniLM-L6-v2).
  * Downloads the model on first use (~80MB). Runs entirely in-process.
  */
 export class LocalEmbeddingProvider implements EmbeddingProvider {
@@ -50,16 +56,20 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     log.info("Loading local embedding model (all-MiniLM-L6-v2)...");
     try {
       // Dynamic import to avoid loading transformers until needed
-      const { pipeline, env } = await import("@xenova/transformers");
-      const cacheDir: unknown = env.cacheDir;
-      const cached = typeof cacheDir === "string" && existsSync(join(cacheDir, this.model));
+      const { pipeline, env } = await import("@huggingface/transformers");
+      // The library default is a folder inside its own package, which is not writable for a
+      // global install or a non-root container user; a failed cache write fails the load.
+      const cacheDir = getModelCacheDir();
+      env.cacheDir = cacheDir;
+      const cached = existsSync(join(cacheDir, this.model));
       const onDownload = cached ? undefined : this.onDownloadProgress;
-      // Cast to the typed interface; @xenova/transformers lacks precise TS generics for pipeline output
-      this.pipeline = (await pipeline(
-        "feature-extraction",
-        this.model,
-        onDownload ? { progress_callback: onDownload } : undefined,
-      )) as unknown as FeatureExtractionPipeline;
+      // dtype "q8" loads onnx/model_quantized.onnx, the model that @xenova/transformers 2.x
+      // used by default, so vectors stay compatible with existing indexes.
+      // Cast to the typed interface; the library's pipeline output types are broader than needed.
+      this.pipeline = (await pipeline("feature-extraction", this.model, {
+        dtype: "q8",
+        ...(onDownload ? { progress_callback: onDownload } : {}),
+      })) as unknown as FeatureExtractionPipeline;
       log.info("Local embedding model loaded successfully");
     } catch (err) {
       this.initPromise = null;

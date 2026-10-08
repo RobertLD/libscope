@@ -1,4 +1,6 @@
 # Debian (glibc) base: the local embedding model (onnxruntime-node) does not run on Alpine (musl).
+# sharp and onnxruntime-node ship prebuilt binaries, so only better-sqlite3 is rebuilt. Skipping the
+# onnxruntime-node install script also skips its optional CUDA download (about 270 MB).
 
 # Build stage
 FROM node:22-bookworm-slim AS builder
@@ -19,7 +21,7 @@ COPY package*.json ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends g++ make python3 && \
     npm ci --omit=dev --ignore-scripts && \
-    npm rebuild better-sqlite3 sharp && \
+    npm rebuild better-sqlite3 && \
     npm cache clean --force && \
     apt-get purge -y g++ make python3 && \
     apt-get autoremove -y && \

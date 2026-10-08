@@ -151,7 +151,7 @@ src/
 │   ├── embedding.ts          # EmbeddingProvider interface
 │   ├── index.ts              # createEmbeddingProvider() from config
 │   ├── dimensions.ts         # vector sizes of known models
-│   ├── local.ts              # @xenova/transformers (all-MiniLM-L6-v2)
+│   ├── local.ts              # @huggingface/transformers (all-MiniLM-L6-v2)
 │   ├── ollama.ts             # Ollama HTTP API
 │   └── openai.ts             # OpenAI embeddings API
 ├── registry/                 # git pack registries: config, git, sync, search, resolve, publish, checksum
