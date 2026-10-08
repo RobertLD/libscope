@@ -1,5 +1,6 @@
 """Tests for the libscope sync and async clients (HTTP mocked with respx)."""
 
+import asyncio
 import json
 
 import httpx
@@ -303,6 +304,14 @@ class TestAsyncClient:
             page = await client.search("hello")
         assert done.result["kind"] == "content"
         assert page.items[0].title == "Doc 1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_wait_for_task_is_bounded_by_the_caller(self):
+        respx.get(f"{API}/tasks/t1").mock(return_value=ok(task("running")))
+        async with AsyncLibscopeClient() as client:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(client.wait_for_task("t1", interval=0), timeout=0.05)
 
     @pytest.mark.asyncio
     @respx.mock

@@ -475,6 +475,8 @@ The Python (`pylibscope`) and Go (`sdk/go`) clients now call the 2.0 `/api/v1` r
 | `pylibscope.connectors.build_connector_config`                  | Removed                                                                                                                                                                                             |
 | —                                                               | New: `get_task`, `cancel_task`, `wait_for_task`, `TaskFailedError`, `Tag`, `Overview`, `DocumentView`, `Page`                                                                                       |
 
+`AsyncLibscopeClient.wait_for_task(task_id, *, interval)` has no `timeout` parameter. Set the limit around the call: `await asyncio.wait_for(client.wait_for_task(task.id), timeout=300)`, or `async with asyncio.timeout(300):` on Python 3.11 and later. The synchronous `LibscopeClient.wait_for_task` keeps `timeout`.
+
 ### Go (`github.com/RobertLD/libscope/sdk/go`)
 
 | 1.x                                                                                                  | 2.0                                                                                                                                                    |

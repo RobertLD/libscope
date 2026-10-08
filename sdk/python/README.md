@@ -57,7 +57,14 @@ async def main():
 asyncio.run(main())
 ```
 
-`AsyncLibscopeClient` has the same methods as `LibscopeClient`.
+`AsyncLibscopeClient` has the same methods as `LibscopeClient`, except that its `wait_for_task` has no `timeout` parameter. Set the time limit around the call:
+
+```python
+task = await client.add_url("https://example.com/docs")
+done = await asyncio.wait_for(client.wait_for_task(task.id), timeout=300)
+```
+
+On Python 3.11 and later, `async with asyncio.timeout(300):` also works. At the limit, `asyncio.wait_for` raises `asyncio.TimeoutError` (the same class as `TimeoutError` on Python 3.11 and later).
 
 ## Configuration
 
@@ -71,7 +78,7 @@ client = LibscopeClient(
 
 ## Background tasks
 
-`add_text`, `add_url`, `sync` and `sync_all` return a `Task` at once (the server answers `202`). Call `wait_for_task(task.id, timeout=300, interval=1.0)` to poll `GET /api/v1/tasks/:taskId` until the task finishes. It returns the task, with `result` holding the operation result. It raises `TaskFailedError` when the task failed or was cancelled, and `TimeoutError` after `timeout` seconds. `get_task` and `cancel_task` are also available.
+`add_text`, `add_url`, `sync` and `sync_all` return a `Task` at once (the server answers `202`). Call `wait_for_task(task.id, timeout=300, interval=1.0)` to poll `GET /api/v1/tasks/:taskId` until the task finishes. It returns the task, with `result` holding the operation result. It raises `TaskFailedError` when the task failed or was cancelled, and `TimeoutError` after `timeout` seconds. The async `wait_for_task(task.id, interval=1.0)` has no `timeout` (see [Async Usage](#async-usage)). `get_task` and `cancel_task` are also available.
 
 ## API Reference
 
