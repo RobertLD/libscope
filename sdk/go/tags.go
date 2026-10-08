@@ -21,7 +21,7 @@ func (c *Client) ListTags(ctx context.Context) ([]Tag, error) {
 
 // AddTags adds tags to a document and returns the document's tags.
 func (c *Client) AddTags(ctx context.Context, documentID string, tags []string) ([]string, error) {
-	path := "/documents" + segment(documentID) + "/tags"
+	path := documentsPath + segment(documentID) + "/tags"
 	out, err := send[documentTags](ctx, c, http.MethodPost, path, documentTags{Tags: tags})
 	if err != nil {
 		return nil, err
@@ -32,7 +32,7 @@ func (c *Client) AddTags(ctx context.Context, documentID string, tags []string) 
 // RemoveTags removes tags from a document and returns the document's remaining tags.
 func (c *Client) RemoveTags(ctx context.Context, documentID string, tags []string) ([]string, error) {
 	var out documentTags
-	path := "/documents" + segment(documentID) + "/tags"
+	path := documentsPath + segment(documentID) + "/tags"
 	if err := c.call(ctx, http.MethodDelete, path, url.Values{"tags": tags}, nil, &out); err != nil {
 		return nil, err
 	}
