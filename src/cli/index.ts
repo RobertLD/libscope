@@ -124,7 +124,7 @@ function isCliEntryPoint(): boolean {
 if (isCliEntryPoint()) {
   process.on("SIGINT", onInterrupt);
   process.on("SIGTERM", onInterrupt);
-  void main();
+  await main();
 }
 
 export { program };

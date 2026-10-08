@@ -10,7 +10,9 @@ import { addTagsToDocument, createTag } from "../core/tags.js";
 import { createLink, resolveDocumentByTitle } from "../core/links.js";
 import { getLogger } from "../logger.js";
 import { ValidationError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
 import { loadConnectorConfig, saveConnectorConfig } from "./index.js";
+import { findWikilinks, replaceWikilinks } from "./obsidian-wikilinks.js";
 import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
 export interface ObsidianConfig {
@@ -131,14 +133,7 @@ function buildVaultFileMap(vaultFiles: string[]): Map<string, string> {
 
 /** Collect all [[wikilinks]] from the body text. */
 function collectWikilinks(body: string): string[] {
-  const wikilinks: string[] = [];
-  const wikilinkRegex = /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g;
-  let wlMatch;
-  while ((wlMatch = wikilinkRegex.exec(body)) !== null) {
-    const link = wlMatch[1] ?? "";
-    wikilinks.push(link);
-  }
-  return wikilinks;
+  return findWikilinks(body).map((w) => w.link);
 }
 
 /** Apply Obsidian-specific markdown transformations: embeds, wikilinks, comments, callouts. */
@@ -152,14 +147,11 @@ function transformObsidianBody(body: string, fileMap: Map<string, string>): stri
   });
 
   // Resolve [[wikilinks]]
-  result = result.replaceAll(
-    /(?<!!)\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g,
-    (_match, link: string, display?: string) => {
-      const displayText = display ?? link;
-      const slug = link.toLowerCase().replaceAll(/\s+/g, "-");
-      return `[${displayText}](${slug})`;
-    },
-  );
+  result = replaceWikilinks(result, ({ link, display }) => {
+    const displayText = display ?? link;
+    const slug = link.toLowerCase().replaceAll(/\s+/g, "-");
+    return `[${displayText}](${slug})`;
+  });
 
   // Strip %%comments%%
   result = result.replaceAll(/%%[\s\S]*?%%/g, "");
@@ -432,7 +424,7 @@ async function syncVaultFiles(ctx: SyncVaultFilesContext): Promise<void> {
   const { db, provider, config, vaultFiles, trackedFiles, newTrackedFiles, result, signal } = ctx;
   const log = getLogger();
   const fileMap = buildVaultFileMap(vaultFiles);
-  for (const relPath of vaultFiles) {
+  await forEachSequential(vaultFiles, async (relPath) => {
     signal?.throwIfAborted();
     try {
       const outcome = await processVaultFile(
@@ -454,7 +446,7 @@ async function syncVaultFiles(ctx: SyncVaultFilesContext): Promise<void> {
         newTrackedFiles[relPath] = tracked;
       }
     }
-  }
+  });
 }
 
 export async function syncObsidianVault(

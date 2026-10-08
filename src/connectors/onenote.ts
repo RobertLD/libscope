@@ -4,6 +4,7 @@ import { NodeHtmlMarkdown } from "node-html-markdown";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { getLogger } from "../logger.js";
 import { LibScopeError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
 import { indexDocument } from "../core/indexing.js";
 import { deleteDocument } from "../core/documents.js";
 import { createTopic } from "../core/topics.js";
@@ -289,46 +290,60 @@ export async function authenticateDeviceCode(
   const interval = (dcData.interval ?? 5) * 1000;
   const deadline = Date.now() + dcData.expires_in * 1000;
 
-  while (Date.now() < deadline) {
-    await sleep(interval);
+  return pollDeviceToken({
+    tokenUrl,
+    clientId,
+    deviceCode: dcData.device_code,
+    interval,
+    deadline,
+  });
+}
 
-    const tokenRes = await fetch(tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        client_id: clientId,
-        device_code: dcData.device_code,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+/** Ask for the token every `interval` ms until the user signs in, an error, or `deadline`. */
+async function pollDeviceToken(poll: {
+  tokenUrl: string;
+  clientId: string;
+  deviceCode: string;
+  interval: number;
+  deadline: number;
+}): Promise<{ accessToken: string; refreshToken: string; expiresAt: string }> {
+  if (Date.now() >= poll.deadline) {
+    throw new LibScopeError("Device code authentication timed out", "ONENOTE_AUTH_ERROR");
+  }
+  await sleep(poll.interval);
 
-    if (tokenRes.ok) {
-      const tokenData = (await tokenRes.json()) as {
-        access_token: string;
-        refresh_token: string;
-        expires_in: number;
-      };
-      const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
-      return {
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expiresAt,
-      };
-    }
+  const tokenRes = await fetch(poll.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      client_id: poll.clientId,
+      device_code: poll.deviceCode,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
 
-    const errData = (await tokenRes.json()) as { error: string };
-    if (errData.error === "authorization_pending") {
-      continue;
-    }
-    if (errData.error === "slow_down") {
-      await sleep(5000);
-      continue;
-    }
-    throw new LibScopeError(`Authentication failed: ${errData.error}`, "ONENOTE_AUTH_ERROR");
+  if (tokenRes.ok) {
+    const tokenData = (await tokenRes.json()) as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+    const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+    return {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      expiresAt,
+    };
   }
 
-  throw new LibScopeError("Device code authentication timed out", "ONENOTE_AUTH_ERROR");
+  const errData = (await tokenRes.json()) as { error: string };
+  if (errData.error === "slow_down") {
+    await sleep(5000);
+  } else if (errData.error !== "authorization_pending") {
+    throw new LibScopeError(`Authentication failed: ${errData.error}`, "ONENOTE_AUTH_ERROR");
+  }
+  return pollDeviceToken(poll);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +488,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
     return;
   }
 
-  for (const page of pages) {
+  await forEachSequential(pages, async (page) => {
     signal?.throwIfAborted();
     const sourceUrl = buildSourceUrl(notebookName, section.displayName, page.title);
     seenSourceUrls.add(sourceUrl);
@@ -495,7 +510,7 @@ async function syncOneNoteSection(options: SyncOneNoteSectionOptions): Promise<v
       log.error({ page: page.title, err }, "Failed to sync page");
       result.errors.push({ page: page.title, error: msg });
     }
-  }
+  });
 }
 
 /** Sync all sections within a single notebook. */
@@ -519,7 +534,7 @@ async function syncOneNoteNotebook(
   const filteredSections = sections.filter((s) => !config.excludeSections.includes(s.displayName));
   result.sections += filteredSections.length;
 
-  for (const section of filteredSections) {
+  await forEachSequential(filteredSections, async (section) => {
     signal?.throwIfAborted();
     await syncOneNoteSection({
       db,
@@ -533,7 +548,7 @@ async function syncOneNoteNotebook(
       result,
       signal,
     });
-  }
+  });
 }
 
 /** Delete OneNote documents whose source URLs were not seen during sync. */
@@ -636,7 +651,7 @@ async function runOneNoteSync(
   result.notebooks = targetNotebooks.length;
   const seenSourceUrls = new Set<string>();
 
-  for (const notebook of targetNotebooks) {
+  await forEachSequential(targetNotebooks, async (notebook) => {
     signal?.throwIfAborted();
     await syncOneNoteNotebook({
       db,
@@ -648,7 +663,7 @@ async function runOneNoteSync(
       result,
       signal,
     });
-  }
+  });
 
   result.pagesDeleted = deleteStaleOneNoteDocs(db, seenSourceUrls);
 

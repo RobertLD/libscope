@@ -6,6 +6,7 @@
 import { readRawUserConfig, writeRawUserConfig } from "../config.js";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { trimTrailingSlashes } from "../utils/strings.js";
 import type { RegistryEntry } from "./types.js";
 
 /** Sanitize a URL for safe display in logs — masks any embedded credentials. */
@@ -33,16 +34,38 @@ export function validateRegistryName(name: string): void {
   }
 }
 
+/** True when `word` ends right before index `end` of `text`. */
+function endsAt(text: string, word: string, end: number): boolean {
+  return end >= word.length && text.startsWith(word, end - word.length);
+}
+
+/**
+ * True when an "http://" or "https://" anywhere in `url` is followed by user info: one or more
+ * characters other than "@" and "/", then "@" (https://user:pass@host, https://token@host).
+ * A linear scan, so a long hostile URL cannot make the check slow.
+ */
+function hasEmbeddedCredentials(url: string): boolean {
+  for (let sep = url.indexOf("://"); sep !== -1; sep = url.indexOf("://", sep + 1)) {
+    if (endsAt(url, "http", sep) || endsAt(url, "https", sep)) {
+      const start = sep + 3;
+      let end = start;
+      while (end < url.length && url.charAt(end) !== "@" && url.charAt(end) !== "/") end++;
+      if (end > start && url.charAt(end) === "@") return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Validate a git URL: https://, ssh://, SCP-style git@host:path, or file:/// for a repository on
  * a local or shared disk. Returns the normalized (trimmed, no trailing slash) URL.
  */
 export function validateGitUrl(url: string): string {
   // Trim whitespace and trailing slashes
-  const normalized = url.trim().replace(/\/+$/, "");
+  const normalized = trimTrailingSlashes(url.trim());
 
   // Reject URLs with embedded credentials (e.g. https://user:pass@host or https://token@host)
-  if (/https?:\/\/[^@/]+:[^@/]*@/.test(normalized) || /https?:\/\/[^@/]+@/.test(normalized)) {
+  if (hasEmbeddedCredentials(normalized)) {
     throw new ValidationError(
       "Registry URL must not contain embedded credentials (user:pass@host or token@host). " +
         "Use SSH keys or a git credential helper instead.",
@@ -64,7 +87,7 @@ export function validateGitUrl(url: string): string {
 
 /** Derive a registry name from a git URL ("https://github.com/org/packs.git" -> "packs"). */
 export function deriveRegistryName(url: string): string {
-  const trimmed = url.trim().replace(/\/+$/, "");
+  const trimmed = trimTrailingSlashes(url.trim());
   const last = trimmed.slice(Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf(":")) + 1);
   const name = last.endsWith(".git") ? last.slice(0, -4) : last;
   try {

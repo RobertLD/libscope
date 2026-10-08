@@ -136,13 +136,16 @@ function formatDocumentHeader(view: DocumentView): string[] {
 
 /** Output of `get-document`: metadata, then the requested slice of the content. */
 export function formatDocumentView(view: DocumentView): string {
-  const end = view.offset + view.content.length;
+  return `${formatDocumentHeader(view).join("\n")}${pageRange(view)}\n\n${view.content}`;
+}
+
+/** "[characters 0-500 of 1200; next page: offset 500]" for a paged view, else "". */
+function pageRange(view: DocumentView): string {
   const paged = view.offset > 0 || view.nextOffset !== null;
-  const range = paged
-    ? `\n\n[characters ${view.offset}-${end} of ${view.contentLength}` +
-      (view.nextOffset === null ? "]" : `; next page: offset ${view.nextOffset}]`)
-    : "";
-  return `${formatDocumentHeader(view).join("\n")}${range}\n\n${view.content}`;
+  if (!paged) return "";
+  const end = view.offset + view.content.length;
+  const next = view.nextOffset === null ? "]" : `; next page: offset ${view.nextOffset}]`;
+  return `\n\n[characters ${view.offset}-${end} of ${view.contentLength}${next}`;
 }
 
 /** Output of `update-document`: the document's new metadata (no content). */
@@ -188,8 +191,10 @@ export function formatOverview(o: Overview): string {
 export function formatIngestResult(result: IngestResult): string {
   const lines: string[] = [];
   if (result.planned) {
-    lines.push(`Dry run: ${result.planned.length} source(s) would be added.`);
-    lines.push(...result.planned.map((p) => `- ${p}`));
+    lines.push(
+      `Dry run: ${result.planned.length} source(s) would be added.`,
+      ...result.planned.map((p) => `- ${p}`),
+    );
   } else {
     lines.push(`Added ${result.documents.length} document(s).`);
   }
@@ -208,12 +213,16 @@ export function formatIngestResult(result: IngestResult): string {
     );
   }
   if (result.skipped.length > 0) {
-    lines.push(`Skipped ${result.skipped.length}:`);
-    lines.push(...result.skipped.map((s) => `- ${s.source}: ${s.reason}`));
+    lines.push(
+      `Skipped ${result.skipped.length}:`,
+      ...result.skipped.map((s) => `- ${s.source}: ${s.reason}`),
+    );
   }
   if (result.errors.length > 0) {
-    lines.push(`Errors ${result.errors.length}:`);
-    lines.push(...result.errors.map((e) => `- ${e.source}: ${e.error}`));
+    lines.push(
+      `Errors ${result.errors.length}:`,
+      ...result.errors.map((e) => `- ${e.source}: ${e.error}`),
+    );
   }
   return lines.join("\n");
 }
@@ -225,8 +234,9 @@ export function formatDocumentDeleted(result: { documentId: string }): string {
 
 /** Output of `rate-document`. */
 export function formatRating(r: Rating): string {
+  const chunk = r.chunkId ? `, chunkId: ${r.chunkId}` : "";
   return joinParts([
-    `Rated ${r.rating}/5 (documentId: ${r.documentId}${r.chunkId ? `, chunkId: ${r.chunkId}` : ""})`,
+    `Rated ${r.rating}/5 (documentId: ${r.documentId}${chunk})`,
     r.feedback ? `feedback saved` : null,
     r.suggestedCorrection ? `correction saved` : null,
   ]);

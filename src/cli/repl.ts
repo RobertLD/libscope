@@ -17,27 +17,35 @@ export async function startInteractiveSearch(options: InteractiveOptions): Promi
   console.log("LibScope interactive search (type 'quit' or 'exit', or press Ctrl+D, to leave)\n");
 
   try {
-    for (;;) {
-      let query: string;
-      try {
-        query = await rl.question("search> ");
-      } catch {
-        // Ctrl+C / Ctrl+D or closed stream
-        break;
-      }
-
-      const trimmed = query.trim();
-      if (!trimmed) continue;
-      if (trimmed === "quit" || trimmed === "exit") break;
-
-      try {
-        await options.onQuery(trimmed);
-      } catch (err) {
-        console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-      }
-      console.log();
-    }
+    await promptLoop(rl, options.onQuery);
   } finally {
     rl.close();
   }
+}
+
+/** Ask for one query, run it, then ask again until the user leaves. */
+async function promptLoop(
+  rl: readline.Interface,
+  onQuery: InteractiveOptions["onQuery"],
+): Promise<void> {
+  let query: string;
+  try {
+    query = await rl.question("search> ");
+  } catch {
+    // Ctrl+C / Ctrl+D or closed stream
+    return;
+  }
+
+  const trimmed = query.trim();
+  if (trimmed === "quit" || trimmed === "exit") return;
+
+  if (trimmed) {
+    try {
+      await onQuery(trimmed);
+    } catch (err) {
+      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    }
+    console.log();
+  }
+  return promptLoop(rl, onQuery);
 }

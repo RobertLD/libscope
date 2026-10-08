@@ -7,6 +7,8 @@ import { addTagsToDocument } from "../core/tags.js";
 import { deleteDocument } from "../core/documents.js";
 import { getLogger } from "../logger.js";
 import { FetchError, ValidationError } from "../errors.js";
+import { forEachSequential } from "../utils/async.js";
+import { trimTrailingSlashes } from "../utils/strings.js";
 import { fetchWithRetry } from "./http-utils.js";
 import { trackSync, type ConnectorSyncOptions } from "./sync-tracker.js";
 
@@ -119,16 +121,18 @@ async function fetchAllPages<T>(
   signal?: AbortSignal,
 ): Promise<T[]> {
   const all: T[] = [];
-  let url: string | undefined = initialUrl;
 
-  while (url) {
+  // One page per call; follows the "next" link until there is none.
+  const fetchFrom = async (url: string | undefined): Promise<void> => {
+    if (!url) return;
     signal?.throwIfAborted();
-    const resp: PaginatedResponse<T> = await confluenceFetch<PaginatedResponse<T>>(url, auth);
+    const resp = await confluenceFetch<PaginatedResponse<T>>(url, auth);
     all.push(...resp.results);
     const next: string | undefined = resp._links?.next;
-    url = next ? `${baseUrl}${next}` : undefined;
-  }
+    return fetchFrom(next ? `${baseUrl}${next}` : undefined);
+  };
 
+  await fetchFrom(initialUrl);
   return all;
 }
 
@@ -476,7 +480,7 @@ async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise
     return;
   }
 
-  for (const page of pages) {
+  await forEachSequential(pages, async (page) => {
     signal?.throwIfAborted();
     try {
       const outcome = await indexConfluencePage({
@@ -489,16 +493,24 @@ async function syncConfluenceSpace(options: SyncConfluenceSpaceOptions): Promise
         urls,
         auth,
       });
-      if (outcome === "indexed") result.pagesIndexed++;
-      if (outcome === "updated") {
-        result.pagesUpdated++;
-        result.pagesIndexed++;
-      }
+      countPageOutcome(outcome, result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error({ pageId: page.id, title: page.title, err }, "Failed to index page");
       result.errors.push({ page: page.title, error: msg });
     }
+  });
+}
+
+/** Add one page's outcome to the sync counts (an updated page also counts as indexed). */
+function countPageOutcome(
+  outcome: Awaited<ReturnType<typeof indexConfluencePage>>,
+  result: ConfluenceSyncResult,
+): void {
+  if (outcome === "indexed") result.pagesIndexed++;
+  if (outcome === "updated") {
+    result.pagesUpdated++;
+    result.pagesIndexed++;
   }
 }
 
@@ -518,13 +530,6 @@ function validateConfluenceConfig(config: ConfluenceConfig): void {
   }
 }
 
-/** Strip trailing slashes from a Confluence base URL (loop instead of a regex). */
-function trimBaseUrl(baseUrl: string): string {
-  let base = baseUrl;
-  while (base.endsWith("/")) base = base.slice(0, -1);
-  return base;
-}
-
 export async function syncConfluence(
   db: Database.Database,
   provider: EmbeddingProvider,
@@ -534,7 +539,7 @@ export async function syncConfluence(
   return trackSync(
     db,
     "confluence",
-    options.syncName ?? trimBaseUrl(config.baseUrl),
+    options.syncName ?? trimTrailingSlashes(config.baseUrl),
     () => runConfluenceSync(db, provider, config, options.signal),
     (result) => ({
       added: result.pagesIndexed,
@@ -557,7 +562,7 @@ async function runConfluenceSync(
 
   const confluenceType = config.type ?? "cloud";
   const auth = buildAuthHeader(confluenceType, config.email, config.token);
-  const base = trimBaseUrl(config.baseUrl);
+  const base = trimTrailingSlashes(config.baseUrl);
   const urls = getApiUrls(base, confluenceType);
 
   const result: ConfluenceSyncResult = {
@@ -580,8 +585,8 @@ async function runConfluenceSync(
   result.spaces = spacesToSync.length;
   log.info({ spaceCount: spacesToSync.length }, "Spaces to sync");
 
-  for (const space of spacesToSync) {
-    await syncConfluenceSpace({
+  await forEachSequential(spacesToSync, (space) =>
+    syncConfluenceSpace({
       db,
       provider,
       space,
@@ -591,8 +596,8 @@ async function runConfluenceSync(
       auth,
       result,
       signal,
-    });
-  }
+    }),
+  );
 
   log.info(
     {

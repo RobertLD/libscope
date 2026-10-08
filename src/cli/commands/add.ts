@@ -7,13 +7,13 @@ import { resolveTopicId } from "../../core/topics.js";
 import { FileWatcher } from "../../core/watcher.js";
 import type { SourceType } from "../../core/indexing.js";
 import { ValidationError } from "../../errors.js";
+import { mapSequential } from "../../utils/async.js";
 import { getContext, untilInterrupted } from "../context.js";
 import {
   addDocumentOptions,
   defined,
   documentInput,
   splitList,
-  toNumber,
   type DocumentFlags,
 } from "../options.js";
 import { call, plural, print } from "../run.js";
@@ -138,8 +138,8 @@ export function register(program: Command): void {
     .option("--exclude <globs>", "Directory: skip files matching these globs (comma-separated)")
     .option("--watch", "Directory: keep running and re-index files when they change")
     .option("--spider", "URL: also crawl linked pages")
-    .option("--max-pages <n>", "Crawl: page limit (default 25, max 200)", toNumber)
-    .option("--max-depth <n>", "Crawl: link depth (default 2, max 5)", toNumber)
+    .option("--max-pages <n>", "Crawl: page limit (default 25, max 200)", Number)
+    .option("--max-depth <n>", "Crawl: link depth (default 2, max 5)", Number)
     .option("--no-same-domain", "Crawl: also follow links to other domains")
     .option("--path-prefix <path>", "Crawl: only follow links under this path")
     .option("--exclude-urls <globs>", "Crawl: skip URLs matching these globs (comma-separated)")
@@ -153,12 +153,9 @@ export function register(program: Command): void {
       if (flags.watch && directories.length !== sources.length) {
         throw new ValidationError("--watch works with directories only");
       }
-      const results: IngestResult[] = [];
-      for (const source of sources) {
-        results.push(
-          await call(addOperation, addInput(source, flags), { embeddings: !flags.dryRun }),
-        );
-      }
+      const results: IngestResult[] = await mapSequential(sources, (source) =>
+        call(addOperation, addInput(source, flags), { embeddings: !flags.dryRun }),
+      );
       print(results, (all) => all.forEach(printResult));
       if (results.every((r) => r.documents.length === 0 && r.errors.length > 0)) {
         process.exitCode = 1;

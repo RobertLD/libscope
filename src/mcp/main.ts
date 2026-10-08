@@ -4,10 +4,12 @@
  */
 import { runStdioServer } from "./server.js";
 
-runStdioServer().catch((err: unknown) => {
+try {
+  await runStdioServer();
+} catch (err: unknown) {
   console.error(
     "libscope MCP server failed to start:",
     err instanceof Error ? err.message : String(err),
   );
   process.exit(1);
-});
+}

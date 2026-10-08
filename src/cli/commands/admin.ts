@@ -14,7 +14,7 @@ import {
 import type { Overview } from "../../core/overview.js";
 import { describeEmbeddingIdentity } from "../../db/index-meta.js";
 import { confirmOrCancel } from "../confirm.js";
-import { defined, toNumber } from "../options.js";
+import { defined } from "../options.js";
 import { call, plural, print, printList, run } from "../run.js";
 
 /** Counts, topics, packs and index identity (shared with `doctor`). */
@@ -28,7 +28,8 @@ export function printOverview(o: Overview): void {
   const stored = describeEmbeddingIdentity(o.index.stored);
   console.log(`Index:     ${o.index.vectorTableDimensions === undefined ? "none" : stored}`);
   if (o.packs.length > 0) {
-    console.log(`Packs:     ${o.packs.map((p) => `${p.name} v${p.version}`).join(", ")}`);
+    const packs = o.packs.map((p) => `${p.name} v${p.version}`).join(", ");
+    console.log(`Packs:     ${packs}`);
   }
 }
 
@@ -68,7 +69,7 @@ function registerMaintenance(admin: Command): void {
     .option("--doc <documentIds...>", "Only these documents")
     .option("--since <date>", "Only documents created on or after (ISO 8601)")
     .option("--before <date>", "Only documents created on or before (ISO 8601)")
-    .option("--batch-size <n>", "Chunks per embedding call (default 50)", toNumber)
+    .option("--batch-size <n>", "Chunks per embedding call (default 50)", Number)
     .action(
       async (flags: {
         rebuild?: boolean;
@@ -101,7 +102,7 @@ function registerMaintenance(admin: Command): void {
   admin
     .command("dedupe")
     .description("Find duplicate and near-duplicate documents")
-    .option("--threshold <n>", "Similarity threshold 0-1 (default 0.95)", toNumber)
+    .option("--threshold <n>", "Similarity threshold 0-1 (default 0.95)", Number)
     .option("--strategy <strategy>", "exact, semantic or both (default)")
     .action(async (flags: { threshold?: number; strategy?: string }) => {
       await run(
@@ -159,7 +160,7 @@ export function register(program: Command): void {
   admin
     .command("stats")
     .description("Counts, index, most returned and stale documents, and search analytics")
-    .option("--days <n>", "Look-back days for stale documents and search analytics", toNumber)
+    .option("--days <n>", "Look-back days for stale documents and search analytics", Number)
     .action(async (flags: { days?: number }) => {
       const days = defined({ days: flags.days });
       const stats: Stats = {

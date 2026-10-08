@@ -6,20 +6,14 @@ import type { AnswerResult } from "../../core/rag.js";
 import type { SearchResult } from "../../core/search.js";
 import { ValidationError } from "../../errors.js";
 import { startInteractiveSearch } from "../repl.js";
-import {
-  addDocumentOptions,
-  defined,
-  documentInput,
-  toNumber,
-  type DocumentFlags,
-} from "../options.js";
-import { isJsonOutput, preview, run } from "../run.js";
+import { addDocumentOptions, defined, documentInput, type DocumentFlags } from "../options.js";
+import { isJsonOutput, libraryLabel, preview, run } from "../run.js";
 
 /** One search hit: title, score, IDs, metadata and a content preview. */
 export function printSearchItem(r: SearchResult): void {
   console.log(`\n── ${r.title} (score ${r.score.toFixed(2)})`);
   console.log(`   document ${r.documentId}  chunk ${r.chunkId}`);
-  const meta = [r.library ? `${r.library}${r.version ? ` ${r.version}` : ""}` : "", r.url ?? ""];
+  const meta = [r.library ? libraryLabel(r.library, r.version) : "", r.url ?? ""];
   const metaLine = meta.filter(Boolean).join(" | ");
   if (metaLine) console.log(`   ${metaLine}`);
   for (const c of r.contextBefore ?? []) console.log(`   ↑ ${preview(c.content, 120)}`);
@@ -98,10 +92,10 @@ export function register(program: Command): void {
     )
     .option("--related <id>", "Find content similar to this document or chunk ID instead");
   addDocumentOptions(search)
-    .option("--offset <n>", "Results to skip (paging)", toNumber)
-    .option("--min-rating <n>", "Only documents rated at least this (1-5)", toNumber)
-    .option("--max-per-doc <n>", "At most this many chunks per document", toNumber)
-    .option("--context <n>", "Neighbouring chunks to show around each result (0-2)", toNumber)
+    .option("--offset <n>", "Results to skip (paging)", Number)
+    .option("--min-rating <n>", "Only documents rated at least this (1-5)", Number)
+    .option("--max-per-doc <n>", "At most this many chunks per document", Number)
+    .option("--context <n>", "Neighbouring chunks to show around each result (0-2)", Number)
     .action(async (query: string | undefined, flags: SearchFlags) => {
       if (query === undefined && flags.related === undefined) {
         if (!process.stdin.isTTY || isJsonOutput()) {
@@ -125,7 +119,7 @@ export function register(program: Command): void {
     .command("ask <question>")
     .description("Answer a question from the knowledge base with the configured LLM");
   addDocumentOptions(ask, { limit: "Chunks to use as context (default 5)" })
-    .option("--min-rating <n>", "Only documents rated at least this (1-5)", toNumber)
+    .option("--min-rating <n>", "Only documents rated at least this (1-5)", Number)
     .option("--model <model>", "LLM model for this question (default: llm.model)");
   ask.action(async (question: string, flags: AskFlags) => {
     await run(askOperation, askInput(question, flags), printAnswer, {

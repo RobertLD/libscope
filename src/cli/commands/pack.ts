@@ -9,7 +9,7 @@ import {
 import type { InstallResult, InstalledPack } from "../../core/packs.js";
 import type { RegistryPack } from "../../registry/types.js";
 import { confirmOrCancel } from "../confirm.js";
-import { defined, splitList, toNumber } from "../options.js";
+import { defined, splitList } from "../options.js";
 import { call, plural, print, printList, run } from "../run.js";
 
 interface InstallFlags {
@@ -92,9 +92,9 @@ export function register(program: Command): void {
       "Install a pack from the configured registries (name or name@version) or a local .json/.json.gz file",
     )
     .option("--registry <name>", "Look only in this registry")
-    .option("--batch-size <n>", "Documents embedded per batch (default 10)", toNumber)
-    .option("--resume-from <n>", "Skip the first N documents (resume a partial install)", toNumber)
-    .option("--concurrency <n>", "Batches embedded in parallel (default 4)", toNumber)
+    .option("--batch-size <n>", "Documents embedded per batch (default 10)", Number)
+    .option("--resume-from <n>", "Skip the first N documents (resume a partial install)", Number)
+    .option("--concurrency <n>", "Batches embedded in parallel (default 4)", Number)
     .action(async (name: string, flags: InstallFlags) => {
       const input = defined({
         pack: name,

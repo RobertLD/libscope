@@ -9,7 +9,7 @@ import { getParserForFile, getSupportedExtensions } from "./parsers/index.js";
 import { createChildLogger } from "../logger.js";
 
 /** Extensions without a registered parser that the watcher indexes as plain UTF-8 text. */
-const PLAIN_TEXT_WATCH_EXTENSIONS = [".rst"];
+const PLAIN_TEXT_WATCH_EXTENSIONS = new Set([".rst"]);
 
 /** Every extension the parser registry supports, plus the plain-text extras. */
 export const DEFAULT_WATCH_EXTENSIONS = [
@@ -24,7 +24,7 @@ export const DEFAULT_WATCH_EXTENSIONS = [
 export async function readWatchedFile(filePath: string): Promise<string | null> {
   const parser = getParserForFile(filePath);
   if (parser) return parser.parse(readFileSync(filePath));
-  if (PLAIN_TEXT_WATCH_EXTENSIONS.includes(extname(filePath).toLowerCase())) {
+  if (PLAIN_TEXT_WATCH_EXTENSIONS.has(extname(filePath).toLowerCase())) {
     return readFileSync(filePath, "utf-8");
   }
   return null;

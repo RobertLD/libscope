@@ -80,9 +80,9 @@ export class TaskRegistry {
     const onProgress = (current: number, total: number): void => {
       this.update(task.id, { progress: { current, total } });
     };
-    const done = new Promise<string>((resolve) => {
-      resolve(work(signal, onProgress));
-    }).then(
+    // An async wrapper turns a synchronous throw from `work` into a rejection.
+    const start = async (): Promise<string> => await work(signal, onProgress);
+    const done = start().then(
       (result) => {
         this.update(task.id, { status: "completed", completedAt: new Date(), result });
       },
