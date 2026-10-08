@@ -28,7 +28,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
 
     const { results, totalCount } = await searchDocuments(db, provider, { query: "TypeScript" });
 
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
     expect(totalCount).toBe(2);
     expect(results[0].content).toContain("TypeScript");
     expect(results[0].score).toBeGreaterThan(0);
@@ -46,7 +46,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       library: "react",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].library).toBe("react");
   });
 
@@ -65,7 +65,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       topic: "testing",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].topicId).toBe("testing");
   });
 
@@ -97,7 +97,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
     });
 
     expect(page1.totalCount).toBe(3);
-    expect(page1.results.length).toBe(2);
+    expect(page1.results).toHaveLength(2);
 
     const page2 = await searchDocuments(db, provider, {
       query: "TypeScript",
@@ -106,7 +106,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
     });
 
     expect(page2.totalCount).toBe(3);
-    expect(page2.results.length).toBe(1);
+    expect(page2.results).toHaveLength(1);
   });
 
   it("should filter by dateFrom", async () => {
@@ -121,7 +121,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       dateFrom: "2024-01-01T00:00:00.000Z",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].title).toBe("New Doc");
   });
 
@@ -137,7 +137,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       dateTo: "2023-12-31T23:59:59.000Z",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Old Doc");
   });
 
@@ -157,7 +157,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       dateTo: "2024-12-31T23:59:59.000Z",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Mid Doc");
   });
 
@@ -173,7 +173,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       source: "library",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].sourceType).toBe("library");
   });
 
@@ -195,7 +195,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       version: "18.0.0",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].version).toBe("18.0.0");
   });
 
@@ -221,7 +221,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       minRating: 4,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Good Doc");
   });
 
@@ -239,7 +239,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       tags: ["tutorial"],
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Tagged Doc");
   });
 
@@ -252,7 +252,7 @@ describe("searchDocuments (FTS5 fallback)", () => {
       analyticsEnabled: false,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     // Verify no search log entry was created
     const logCount = db.prepare("SELECT COUNT(*) as cnt FROM search_log").get() as { cnt: number };
     expect(logCount.cnt).toBe(0);
@@ -337,7 +337,7 @@ describe("LIKE wildcard escaping in keyword search (issue #79)", () => {
     insertChunk(db, "c2", "doc2", "something completely different here");
 
     const { results } = await searchDocuments(db, provider, { query: "100%" });
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.content).toContain("100%");
   });
 
@@ -349,7 +349,7 @@ describe("LIKE wildcard escaping in keyword search (issue #79)", () => {
     insertChunk(db, "c2", "doc2", "the username field is optional");
 
     const { results } = await searchDocuments(db, provider, { query: "user_name" });
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.content).toContain("user_name");
   });
 });
@@ -406,7 +406,7 @@ describe("search result scoring explanation (issue #89)", () => {
 
     const { results } = await searchDocuments(db, provider, { query: "consistency" });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     const result = results[0]!;
     // FTS5: score = -rawScore (BM25 rank is negative)
     expect(result.score).toBe(-result.scoreExplanation.rawScore);
@@ -454,7 +454,7 @@ describe("LIKE fallback with filters", () => {
       version: "18.0.0",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.version).toBe("18.0.0");
   });
 
@@ -482,7 +482,7 @@ describe("LIKE fallback with filters", () => {
       minRating: 4,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe("Rated Doc");
   });
 
@@ -500,7 +500,7 @@ describe("LIKE fallback with filters", () => {
       dateFrom: "2024-01-01T00:00:00.000Z",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe("New Doc");
   });
 
@@ -518,7 +518,7 @@ describe("LIKE fallback with filters", () => {
       dateTo: "2023-12-31T23:59:59.000Z",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe("Old Doc");
   });
 
@@ -536,7 +536,7 @@ describe("LIKE fallback with filters", () => {
       source: "library",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.sourceType).toBe("library");
   });
 
@@ -556,7 +556,7 @@ describe("LIKE fallback with filters", () => {
       tags: ["howto"],
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.title).toBe("Tagged Doc");
   });
 
@@ -583,7 +583,7 @@ describe("LIKE fallback with filters", () => {
       maxChunksPerDocument: 1,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
   });
 
   it("should attach context chunks in LIKE fallback", async () => {
@@ -599,11 +599,11 @@ describe("LIKE fallback with filters", () => {
       contextChunks: 1,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.contextBefore).toBeDefined();
-    expect(results[0]!.contextBefore!.length).toBe(1);
+    expect(results[0]!.contextBefore!).toHaveLength(1);
     expect(results[0]!.contextAfter).toBeDefined();
-    expect(results[0]!.contextAfter!.length).toBe(1);
+    expect(results[0]!.contextAfter!).toHaveLength(1);
   });
 });
 
@@ -628,7 +628,7 @@ describe("deduplicate search results by document (issue #245)", () => {
 
     const { results } = await searchDocuments(db, provider, { query: "TypeScript" });
 
-    expect(results.length).toBe(3);
+    expect(results).toHaveLength(3);
     expect(results.every((r) => r.documentId === "doc1")).toBe(true);
   });
 
@@ -650,8 +650,8 @@ describe("deduplicate search results by document (issue #245)", () => {
     const doc1Results = results.filter((r) => r.documentId === "doc1");
     const doc2Results = results.filter((r) => r.documentId === "doc2");
 
-    expect(doc1Results.length).toBe(1);
-    expect(doc2Results.length).toBe(1);
+    expect(doc1Results).toHaveLength(1);
+    expect(doc2Results).toHaveLength(1);
   });
 
   it("should limit to at most 2 chunks per document with maxChunksPerDocument=2", async () => {
@@ -665,7 +665,7 @@ describe("deduplicate search results by document (issue #245)", () => {
       maxChunksPerDocument: 2,
     });
 
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
     expect(results.every((r) => r.documentId === "doc1")).toBe(true);
   });
 });
@@ -695,14 +695,14 @@ describe("context chunk expansion (issue #247)", () => {
       contextChunks: 1,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     const result = results[0]!;
     expect(result.content).toContain("Core concepts");
     expect(result.contextBefore).toBeDefined();
-    expect(result.contextBefore!.length).toBe(1);
+    expect(result.contextBefore!).toHaveLength(1);
     expect(result.contextBefore![0]!.content).toContain("Introduction");
     expect(result.contextAfter).toBeDefined();
-    expect(result.contextAfter!.length).toBe(1);
+    expect(result.contextAfter!).toHaveLength(1);
     expect(result.contextAfter![0]!.content).toContain("Advanced patterns");
   });
 
@@ -719,12 +719,12 @@ describe("context chunk expansion (issue #247)", () => {
       contextChunks: 2,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     const result = results[0]!;
-    expect(result.contextBefore!.length).toBe(2);
+    expect(result.contextBefore!).toHaveLength(2);
     expect(result.contextBefore![0]!.content).toContain("Section zero");
     expect(result.contextBefore![1]!.content).toContain("Section one");
-    expect(result.contextAfter!.length).toBe(2);
+    expect(result.contextAfter!).toHaveLength(2);
     expect(result.contextAfter![0]!.content).toContain("Section three");
     expect(result.contextAfter![1]!.content).toContain("Section four");
   });
@@ -739,9 +739,9 @@ describe("context chunk expansion (issue #247)", () => {
       contextChunks: 1,
     });
 
-    expect(results.length).toBe(1);
-    expect(results[0]!.contextBefore!.length).toBe(0);
-    expect(results[0]!.contextAfter!.length).toBe(1);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.contextBefore!).toHaveLength(0);
+    expect(results[0]!.contextAfter!).toHaveLength(1);
   });
 
   it("should handle last chunk with no context after", async () => {
@@ -754,9 +754,9 @@ describe("context chunk expansion (issue #247)", () => {
       contextChunks: 1,
     });
 
-    expect(results.length).toBe(1);
-    expect(results[0]!.contextBefore!.length).toBe(1);
-    expect(results[0]!.contextAfter!.length).toBe(0);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.contextBefore!).toHaveLength(1);
+    expect(results[0]!.contextAfter!).toHaveLength(0);
   });
 
   it("should not include context when contextChunks is 0 or unset", async () => {
@@ -769,7 +769,7 @@ describe("context chunk expansion (issue #247)", () => {
       query: "keyword",
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.contextBefore).toBeUndefined();
     expect(results[0]!.contextAfter).toBeUndefined();
   });
@@ -789,10 +789,10 @@ describe("context chunk expansion (issue #247)", () => {
       contextChunks: 5,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     // Capped at 2
-    expect(results[0]!.contextBefore!.length).toBe(2);
-    expect(results[0]!.contextAfter!.length).toBe(2);
+    expect(results[0]!.contextBefore!).toHaveLength(2);
+    expect(results[0]!.contextAfter!).toHaveLength(2);
   });
 
   it("should include chunkIndex in context chunks", async () => {
@@ -806,7 +806,7 @@ describe("context chunk expansion (issue #247)", () => {
       contextChunks: 1,
     });
 
-    expect(results.length).toBe(1);
+    expect(results).toHaveLength(1);
     expect(results[0]!.contextBefore![0]!.chunkIndex).toBe(0);
     expect(results[0]!.contextAfter![0]!.chunkIndex).toBe(2);
   });
@@ -892,7 +892,7 @@ describe("title boosting (issue #362)", () => {
     });
 
     // Both match the keyword, but doc1's title matches the query
-    expect(results.length).toBe(2);
+    expect(results).toHaveLength(2);
     const doc1Result = results.find((r) => r.documentId === "doc1");
     const doc2Result = results.find((r) => r.documentId === "doc2");
     expect(doc1Result).toBeDefined();
@@ -912,8 +912,8 @@ describe("title boosting (issue #362)", () => {
       query: "TypeScript",
     });
 
-    expect(results.length).toBe(1);
-    expect(results[0]!.scoreExplanation.boostFactors.length).toBe(0);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.scoreExplanation.boostFactors).toHaveLength(0);
   });
 });
 
@@ -959,7 +959,7 @@ describe("lazy count optimization (issue #362)", () => {
     });
 
     expect(page1.totalCount).toBeGreaterThanOrEqual(5);
-    expect(page1.results.length).toBe(2);
+    expect(page1.results).toHaveLength(2);
   });
 });
 

@@ -117,19 +117,24 @@ describe("registry config", () => {
     });
 
     // Security/robustness fixes: whitespace trimming and trailing slash normalisation
-    it("should trim leading and trailing whitespace", () => {
-      const result = validateGitUrl("  https://github.com/org/repo.git  ");
-      expect(result).toBe("https://github.com/org/repo.git");
-    });
-
-    it("should strip trailing slashes", () => {
-      const result = validateGitUrl("https://github.com/org/repo/");
-      expect(result).toBe("https://github.com/org/repo");
-    });
-
-    it("should strip both whitespace and trailing slashes together", () => {
-      const result = validateGitUrl("  https://github.com/org/repo.git  ");
-      expect(result).toBe("https://github.com/org/repo.git");
+    it.each([
+      {
+        name: "trims leading and trailing whitespace",
+        input: "  https://github.com/org/repo.git  ",
+        expected: "https://github.com/org/repo.git",
+      },
+      {
+        name: "strips trailing slashes",
+        input: "https://github.com/org/repo/",
+        expected: "https://github.com/org/repo",
+      },
+      {
+        name: "strips both whitespace and trailing slashes together",
+        input: "  https://github.com/org/repo/  ",
+        expected: "https://github.com/org/repo",
+      },
+    ])("should normalise the URL: $name", ({ input, expected }) => {
+      expect(validateGitUrl(input)).toBe(expected);
     });
 
     // Security: reject embedded credentials

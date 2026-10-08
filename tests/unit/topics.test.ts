@@ -70,7 +70,7 @@ describe("topics", () => {
       createTopic(db, { name: "API" });
 
       const topics = listTopics(db);
-      expect(topics.length).toBe(3);
+      expect(topics).toHaveLength(3);
       // Should be alphabetical
       expect(topics[0]!.name).toBe("API");
       expect(topics[1]!.name).toBe("Auth");
@@ -84,12 +84,12 @@ describe("topics", () => {
       createTopic(db, { name: "Unrelated" });
 
       const children = listTopics(db, parent.id);
-      expect(children.length).toBe(2);
+      expect(children).toHaveLength(2);
     });
 
     it("should return empty array when no topics exist", () => {
       const topics = listTopics(db);
-      expect(topics.length).toBe(0);
+      expect(topics).toHaveLength(0);
     });
   });
 
@@ -217,7 +217,7 @@ describe("topics", () => {
       ).run("d2", "topic", "Doc B", "content B", "docs", "manual");
 
       const docs = getDocumentsByTopic(db, "docs");
-      expect(docs.length).toBe(2);
+      expect(docs).toHaveLength(2);
       expect(docs[0]!.title).toBeDefined();
     });
 
@@ -230,19 +230,19 @@ describe("topics", () => {
       }
 
       const page1 = getDocumentsByTopic(db, "paged", { limit: 2, offset: 0 });
-      expect(page1.length).toBe(2);
+      expect(page1).toHaveLength(2);
 
       const page2 = getDocumentsByTopic(db, "paged", { limit: 2, offset: 2 });
-      expect(page2.length).toBe(2);
+      expect(page2).toHaveLength(2);
 
       const page3 = getDocumentsByTopic(db, "paged", { limit: 2, offset: 4 });
-      expect(page3.length).toBe(1);
+      expect(page3).toHaveLength(1);
     });
 
     it("should return empty array for topic with no documents", () => {
       createTopic(db, { name: "Empty" });
       const docs = getDocumentsByTopic(db, "empty");
-      expect(docs.length).toBe(0);
+      expect(docs).toHaveLength(0);
     });
 
     it("should throw TopicNotFoundError for nonexistent topic", () => {
@@ -262,7 +262,7 @@ describe("topics", () => {
       ).run("s2", "topic", "Doc 2", "content", "alpha", "manual");
 
       const stats = getTopicStats(db);
-      expect(stats.length).toBe(2);
+      expect(stats).toHaveLength(2);
       const alpha = stats.find((s) => s.id === "alpha");
       const beta = stats.find((s) => s.id === "beta");
       expect(alpha!.documentCount).toBe(2);
@@ -271,7 +271,7 @@ describe("topics", () => {
 
     it("should return empty array when no topics exist", () => {
       const stats = getTopicStats(db);
-      expect(stats.length).toBe(0);
+      expect(stats).toHaveLength(0);
     });
   });
 });
