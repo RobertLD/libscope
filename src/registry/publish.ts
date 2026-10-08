@@ -334,26 +334,25 @@ export async function publishPackToBranch(
   const pack = readPackJson(packFilePath);
   const branchName = `feature/add-${pack.name}`;
 
-  // Create and checkout branch
+  // Create and checkout branch; the clone goes back to its branch afterwards
+  const baseBranch = await git(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: cacheDir });
   await git(["checkout", "-b", branchName], { cwd: cacheDir });
 
   try {
-    // Reuse the normal publish flow (which commits)
+    // Reuse the normal publish flow, which commits and pushes the feature branch
     const result = await publishPack({
       ...options,
       commitMessage: options.commitMessage ?? `feat: add ${pack.name}@${pack.version}`,
     });
-
-    // Push the branch
-    await git(["push", "-u", "origin", branchName], { cwd: cacheDir });
+    await git(["checkout", baseBranch], { cwd: cacheDir });
 
     log.info({ branch: branchName, registry: registryName }, "Pack published to feature branch");
 
     return { ...result, branch: branchName };
   } catch (err) {
-    // Try to go back to main branch on failure
+    // Try to go back to the base branch on failure
     try {
-      await git(["checkout", "main"], { cwd: cacheDir });
+      await git(["checkout", "--force", baseBranch], { cwd: cacheDir });
       await git(["branch", "-D", branchName], { cwd: cacheDir });
     } catch (cleanupErr) {
       log.warn(
