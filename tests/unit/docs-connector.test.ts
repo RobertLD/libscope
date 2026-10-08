@@ -277,6 +277,18 @@ describe("extractDocTitle", () => {
       "example.com",
     ],
     [
+      "H1 with character references",
+      "<h1>Tom &amp; Jerry &#8212; API</h1>",
+      "https://example.com/docs/api",
+      "Tom & Jerry — API",
+    ],
+    [
+      "<title> with character references",
+      "<html><head><title>textwrap &#8212; Python</title></head><body></body></html>",
+      "https://example.com/docs",
+      "textwrap — Python",
+    ],
+    [
       "H1 precedence over title",
       "<html><head><title>Page Title</title></head><body><h1>Real Title</h1></body></html>",
       "https://example.com/page",

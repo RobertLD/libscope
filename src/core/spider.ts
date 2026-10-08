@@ -13,6 +13,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { getLogger } from "../logger.js";
 import { FetchError } from "../errors.js";
 import { fetchRaw, type FetchOptions } from "./url-fetcher.js";
+import { decodeHtmlEntities } from "./html-entities.js";
 import { extractLinks } from "./link-extractor.js";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 
@@ -269,11 +270,11 @@ function stripTags(input: string): string {
 function extractTitle(html: string, url: string): string {
   // Try <title> tag
   const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-  if (match?.[1]) return match[1].trim();
+  if (match?.[1]) return decodeHtmlEntities(match[1].trim());
   // Try first <h1>
   const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
   if (h1?.[1]) {
-    return stripTags(h1[1]).trim();
+    return decodeHtmlEntities(stripTags(h1[1]).trim());
   }
   // Fall back to URL path
   try {
