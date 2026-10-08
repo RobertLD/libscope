@@ -1,7 +1,5 @@
 import type Database from "better-sqlite3";
-// NOTE: @types/node-cron v3 is used with node-cron v4 — no v4 types are published yet.
-// The schedule() and ScheduledTask.stop() APIs are compatible across versions.
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import type { EmbeddingProvider } from "../providers/embedding.js";
 import { ValidationError } from "../errors.js";
 import { getLogger } from "../logger.js";
@@ -28,7 +26,7 @@ export interface ConnectorScheduleEntry {
 }
 
 interface ScheduledJob {
-  task: cron.ScheduledTask;
+  task: ScheduledTask;
   connectorType: string;
   connectorName: string;
   cronExpression: string;
