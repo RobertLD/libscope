@@ -39,8 +39,8 @@ vi.mock("../../src/core/operations/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/core/operations/index.js")>();
   return {
     ...actual,
-    runOperation: vi.fn(
-      (op: Operation): Promise<unknown> => Promise.resolve(CANNED[op.name] ?? { items: [] }),
+    runOperation: vi.fn((op: Operation): Promise<unknown> =>
+      Promise.resolve(CANNED[op.name] ?? { items: [] }),
     ),
   };
 });

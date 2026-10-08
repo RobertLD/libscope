@@ -372,8 +372,7 @@ function checkExistingVersion(
   versionNumber: number,
 ): { existingDoc: { id: string } | undefined; unchanged: boolean } {
   const existingDoc = db.prepare("SELECT id, url FROM documents WHERE url = ?").get(pageUrl) as
-    | { id: string; url: string }
-    | undefined;
+    { id: string; url: string } | undefined;
 
   if (!existingDoc) return { existingDoc: undefined, unchanged: false };
 

@@ -382,8 +382,7 @@ export async function installPack(
 
   // Check if already installed
   const existing = db.prepare("SELECT name FROM packs WHERE name = ?").get(pack.name) as
-    | { name: string }
-    | undefined;
+    { name: string } | undefined;
 
   if (existing) {
     log.info({ pack: pack.name }, "Pack already installed");
@@ -501,8 +500,7 @@ export function removePack(db: Database.Database, packName: string): void {
   const log = getLogger();
 
   const existing = db.prepare("SELECT name FROM packs WHERE name = ?").get(packName) as
-    | { name: string }
-    | undefined;
+    { name: string } | undefined;
 
   if (!existing) {
     throw new NotFoundError(`Pack "${packName}" is not installed`, "PACK_NOT_FOUND");

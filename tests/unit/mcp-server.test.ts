@@ -204,10 +204,7 @@ describe("MCP server: tool list", () => {
     const { client, close } = await connect(t);
     const { tools } = await client.listTools();
     const props = (name: string): Record<string, { enum?: string[] }> =>
-      (tools.find((tool) => tool.name === name)?.inputSchema.properties ?? {}) as Record<
-        string,
-        { enum?: string[] }
-      >;
+      tools.find((tool) => tool.name === name)?.inputSchema.properties ?? {};
 
     expect(Object.keys(props("search"))).toEqual(
       expect.arrayContaining(["query", "relatedTo", "topic", "library", "version", "sourceType"]),

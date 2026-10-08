@@ -72,8 +72,7 @@ export async function checkDuplicate(
   if (strategy === "exact" || strategy === "both") {
     const hash = computeHash(content);
     const row = db.prepare("SELECT id FROM documents WHERE content_hash = ?").get(hash) as
-      | { id: string }
-      | undefined;
+      { id: string } | undefined;
 
     if (row) {
       log.debug({ existingDocId: row.id }, "Exact duplicate detected via content hash");

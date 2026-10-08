@@ -71,8 +71,7 @@ export function createSavedSearch(
   }
 
   const existing = db.prepare("SELECT id FROM saved_searches WHERE name = ?").get(trimmedName) as
-    | { id: string }
-    | undefined;
+    { id: string } | undefined;
   if (existing) {
     throw new ValidationError(`A saved search named "${trimmedName}" already exists`);
   }
@@ -110,8 +109,7 @@ export function countSavedSearches(db: Database.Database): number {
 
 export function getSavedSearch(db: Database.Database, id: string): SavedSearch {
   const row = db.prepare("SELECT * FROM saved_searches WHERE id = ? OR name = ?").get(id, id) as
-    | SavedSearchRow
-    | undefined;
+    SavedSearchRow | undefined;
   if (!row) {
     throw new NotFoundError(`Saved search not found: ${id}`, "SAVED_SEARCH_NOT_FOUND");
   }

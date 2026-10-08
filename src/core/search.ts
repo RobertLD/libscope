@@ -195,7 +195,7 @@ function computeRrfScores(map: Map<string, RankedItem>): SearchResult[] {
         ...item.result,
         score: rrfScore,
         scoreExplanation: {
-          method: "hybrid" as SearchMethod,
+          method: "hybrid",
           rawScore: rrfScore,
           boostFactors,
           details: `Hybrid RRF: ranks=[${item.ranks.join(",")}], score=${rrfScore.toFixed(6)}`,
@@ -673,7 +673,7 @@ function toResult(row: ResultRow, score: number, scoreExplanation: ScoreExplanat
 function vectorRowToResult(row: ResultRow & { distance: number }): SearchResult {
   const similarity = 1 - row.distance;
   return toResult(row, similarity, {
-    method: "vector" as SearchMethod,
+    method: "vector",
     rawScore: row.distance,
     boostFactors: [],
     details: `Vector similarity: distance=${row.distance.toFixed(4)}, similarity=${similarity.toFixed(4)}`,
@@ -791,7 +791,7 @@ function keywordSearch(
     results: rows.map((row, index) => {
       const rankScore = Math.max(0, 1 - index * 0.1);
       return toResult(row, rankScore, {
-        method: "keyword" as SearchMethod,
+        method: "keyword",
         rawScore: rankScore,
         boostFactors: [],
         details: `Keyword LIKE match: rank=${index + 1}, score=${rankScore.toFixed(4)}`,
@@ -1002,7 +1002,7 @@ export function getRelatedChunks(
               { ...linkedChunk, chunk_id: linkedChunk.id, chunk_content: linkedChunk.content },
               0.6,
               {
-                method: "vector" as SearchMethod,
+                method: "vector",
                 rawScore: 0.6,
                 boostFactors: ["linked_document"],
                 details: "Explicitly linked document",
@@ -1107,7 +1107,7 @@ function fts5Search(
     results: fts.rows.map((row) => {
       const bm25Score = -row.fts_rank;
       return toResult(row, bm25Score, {
-        method: "fts5" as SearchMethod,
+        method: "fts5",
         rawScore: row.fts_rank,
         boostFactors: [],
         details: `FTS5 BM25 ranking: raw_rank=${row.fts_rank.toFixed(4)}, score=${bm25Score.toFixed(4)}`,

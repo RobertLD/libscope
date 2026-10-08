@@ -326,8 +326,7 @@ function handleUrlDedup(
 ): IndexedDocument | null {
   const log = getLogger();
   const existing = db.prepare("SELECT id, content_hash FROM documents WHERE url = ?").get(url) as
-    | { id: string; content_hash: string | null }
-    | undefined;
+    { id: string; content_hash: string | null } | undefined;
   if (!existing) return null;
 
   if (existing.content_hash === contentHash) {

@@ -8,7 +8,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   type LlmProvider,
 } from "../../src/core/rag.js";
-import type { SearchResult, SearchMethod } from "../../src/core/search.js";
+import type { SearchResult } from "../../src/core/search.js";
 import type { LibScopeConfig } from "../../src/config.js";
 
 function makeSearchResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -25,7 +25,7 @@ function makeSearchResult(overrides: Partial<SearchResult> = {}): SearchResult {
     score: 0.95,
     avgRating: null,
     scoreExplanation: {
-      method: "vector" as SearchMethod,
+      method: "vector",
       rawScore: 0.05,
       boostFactors: [],
       details: "test",

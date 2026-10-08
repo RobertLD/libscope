@@ -19,7 +19,7 @@ function config(provider = "local"): LibScopeConfig {
     database: {},
     indexing: { maxDocumentSize: 1000, allowPrivateUrls: false, allowSelfSignedCerts: false },
     logging: { level: "silent" },
-  } as LibScopeConfig;
+  };
 }
 
 class EightDimProvider extends MockEmbeddingProvider {

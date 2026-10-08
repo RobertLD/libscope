@@ -376,8 +376,7 @@ export function runMigrations(db: Database.Database, targetVersion: number = SCH
     let currentVersion = 0;
     if (tableExists) {
       const row = db.prepare("SELECT MAX(version) as version FROM schema_version").get() as
-        | { version: number }
-        | undefined;
+        { version: number } | undefined;
       currentVersion = row?.version ?? 0;
     }
 
