@@ -781,8 +781,9 @@ async function runDocSiteSync(
 /**
  * Remove all documents that were indexed from a given documentation site.
  *
- * Identifies documents by URL prefix (`siteUrl + "%"`) so only pages that
- * originated from the specified site are removed.
+ * Removes only the pages this connector indexed (source type "library", added by the crawler)
+ * whose URL starts with the site URL, so documents added another way under the same site
+ * (for example with `libscope add <url>`) are kept.
  *
  * @param db      The database connection.
  * @param siteUrl Root URL of the documentation site (used as URL prefix filter).
@@ -800,10 +801,13 @@ export function disconnectDocSite(db: Database.Database, siteUrl: string): numbe
     throw new ValidationError(`Invalid site URL for disconnect: ${siteUrl}`);
   }
 
-  // Parameterised LIKE — the prefix is derived from a validated URL, not user input.
+  // An exact prefix comparison: LIKE would treat "_" and "%" in the URL as wildcards.
   const rows = db
-    .prepare("SELECT id FROM documents WHERE url LIKE ?")
-    .all(`${basePrefix}%`) as Array<{ id: string }>;
+    .prepare(
+      `SELECT id FROM documents
+       WHERE source_type = ? AND submitted_by = 'crawler' AND substr(url, 1, ?) = ?`,
+    )
+    .all(SOURCE_TYPE, basePrefix.length, basePrefix) as Array<{ id: string }>;
 
   let removed = 0;
   for (const row of rows) {
