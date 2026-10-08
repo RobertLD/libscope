@@ -228,12 +228,17 @@ export async function createRegistryRepo(path: string): Promise<void> {
   log.info({ path }, "Registry repo initialized");
 }
 
-/** Add, commit, and push changes in a registry repo. */
-export async function commitAndPush(repoPath: string, message: string): Promise<void> {
+/** Add and commit all changes in a registry repo. */
+export async function commitAll(repoPath: string, message: string): Promise<void> {
   await git(["add", "."], { cwd: repoPath });
   await git(
     ["-c", "user.name=libscope", "-c", "user.email=libscope@localhost", "commit", "-m", message],
     { cwd: repoPath },
   );
+}
+
+/** Add, commit, and push changes in a registry repo. */
+export async function commitAndPush(repoPath: string, message: string): Promise<void> {
+  await commitAll(repoPath, message);
   await git(["push"], { cwd: repoPath });
 }

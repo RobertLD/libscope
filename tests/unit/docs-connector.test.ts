@@ -277,6 +277,18 @@ describe("extractDocTitle", () => {
       "example.com",
     ],
     [
+      "H1 with character references",
+      "<h1>Tom &amp; Jerry &#8212; API</h1>",
+      "https://example.com/docs/api",
+      "Tom & Jerry — API",
+    ],
+    [
+      "<title> with character references",
+      "<html><head><title>textwrap &#8212; Python</title></head><body></body></html>",
+      "https://example.com/docs",
+      "textwrap — Python",
+    ],
+    [
       "H1 precedence over title",
       "<html><head><title>Page Title</title></head><body><h1>Real Title</h1></body></html>",
       "https://example.com/page",
@@ -906,13 +918,13 @@ describe("disconnectDocSite", () => {
   it("removes all documents from the given site URL prefix", () => {
     // Seed some docs manually
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-1", "Page 1", "Content 1", "https://docs.example.com/docs/page1");
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-2", "Page 2", "Content 2", "https://docs.example.com/docs/page2");
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-3", "Other", "Content 3", "https://other.example.com/docs/page");
 
     const removed = disconnectDocSite(db, "https://docs.example.com/docs/");
@@ -921,6 +933,39 @@ describe("disconnectDocSite", () => {
 
     const remaining = db.prepare("SELECT COUNT(*) as n FROM documents").get() as { n: number };
     expect(remaining.n).toBe(1); // doc-3 should remain
+  });
+
+  it("keeps documents under the site URL that the connector did not index", () => {
+    const insert = db.prepare(
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    insert.run("synced", "library", "Synced", "Body", "https://docs.example.com/docs/a", "crawler");
+    insert.run("added", "manual", "Added", "Body", "https://docs.example.com/docs/a/", "manual");
+    insert.run("by-model", "library", "Model", "Body", "https://docs.example.com/docs/b", "model");
+
+    const removed = disconnectDocSite(db, "https://docs.example.com/docs/");
+
+    expect(removed).toBe(1);
+    const ids = (
+      db.prepare("SELECT id FROM documents ORDER BY id").all() as Array<{ id: string }>
+    ).map((r) => r.id);
+    expect(ids).toEqual(["added", "by-model"]);
+  });
+
+  it("matches the site URL exactly, not as a LIKE pattern", () => {
+    const insert = db.prepare(
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', 'T', 'B', ?, 'crawler')",
+    );
+    insert.run("inside", "https://docs.example.com/my_docs/page");
+    insert.run("lookalike", "https://docs.example.com/myXdocs/page");
+
+    const removed = disconnectDocSite(db, "https://docs.example.com/my_docs/");
+
+    expect(removed).toBe(1);
+    const ids = (db.prepare("SELECT id FROM documents").all() as Array<{ id: string }>).map(
+      (r) => r.id,
+    );
+    expect(ids).toEqual(["lookalike"]);
   });
 
   it("returns 0 when no matching documents exist", () => {
@@ -934,7 +979,7 @@ describe("disconnectDocSite", () => {
 
   it("does not remove documents from other sites", () => {
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', ?, ?, ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', ?, ?, ?, 'crawler')",
     ).run("doc-1", "Page 1", "Content 1", "https://other.example.com/docs/page");
 
     const removed = disconnectDocSite(db, "https://docs.example.com/docs/");
@@ -946,7 +991,7 @@ describe("disconnectDocSite", () => {
 
   it("removes associated chunks", () => {
     db.prepare(
-      "INSERT INTO documents (id, source_type, title, content, url) VALUES (?, 'library', 'Title', 'Body', ?)",
+      "INSERT INTO documents (id, source_type, title, content, url, submitted_by) VALUES (?, 'library', 'Title', 'Body', ?, 'crawler')",
     ).run("doc-1", "https://docs.example.com/docs/page");
     db.prepare(
       "INSERT INTO chunks (id, document_id, content, chunk_index) VALUES (?, ?, ?, ?)",

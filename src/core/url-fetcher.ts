@@ -4,6 +4,7 @@ import { Agent } from "undici";
 import { NodeHtmlMarkdown } from "node-html-markdown";
 import { FetchError } from "../errors.js";
 import { getLogger } from "../logger.js";
+import { decodeHtmlEntities } from "./html-entities.js";
 
 /** Lazy singleton undici Agent that skips TLS certificate verification. */
 let _insecureAgent: Agent | undefined;
@@ -325,7 +326,8 @@ export async function fetchAndConvert(
 /** Extract title from HTML <title> tag. */
 function extractTitleFromHtml(html: string): string | null {
   const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-  return match?.[1]?.trim() ?? null;
+  const title = match?.[1]?.trim();
+  return title ? decodeHtmlEntities(title) : null;
 }
 
 /** Extract title from first markdown heading. */
