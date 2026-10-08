@@ -310,8 +310,9 @@ class TestAsyncClient:
     async def test_wait_for_task_is_bounded_by_the_caller(self):
         respx.get(f"{API}/tasks/t1").mock(return_value=ok(task("running")))
         async with AsyncLibscopeClient() as client:
+            waiting = client.wait_for_task("t1", interval=0)
             with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(client.wait_for_task("t1", interval=0), timeout=0.05)
+                await asyncio.wait_for(waiting, timeout=0.05)
 
     @pytest.mark.asyncio
     @respx.mock

@@ -371,7 +371,7 @@ async function updateFile(kind, relPath, generator, check) {
   const original = readFileSync(file, "utf8");
   const matches = [...original.matchAll(BLOCK)];
   const bodies = await Promise.all(
-    matches.map(([, name]) =>
+    matches.map(async ([, name]) =>
       name.split(":")[0] === kind ? blockBody(generator, name, file) : null,
     ),
   );

@@ -1,6 +1,6 @@
 /** Markdown text helpers that avoid backtracking regular expressions. */
 
-const LINE_TERMINATORS = new Set(["\n", "\r", " ", " "]);
+const LINE_TERMINATORS = new Set(["\n", "\r", "\u2028", "\u2029"]);
 const WHITESPACE = /^\s$/;
 
 function isLineTerminator(char: string): boolean {
