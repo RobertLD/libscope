@@ -8,6 +8,10 @@ updates:
     groups:
       minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # undici 8 requires Node.js >= 22.19; libscope supports Node.js 20.
+      - dependency-name: "undici"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "pip"
     directory: "/sdk/python"
     target-branch: "development"
