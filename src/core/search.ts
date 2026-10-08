@@ -7,6 +7,7 @@ import { validateRow, validateRows } from "../db/validate.js";
 import { REBUILD_VECTOR_INDEX_HINT, isVectorDimensionError } from "../db/index-meta.js";
 import { logSearch, recordSearchQuery } from "./analytics.js";
 import { emitEvent } from "./events.js";
+import { STOPWORDS } from "./stopwords.js";
 import { performance } from "node:perf_hooks";
 import { ChunkNotFoundError, DocumentNotFoundError } from "../errors.js";
 
@@ -1082,9 +1083,13 @@ function fts5Search(
   const quoted = words.map((w) => quoteFtsWord(w));
   let fts = runFtsQuery(db, options, quoted.join(" AND "), limit, offset, "fts5Search.rows");
 
-  // If AND returned nothing, retry with OR for recall (the lazy count then uses the OR query)
+  // If AND returned nothing, retry with OR for recall (the lazy count then uses the OR query).
+  // Leave out function words: "how to authenticate" must not match every chunk containing "to".
   if (fts.rows.length === 0 && words.length > 1) {
-    fts = runFtsQuery(db, options, quoted.join(" OR "), limit, offset, "fts5Search.orRows");
+    const meaningful = words.filter((w) => !STOPWORDS.has(w.toLowerCase()));
+    const orWords = meaningful.length > 0 ? meaningful : words;
+    const orQuery = orWords.map((w) => quoteFtsWord(w)).join(" OR ");
+    fts = runFtsQuery(db, options, orQuery, limit, offset, "fts5Search.orRows");
   }
 
   const totalCount = lazyCount(

@@ -854,6 +854,17 @@ describe("FTS5 AND-by-default logic (issue #362)", () => {
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.content).toContain("TypeScript");
   });
+
+  it("should leave function words out of the OR fallback", async () => {
+    insertDoc(db, "doc1", "Deploy Guide");
+    insertChunk(db, "c1", "doc1", "Deploy to Kubernetes using Helm charts");
+    insertDoc(db, "doc2", "Auth Guide");
+    insertChunk(db, "c2", "doc2", "Authenticate every request with an OAuth2 token");
+
+    const { results } = await searchDocuments(db, provider, { query: "how to authenticate" });
+
+    expect(results.map((r) => r.documentId)).toEqual(["doc2"]);
+  });
 });
 
 describe("title boosting (issue #362)", () => {
