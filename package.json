@@ -66,7 +66,7 @@
     "better-sqlite3": "^12.11.1",
     "commander": "^14.0.3",
     "csv-parse": "^7.0.3",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^5.4.3",
     "node-cron": "^4.6.0",
     "node-html-markdown": "^2.0.0",
     "onnxruntime-web": "^1.30.0",
