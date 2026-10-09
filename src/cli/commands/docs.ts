@@ -170,7 +170,7 @@ function registerEditCommands(docs: Command): void {
     .description("Delete a document with its chunks, links and ratings")
     .option("-y, --yes", "Do not ask for confirmation")
     .action(async (documentId: string, flags: { yes?: boolean }) => {
-      const view = await call(getDocumentOperation, { documentId, maxLength: 0 });
+      const view = await call(getDocumentOperation, { documentId });
       const title = view.document.title;
       const question = `Delete "${title}" (${documentId})? This cannot be undone.`;
       if (!(await confirmOrCancel(question, flags.yes))) return;

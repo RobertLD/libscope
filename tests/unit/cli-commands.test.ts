@@ -48,12 +48,18 @@ vi.mock("../../src/core/operations/index.js", async (importOriginal) => {
 const { runOperation } = await import("../../src/core/operations/index.js");
 const { main, program } = await import("../../src/cli/index.js");
 
-/** Run `libscope --json <args>` and return [operation name, input] of each operation call. */
+/**
+ * Run `libscope --json <args>` and return [operation name, input] of each operation call.
+ * Each input must pass the operation's own schema, which the runOperation spy skips.
+ */
 async function invoke(args: string[]): Promise<Array<[string, unknown]>> {
   vi.mocked(runOperation).mockClear();
   await main(["node", "libscope", "--json", ...args]);
   expect(process.exitCode ?? 0).toBe(0);
-  return vi.mocked(runOperation).mock.calls.map(([op, , input]) => [op.name, input]);
+  return vi.mocked(runOperation).mock.calls.map(([op, , input]) => {
+    expect(op.input.safeParse(input ?? {}).error, `${op.name} input`).toBeUndefined();
+    return [op.name, input];
+  });
 }
 
 let home: string;
@@ -332,7 +338,7 @@ describe("CLI command -> operation contract", () => {
   it("docs delete looks the document up, then deletes it", async () => {
     const calls = await invoke(["docs", "delete", "d1", "-y"]);
     expect(calls).toEqual([
-      ["get-document", { documentId: "d1", maxLength: 0 }],
+      ["get-document", { documentId: "d1" }],
       ["delete-document", { documentId: "d1" }],
     ]);
   });
