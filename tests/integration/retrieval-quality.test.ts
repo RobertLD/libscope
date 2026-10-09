@@ -21,7 +21,7 @@
  *  4. Library-filter precision — searching with library= must return ONLY
  *     docs from that library; zero cross-library leakage allowed.
  *
- *  5. Neural model suite (conditional) — if @huggingface/transformers +
+ *  5. Neural model suite (conditional) — if onnxruntime-web +
  *     all-MiniLM-L6-v2 is available locally, the same 15 queries run with
  *     real embeddings under higher thresholds (MRR ≥ 0.82), plus 5 pure-
  *     paraphrase queries that TF-IDF cannot handle but a semantic model should.
@@ -513,7 +513,7 @@ function loadVec(db: Database.Database): void {
 function isNeuralModelAvailable(): Promise<boolean> {
   try {
     const require = createRequire(import.meta.url);
-    require.resolve("@huggingface/transformers");
+    require.resolve("onnxruntime-web");
     // Attempt a quick model resolution without actually loading — just check the package exists
     return Promise.resolve(true);
   } catch {
@@ -757,7 +757,7 @@ describe.runIf(isVecAvailable())(
       neuralAvailable = await isNeuralModelAvailable();
       if (!neuralAvailable) return;
 
-      // Dynamic import to avoid loading transformers during TF-IDF suite
+      // Dynamic import to avoid loading the model runtime during TF-IDF suite
       const { LocalEmbeddingProvider } = await import("../../src/providers/local.js");
       const provider = new LocalEmbeddingProvider();
 

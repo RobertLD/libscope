@@ -107,7 +107,7 @@ src/
 ├── web/             # Dashboard server (server.ts) and page (dashboard.ts: do not edit)
 ├── lite/            # libscope/lite: createLite() preset of LibScope, createCodeChunker(), TreeSitterChunker, normalizeRawInput()
 ├── db/              # SQLite (schema.ts migrations, connection.ts, index-meta.ts embedding model of the index)
-├── providers/       # Embedding providers (local/xenova, ollama, openai)
+├── providers/       # Embedding providers (local, ollama, openai)
 ├── registry/        # Git-backed pack registries (config, git, sync, publish, search, resolve, checksum)
 ├── connectors/      # notion, slack, confluence, onenote, obsidian, docs; registry.ts (types, saved connections, sync)
 ├── config-schema.ts # The zod config schema: keys, defaults, env var names, docs table (getConfigKeyTable)

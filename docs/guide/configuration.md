@@ -67,11 +67,11 @@ Embeddings turn text into vectors for semantic search. LibScope supports three p
 
 | Provider | Default | Requires               | Notes                                         |
 | -------- | ------- | ---------------------- | --------------------------------------------- |
-| `local`  | ✅      | Nothing                | all-MiniLM-L6-v2, ~80MB download on first use |
+| `local`  | ✅      | Nothing                | all-MiniLM-L6-v2, ~90MB download on first use |
 | `ollama` |         | Ollama running locally | Uses nomic-embed-text by default              |
 | `openai` |         | API key                | Uses text-embedding-3-small by default        |
 
-The local provider works out of the box — no API keys, no external services. It runs the model in-process using `@huggingface/transformers` and caches it in `~/.libscope/models`.
+The local provider works out of the box — no API keys, no external services. It runs the model in-process on the ONNX Runtime WebAssembly build (no native addon) and caches it in `~/.libscope/models`.
 
 ```bash
 # Switch to Ollama

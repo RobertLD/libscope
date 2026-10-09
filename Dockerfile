@@ -1,6 +1,4 @@
-# Debian (glibc) base: the local embedding model (onnxruntime-node) does not run on Alpine (musl).
-# sharp and onnxruntime-node ship prebuilt binaries, so only better-sqlite3 is rebuilt. Skipping the
-# onnxruntime-node install script also skips its optional CUDA download (about 270 MB).
+# better-sqlite3 is the only native addon; the production stage rebuilds it.
 
 # Build stage
 FROM node:22-bookworm-slim AS builder

@@ -79,7 +79,7 @@ createLite(options: LiteOptions): LibScope
 
 ### Embedding providers
 
-The default is the local `all-MiniLM-L6-v2` model (about 80 MB, downloaded on first use). To use OpenAI or Ollama, set it in `config`:
+The default is the local `all-MiniLM-L6-v2` model (about 90 MB, downloaded on first use). To use OpenAI or Ollama, set it in `config`:
 
 ```ts
 const scope = createLite({

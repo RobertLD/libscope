@@ -12,7 +12,10 @@ import {
   writeEmbeddingIdentity,
 } from "./index-meta.js";
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
+
+/** Model recorded by migration 20 for a vector index whose model is unknown. */
+export const PRE_2_0_1_MODEL = "unknown (built before libscope 2.0.1)";
 
 /** Copy every chunk into chunks_fts, keyed by the chunk's rowid. */
 const FTS_BACKFILL_SQL = `
@@ -346,6 +349,18 @@ const MIGRATIONS: Record<number, string> = {
     END;
 
     INSERT INTO schema_version (version) VALUES (19);
+  `,
+  // libscope 1.x recorded no embedding model for its vectors, so a changed model was not
+  // detected. Record a placeholder so that opening such a vector index asks for
+  // `libscope admin reindex --rebuild`. (2.0.0 indexes of the local provider are caught
+  // because the recorded model, Xenova/all-MiniLM-L6-v2, no longer matches.)
+  20: `
+    INSERT INTO index_meta (key, value)
+    SELECT 'embedding_model', '${PRE_2_0_1_MODEL}'
+    WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'chunk_embeddings')
+      AND NOT EXISTS (SELECT 1 FROM index_meta WHERE key = 'embedding_model');
+
+    INSERT INTO schema_version (version) VALUES (20);
   `,
 };
 

@@ -61,7 +61,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
-    "@huggingface/transformers": "^4.3.1",
+    "@huggingface/tokenizers": "^0.2.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^12.11.1",
     "commander": "^14.0.3",
@@ -69,6 +69,7 @@
     "js-yaml": "^4.1.1",
     "node-cron": "^4.6.0",
     "node-html-markdown": "^2.0.0",
+    "onnxruntime-web": "^1.30.0",
     "openai": "^6.49.0",
     "pino": "^10.3.1",
     "pizzip": "^3.2.0",

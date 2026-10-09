@@ -47,7 +47,7 @@ export const ConfigSchema = z.object({
       nonEmpty()
         .optional()
         .describe(
-          "Embedding model. Ignored by the local provider (always Xenova/all-MiniLM-L6-v2).",
+          "Embedding model. Ignored by the local provider (always sentence-transformers/all-MiniLM-L6-v2).",
         ),
       { defaultText: "ollama: nomic-embed-text; openai: text-embedding-3-small" },
     ),

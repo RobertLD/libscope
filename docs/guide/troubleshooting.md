@@ -24,7 +24,7 @@ If you're on an unsupported platform, LibScope will fall back to keyword-only se
 
 **Symptom:** First run hangs at "Downloading embedding model ... (first run only)..." or fails with a network error.
 
-**Cause:** The local embedding model (~80MB) downloads from Hugging Face on first use.
+**Cause:** The local embedding model (~90MB) downloads from Hugging Face on first use.
 
 **Fix:**
 

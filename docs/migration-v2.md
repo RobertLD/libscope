@@ -1,7 +1,8 @@
 # Migrating to LibScope 2.0
 
-LibScope 2.0 removes old names without aliases. This page lists every removed or renamed name and what to use instead. Your indexed data is not changed by the upgrade.
+LibScope 2.0 removes old names without aliases. This page lists every removed or renamed name and what to use instead.
 
+- [Rebuild the vector index (2.0.1)](#rebuild-the-vector-index-201): required once
 - [Configuration](#configuration): config keys, environment variables, API keys
 - [Library API](#library-api): package root exports, the `LibScope` class, `libscope/lite`
 - [MCP](#mcp): server startup, renamed, merged and removed tools
@@ -13,6 +14,20 @@ LibScope 2.0 removes old names without aliases. This page lists every removed or
 - [Docker image](#docker-image): command, port, data volume
 
 The references list the 2.0 names: [CLI](reference/cli.md), [MCP tools](reference/mcp-tools.md), [REST API](reference/rest-api.md) and [configuration](reference/configuration.md).
+
+## Rebuild the vector index (2.0.1)
+
+LibScope 2.0.1 changes the vectors of the local embedding provider, so vector indexes built by earlier versions do not match it. Upgrade to 2.0.1 or later, then rebuild the vector index once:
+
+```bash
+libscope admin reindex --rebuild
+```
+
+Until you do, commands that use the vector index stop with an error that names the old and the new model. Documents, chunks and keyword search are not changed.
+
+The local provider now runs the full-precision all-MiniLM-L6-v2 model on the ONNX Runtime WebAssembly build, and truncates input at 256 tokens as sentence-transformers does. Its vectors match the original model. Installing LibScope no longer runs a native install script for the model runtime, and no longer downloads CUDA binaries on Linux. The first command that embeds text downloads the model again (about 90 MB, once).
+
+Vector indexes built by LibScope 1.x with any provider must also be rebuilt, because 1.x did not record which model built them.
 
 ## Configuration
 
@@ -50,7 +65,7 @@ These variables do not change: `LIBSCOPE_EMBEDDING_PROVIDER`, `LIBSCOPE_LLM_PROV
 | `llm.provider` had no default; `ask` failed until it was set.                                                         | `llm.provider` defaults to `auto`: passthrough under MCP, else OpenAI if an OpenAI key is set, else Anthropic if an Anthropic key is set, else Ollama if `llm.url` is set or the embedding provider is `ollama`.                                                                                                                                              |
 | An invalid value in a config file was used as is.                                                                     | An invalid value is ignored with a warning, and the default (or lower layer) applies.                                                                                                                                                                                                                                                                         |
 | `LIBSCOPE_ALLOW_PRIVATE_URLS=false` did not override `true` in a file.                                                | `LIBSCOPE_INDEXING_ALLOW_PRIVATE_URLS=false` (or `0`) sets `false`.                                                                                                                                                                                                                                                                                           |
-| The local embedding model ran on `@xenova/transformers` and was cached in `node_modules/@xenova/transformers/.cache`. | The local embedding model runs on `@huggingface/transformers` and is cached in `~/.libscope/models` (`/data/.libscope/models` in the Docker image). The first command that embeds text after the upgrade downloads the model again, once. The model (all-MiniLM-L6-v2, quantized) and its 384-dimension vectors do not change, so you do not have to reindex. |
+| The local embedding model ran on `@xenova/transformers` and was cached in `node_modules/@xenova/transformers/.cache`. | The local embedding model is cached in `~/.libscope/models` (`/data/.libscope/models` in the Docker image). The first command that embeds text after the upgrade downloads the model again, once. Its vectors change in 2.0.1: [rebuild the vector index](#rebuild-the-vector-index-201). |
 
 ### Library (SDK) code
 

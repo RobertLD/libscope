@@ -389,7 +389,7 @@ function validateProviderConfig(config: LibScopeConfig, warnings: string[]): voi
   }
   if (config.embedding.provider === "local" && config.embedding.model) {
     warnings.push(
-      `embedding.model "${config.embedding.model}" is ignored by the local provider (it always uses Xenova/all-MiniLM-L6-v2).`,
+      `embedding.model "${config.embedding.model}" is ignored by the local provider (it always uses sentence-transformers/all-MiniLM-L6-v2).`,
     );
   }
   if (config.llm?.provider === "openai" && !openaiKey) {

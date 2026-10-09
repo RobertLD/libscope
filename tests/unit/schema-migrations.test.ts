@@ -4,7 +4,8 @@ import type Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMigrations } from "../../src/db/schema.js";
+import { PRE_2_0_1_MODEL, runMigrations } from "../../src/db/schema.js";
+import { readEmbeddingIdentity } from "../../src/db/index-meta.js";
 import { searchDocuments } from "../../src/core/search.js";
 import { initLogger } from "../../src/logger.js";
 import { MockEmbeddingProvider } from "../fixtures/mock-provider.js";
@@ -232,6 +233,36 @@ describe("schema migrations", () => {
       runMigrations(db);
 
       expect(count(db, "index_meta")).toBe(0);
+    });
+  });
+
+  describe("migration 20: model of vector indexes built by 1.x", () => {
+    it("records a placeholder model for a vector index without one", () => {
+      const db = newDb();
+      runMigrations(db, 19);
+      // sqlite-vec is not loaded here; the migration only checks that the table exists.
+      db.exec("CREATE TABLE chunk_embeddings (chunk_id TEXT)");
+
+      runMigrations(db);
+
+      expect(readEmbeddingIdentity(db).model).toBe(PRE_2_0_1_MODEL);
+    });
+
+    it("keeps a recorded model, and records nothing without a vector index", () => {
+      const withModel = newDb();
+      runMigrations(withModel, 19);
+      withModel.exec("CREATE TABLE chunk_embeddings (chunk_id TEXT)");
+      withModel
+        .prepare("INSERT INTO index_meta (key, value) VALUES ('embedding_model', ?)")
+        .run("nomic-embed-text");
+      const withoutVectors = newDb();
+      runMigrations(withoutVectors, 19);
+
+      runMigrations(withModel);
+      runMigrations(withoutVectors);
+
+      expect(readEmbeddingIdentity(withModel).model).toBe("nomic-embed-text");
+      expect(count(withoutVectors, "index_meta")).toBe(0);
     });
   });
 });

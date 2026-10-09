@@ -35,7 +35,7 @@ libscope ask "How do I configure OAuth2?"
 libscope doctor
 ```
 
-The database is created on first use. The first command that embeds text downloads the local model [all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) (about 80 MB, first run only).
+The database is created on first use. The first command that embeds text downloads the local model [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (about 90 MB, first run only).
 
 ### MCP (Claude, Cursor, VS Code, ...)
 
