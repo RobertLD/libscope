@@ -166,7 +166,11 @@ function documentFilterSql(filters: DocumentFilters | undefined): {
   return { where: where + tagFilter.clause, params: [...params, ...tagFilter.params] };
 }
 
-/** List documents with optional filters, most recently updated first. */
+/**
+ * List documents with optional filters, most recently updated first. updated_at has
+ * one-second resolution, so documents updated in the same second are ordered by rowid,
+ * newest insert first.
+ */
 export function listDocuments(db: Database.Database, options?: ListDocumentsOptions): Document[] {
   const { where, params } = documentFilterSql(options);
   const columns = DOC_COLUMNS.split(", ")
@@ -174,7 +178,7 @@ export function listDocuments(db: Database.Database, options?: ListDocumentsOpti
     .join(", ");
   const rows = db
     .prepare(
-      `SELECT ${columns} FROM documents d ${where} ORDER BY d.updated_at DESC LIMIT ? OFFSET ?`,
+      `SELECT ${columns} FROM documents d ${where} ORDER BY d.updated_at DESC, d.rowid DESC LIMIT ? OFFSET ?`,
     )
     .all(...params, options?.limit ?? 50, options?.offset ?? 0) as DocumentRow[];
 

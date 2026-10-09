@@ -128,6 +128,11 @@ describe("documents", () => {
       const docs = listDocuments(db, { library: "nonexistent" });
       expect(docs.length).toBe(0);
     });
+
+    it("lists documents updated in the same second newest insert first", () => {
+      db.prepare("UPDATE documents SET updated_at = '2026-01-01 00:00:00'").run();
+      expect(listDocuments(db).map((d) => d.id)).toEqual(["doc-3", "doc-2", "doc-1"]);
+    });
   });
 
   describe("updateDocument", () => {
