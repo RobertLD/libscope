@@ -6,7 +6,7 @@ import type { InferenceSession, Tensor } from "onnxruntime-web";
 import { EmbeddingError } from "../errors.js";
 import type { EmbeddingProvider } from "./embedding.js";
 import { getLogger } from "../logger.js";
-import { mapSequential } from "../utils/async.js";
+import { forEachSequential, mapSequential } from "../utils/async.js";
 import { withRetry } from "../utils/retry.js";
 
 /** Hugging Face repository and pinned revision of the ONNX export of all-MiniLM-L6-v2. */
@@ -140,9 +140,10 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     log.info("Loading local embedding model (all-MiniLM-L6-v2)...");
     const modelDir = join(getModelCacheDir(), MODEL_REPO);
     const missing = MODEL_FILES.filter((file) => !existsSync(join(modelDir, file)));
-    for (const file of missing) {
-      await downloadModelFile(file, join(modelDir, file), this.onDownloadProgress);
-    }
+    // One file at a time, so that download progress reports one file at a time.
+    await forEachSequential(missing, (file) =>
+      downloadModelFile(file, join(modelDir, file), this.onDownloadProgress),
+    );
     if (missing.length > 0) this.onDownloadProgress?.({ status: "ready" });
 
     // Dynamic imports so that commands without embeddings do not load the runtime.
