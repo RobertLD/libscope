@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 import DatabaseConstructor from "better-sqlite3";
 import { createDatabase } from "../../src/db/connection.js";
-import { runMigrations, createVectorTable } from "../../src/db/schema.js";
+import { PRE_2_0_1_MODEL, runMigrations, createVectorTable } from "../../src/db/schema.js";
 import {
   getVectorTableDimensions,
   readEmbeddingIdentity,
@@ -12,6 +12,7 @@ import { searchDocuments } from "../../src/core/search.js";
 import { ConfigError, DatabaseError } from "../../src/errors.js";
 import { initLogger } from "../../src/logger.js";
 import type { EmbeddingProvider } from "../../src/providers/embedding.js";
+import { LocalEmbeddingProvider } from "../../src/providers/local.js";
 
 /** Provider stub that returns constant vectors of a fixed size. */
 class FixedProvider implements EmbeddingProvider {
@@ -79,7 +80,7 @@ describe.skipIf(!vecAvailable)("vector index metadata (sqlite-vec)", () => {
     });
   });
 
-  it("populates metadata for a vector table built before schema v18", () => {
+  it("asks for a rebuild of a vector table built before schema v18 (libscope 1.x)", () => {
     runMigrations(db, 17);
     db.exec(
       "CREATE VIRTUAL TABLE chunk_embeddings USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[4])",
@@ -87,15 +88,25 @@ describe.skipIf(!vecAvailable)("vector index metadata (sqlite-vec)", () => {
     runMigrations(db);
     expect(readEmbeddingIdentity(db)).toEqual({
       provider: undefined,
-      model: undefined,
+      model: PRE_2_0_1_MODEL,
       dimensions: undefined,
     });
 
     createVectorTable(db, 4);
     expect(readEmbeddingIdentity(db).dimensions).toBe(4);
 
-    createVectorTable(db, new FixedProvider("mock", "m1", 4));
-    expect(readEmbeddingIdentity(db)).toEqual({ provider: "mock", model: "m1", dimensions: 4 });
+    expect(() => createVectorTable(db, new FixedProvider("mock", "m1", 4))).toThrow(
+      /libscope admin reindex --rebuild/,
+    );
+  });
+
+  it("asks for a rebuild of a local-provider index built by 2.0.0", () => {
+    runMigrations(db);
+    createVectorTable(db, new FixedProvider("local", "Xenova/all-MiniLM-L6-v2", 384));
+
+    expect(() => createVectorTable(db, new LocalEmbeddingProvider())).toThrow(
+      /libscope admin reindex --rebuild/,
+    );
   });
 
   it("rejects a provider whose vector size differs from the index", () => {

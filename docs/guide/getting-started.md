@@ -18,7 +18,7 @@ Requires Node.js 20 or later.
 libscope doctor
 ```
 
-This shows the config files, the active workspace and its database (`~/.libscope/workspaces/default/libscope.db`), the embedding model, and which LLM `ask` will use. Each warning comes with the command that fixes it. You do not have to create anything first: the database is created when you add the first document (or run `libscope doctor --fix`). The first command that embeds text downloads the local embedding model (~80MB, once) and prints one line while it does.
+This shows the config files, the active workspace and its database (`~/.libscope/workspaces/default/libscope.db`), the embedding model, and which LLM `ask` will use. Each warning comes with the command that fixes it. You do not have to create anything first: the database is created when you add the first document (or run `libscope doctor --fix`). The first command that embeds text downloads the local embedding model (~90MB, once) and prints one line while it does.
 
 ## Index Some Documents
 

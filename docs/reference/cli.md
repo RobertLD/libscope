@@ -45,7 +45,7 @@ Every result shows document IDs (and chunk IDs for search hits), so you can pass
 
 **Errors.** A failed command prints `✗ <message>` and a next step on stderr, and exits with code 1. For example, an unknown document ID suggests `libscope docs list`, and a configuration problem suggests `libscope doctor`. Add `--verbose` to see the stack trace.
 
-**Progress.** Long operations (directory imports, crawls, reindexing, pack installs) show a progress line on stderr when it is a terminal. The first command that needs the local embedding model prints one line while the model downloads (about 80 MB, first run only).
+**Progress.** Long operations (directory imports, crawls, reindexing, pack installs) show a progress line on stderr when it is a terminal. The first command that needs the local embedding model prints one line while the model downloads (about 90 MB, first run only).
 
 ### Document filters
 
