@@ -3,6 +3,11 @@ name: Release Please
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, e.g. v2.0.0"
+        required: true
 
 permissions:
   contents: write
@@ -25,20 +30,23 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
+    if: ${{ needs.release-please.outputs.release_created || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
           registry-url: "https://registry.npmjs.org"
+      # Trusted publishing allows only `npm stage publish`, which needs npm >= 11.15.0.
+      - run: npm install -g npm@11
       # tsc and npm publish load no native addon.
       - run: npm ci --ignore-scripts
       - run: npm run build
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Stages the release; a maintainer approves it on npmjs.com with 2FA.
+      - run: npm stage publish
