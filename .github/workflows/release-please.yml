@@ -38,13 +38,14 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.sha }}
+      # Trusted publishing allows only `npm stage publish`, which needs npm >= 11.15.0.
+      # Current Node 24 releases bundle npm 11.19; check-latest skips an older cached Node 24.
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
+          check-latest: true
           cache: npm
           registry-url: "https://registry.npmjs.org"
-      # Trusted publishing allows only `npm stage publish`, which needs npm >= 11.15.0.
-      - run: npm install -g npm@11
       # tsc and npm publish load no native addon.
       - run: npm ci --ignore-scripts
       - run: npm run build
