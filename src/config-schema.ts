@@ -7,6 +7,7 @@
  * metadata. Secret keys are read only from env vars and ~/.libscope/secrets.json.
  */
 import { z } from "zod";
+import { DEFAULT_LOCAL_MODEL, LOCAL_MODELS } from "./providers/local.js";
 
 /** Metadata attached to each leaf of ConfigSchema. */
 export interface ConfigKeyMeta {
@@ -47,9 +48,11 @@ export const ConfigSchema = z.object({
       nonEmpty()
         .optional()
         .describe(
-          "Embedding model. Ignored by the local provider (always sentence-transformers/all-MiniLM-L6-v2).",
+          `Embedding model. Models of the local provider: ${[...LOCAL_MODELS.keys()].join(", ")}.`,
         ),
-      { defaultText: "ollama: nomic-embed-text; openai: text-embedding-3-small" },
+      {
+        defaultText: `local: ${DEFAULT_LOCAL_MODEL}; ollama: nomic-embed-text; openai: text-embedding-3-small`,
+      },
     ),
     url: leaf(
       nonEmpty()

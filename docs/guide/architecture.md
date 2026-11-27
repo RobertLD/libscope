@@ -151,7 +151,7 @@ src/
 │   ├── embedding.ts          # EmbeddingProvider interface
 │   ├── index.ts              # createEmbeddingProvider() from config
 │   ├── dimensions.ts         # vector sizes of known models
-│   ├── local.ts              # all-MiniLM-L6-v2 on onnxruntime-web (WebAssembly)
+│   ├── local.ts              # local models (all-MiniLM-L6-v2, bge) on onnxruntime-web (WebAssembly)
 │   ├── ollama.ts             # Ollama HTTP API
 │   └── openai.ts             # OpenAI embeddings API
 ├── registry/                 # git pack registries: config, git, sync, search, resolve, publish, checksum

@@ -16,7 +16,7 @@ export function createEmbeddingProvider(config: LibScopeConfig): EmbeddingProvid
   const { embedding } = config;
   switch (embedding.provider) {
     case "local":
-      return new LocalEmbeddingProvider();
+      return new LocalEmbeddingProvider(embedding.model);
     case "ollama":
       return new OllamaEmbeddingProvider(
         embedding.url ?? DEFAULT_OLLAMA_URL,

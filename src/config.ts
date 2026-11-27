@@ -387,11 +387,6 @@ function validateProviderConfig(config: LibScopeConfig, warnings: string[]): voi
   if (config.embedding.provider === "openai" && !openaiKey) {
     warnings.push(`embedding.provider is "openai" but no API key found. ${apiKeyHint("OPENAI")}`);
   }
-  if (config.embedding.provider === "local" && config.embedding.model) {
-    warnings.push(
-      `embedding.model "${config.embedding.model}" is ignored by the local provider (it always uses sentence-transformers/all-MiniLM-L6-v2).`,
-    );
-  }
   if (config.llm?.provider === "openai" && !openaiKey) {
     warnings.push(`llm.provider is "openai" but no API key found. ${apiKeyHint("OPENAI")}`);
   }
