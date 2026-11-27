@@ -65,11 +65,11 @@ Earlier versions of the SDK stored data in `~/.libscope/libscope.db`. If that fi
 
 Embeddings turn text into vectors for semantic search. LibScope supports three providers:
 
-| Provider | Default | Requires               | Notes                                         |
-| -------- | ------- | ---------------------- | --------------------------------------------- |
-| `local`  | ✅      | Nothing                | all-MiniLM-L6-v2, ~90MB download on first use |
-| `ollama` |         | Ollama running locally | Uses nomic-embed-text by default              |
-| `openai` |         | API key                | Uses text-embedding-3-small by default        |
+| Provider | Default | Requires               | Notes                                                         |
+| -------- | ------- | ---------------------- | ------------------------------------------------------------- |
+| `local`  | ✅      | Nothing                | Uses all-MiniLM-L6-v2 by default, ~90MB download on first use |
+| `ollama` |         | Ollama running locally | Uses nomic-embed-text by default                              |
+| `openai` |         | API key                | Uses text-embedding-3-small by default                        |
 
 The local provider works out of the box — no API keys, no external services. It runs the model in-process on the ONNX Runtime WebAssembly build (no native addon) and caches it in `~/.libscope/models`.
 
@@ -84,7 +84,19 @@ libscope config set embedding.provider openai
 libscope config set openai.apiKey sk-...                  # or export OPENAI_API_KEY
 ```
 
-`embedding.model` and `embedding.url` apply to the selected provider. The local provider always uses all-MiniLM-L6-v2 and ignores `embedding.model`.
+`embedding.model` and `embedding.url` apply to the selected provider. For the local provider, `embedding.model` selects one of these models. Any other name is an error.
+
+| `embedding.model`            | Vector size | Max tokens | Download |
+| ---------------------------- | ----------- | ---------- | -------- |
+| `all-MiniLM-L6-v2` (default) | 384         | 256        | ~90MB    |
+| `bge-small-en-v1.5`          | 384         | 512        | ~130MB   |
+| `bge-base-en-v1.5`           | 768         | 512        | ~440MB   |
+
+```bash
+libscope config set embedding.model bge-small-en-v1.5
+```
+
+Earlier versions ignored `embedding.model` (and `LIBSCOPE_EMBEDDING_MODEL`) for the local provider. A value left from another provider is now an error, and a bge name selects that model, so an existing index then needs a rebuild. To go back to the default, run `libscope config unset embedding.model`, or remove `LIBSCOPE_EMBEDDING_MODEL` or the key in the project `.libscope.json` if it is set there.
 
 LibScope records the provider, model, and vector size that built the vector index. If you change the provider, the model, or `embedding.dimensions` after you index documents, LibScope stops with an error that names the old and the new model. To rebuild the vector index with the new model, run:
 

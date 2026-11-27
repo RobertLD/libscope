@@ -1,28 +1,80 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import {
+  clsPoolNormalized,
+  LOCAL_MODELS,
   LocalEmbeddingProvider,
-  MAX_TOKENS,
   meanPoolNormalized,
   truncateTokenIds,
 } from "../../src/providers/local.js";
+import { createEmbeddingProvider } from "../../src/providers/index.js";
+import type { LibScopeConfig } from "../../src/config.js";
+import { ConfigError } from "../../src/errors.js";
 import { initLogger } from "../../src/logger.js";
 
 const CLS = 101;
 const SEP = 102;
 
-describe("truncateTokenIds", () => {
-  it("keeps input of at most MAX_TOKENS ids unchanged", () => {
-    const ids = [CLS, ...Array.from({ length: MAX_TOKENS - 2 }, (_, i) => 1000 + i), SEP];
-    expect(truncateTokenIds(ids)).toEqual(ids);
+const TOKEN_LIMITS = [...new Set([...LOCAL_MODELS.values()].map((model) => model.maxTokens))];
+
+describe.each(TOKEN_LIMITS)("truncateTokenIds to %i tokens", (maxTokens) => {
+  it("keeps input of at most maxTokens ids unchanged", () => {
+    const ids = [CLS, ...Array.from({ length: maxTokens - 2 }, (_, i) => 1000 + i), SEP];
+    expect(truncateTokenIds(ids, maxTokens)).toEqual(ids);
   });
 
-  it("cuts longer input to MAX_TOKENS ids and keeps the final [SEP]", () => {
+  it("cuts longer input to maxTokens ids and keeps the final [SEP]", () => {
     const body = Array.from({ length: 600 }, (_, i) => 1000 + i);
-    const truncated = truncateTokenIds([CLS, ...body, SEP]);
-    expect(truncated).toHaveLength(MAX_TOKENS);
+    const truncated = truncateTokenIds([CLS, ...body, SEP], maxTokens);
+    expect(truncated).toHaveLength(maxTokens);
     expect(truncated[0]).toBe(CLS);
     expect(truncated.at(-1)).toBe(SEP);
-    expect(truncated.slice(1, -1)).toEqual(body.slice(0, MAX_TOKENS - 2));
+    expect(truncated.slice(1, -1)).toEqual(body.slice(0, maxTokens - 2));
+  });
+});
+
+describe("clsPoolNormalized", () => {
+  it("takes the first token vector and scales it to unit length", () => {
+    expect(clsPoolNormalized(new Float32Array([3, 4, 1, 0]), 2)).toEqual([0.6, 0.8]);
+  });
+});
+
+describe("local model selection", () => {
+  function config(embedding: LibScopeConfig["embedding"]): LibScopeConfig {
+    return {
+      embedding,
+      database: { path: ":memory:" },
+      indexing: { maxDocumentSize: 1024, allowPrivateUrls: false, allowSelfSignedCerts: false },
+      logging: { level: "silent" },
+    };
+  }
+
+  it("uses all-MiniLM-L6-v2 when embedding.model is not set", () => {
+    const provider = createEmbeddingProvider(config({ provider: "local" }));
+    expect(provider.model).toBe("sentence-transformers/all-MiniLM-L6-v2");
+    expect(provider.dimensions).toBe(384);
+  });
+
+  it.each([
+    ["all-MiniLM-L6-v2", "sentence-transformers/all-MiniLM-L6-v2", 384],
+    ["bge-small-en-v1.5", "BAAI/bge-small-en-v1.5", 384],
+    ["bge-base-en-v1.5", "BAAI/bge-base-en-v1.5", 768],
+  ])("selects %s from embedding.model", (name, model, dimensions) => {
+    const provider = createEmbeddingProvider(config({ provider: "local", model: name }));
+    expect(provider.model).toBe(model);
+    expect(provider.dimensions).toBe(dimensions);
+  });
+
+  it.each(["bge-m3", "constructor"])("rejects the unknown model %s", (name) => {
+    const create = (): unknown =>
+      createEmbeddingProvider(config({ provider: "local", model: name }));
+    expect(create).toThrow(ConfigError);
+    expect(create).toThrow(
+      `embedding.model "${name}" is not a model of the local provider. ` +
+        "Supported models: all-MiniLM-L6-v2, bge-small-en-v1.5, bge-base-en-v1.5. " +
+        'Run "libscope config set embedding.model <model>" or ' +
+        '"libscope config unset embedding.model". ' +
+        "If LIBSCOPE_EMBEDDING_MODEL or a project .libscope.json sets it, change it there.",
+    );
   });
 });
 

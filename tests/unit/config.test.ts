@@ -187,12 +187,6 @@ describe("validateConfig", () => {
     expect(validateConfig(config)).toHaveLength(0);
   });
 
-  it("should warn when embedding.model is set for the local provider", () => {
-    const config = makeConfig({ embedding: { provider: "local", model: "bge-m3" } });
-    const warnings = validateConfig(config);
-    expect(warnings.some((w) => w.includes("ignored by the local provider"))).toBe(true);
-  });
-
   it("should not warn when ollama provider has a URL", () => {
     const config = makeConfig({
       embedding: { provider: "ollama", url: "http://localhost:11434" },
