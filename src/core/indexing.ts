@@ -140,20 +140,19 @@ export function chunkContent(
 
 /**
  * Split oversized text at paragraph boundaries (double-newline).
- * Falls back to hard character split when a paragraph exceeds maxSize.
+ * When a paragraph exceeds maxSize, falls back to splitting at whitespace,
+ * and to a hard character split only when a word exceeds maxSize.
  */
 function splitAtParagraphs(text: string, maxSize: number, out: string[]): void {
   const emit = (buf: string): void => {
-    const trimmed = buf.trim();
-    if (trimmed.length === 0) return;
-    if (trimmed.length <= maxSize) {
-      out.push(trimmed);
-    } else {
-      for (let i = 0; i < trimmed.length; i += maxSize) {
-        const slice = trimmed.slice(i, i + maxSize).trim();
-        if (slice.length > 0) out.push(slice);
-      }
+    let rest = buf.trim();
+    while (rest.length > maxSize) {
+      const lastWhitespace = rest.slice(0, maxSize + 1).search(/\s\S*$/);
+      const splitAt = lastWhitespace > 0 ? lastWhitespace : maxSize;
+      out.push(rest.slice(0, splitAt).trimEnd());
+      rest = rest.slice(splitAt).trimStart();
     }
+    if (rest.length > 0) out.push(rest);
   };
 
   const paragraphs = text.split(/\n\n+/);
@@ -185,10 +184,13 @@ function addChunkOverlap(chunks: string[], fraction: number): string[] {
 
     if (overlapChars > 0) {
       // Take trailing portion of previous chunk, preferring line boundaries
-      let overlapText = prev.slice(-overlapChars);
+      const overlapStart = prev.length - overlapChars;
+      let overlapText = prev.slice(overlapStart);
       const newlineIdx = overlapText.indexOf("\n");
       if (newlineIdx > 0) {
         overlapText = overlapText.slice(newlineIdx + 1);
+      } else if (/\S/.test(prev.charAt(overlapStart - 1))) {
+        overlapText = overlapText.replace(/^[^\s\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}]+/u, "");
       }
       overlapText = overlapText.trim();
       if (overlapText.length > 0) {
@@ -207,18 +209,26 @@ function addChunkOverlap(chunks: string[], fraction: number): string[] {
 /** Size threshold above which streaming chunking is used (1MB). */
 export const STREAMING_THRESHOLD = 1024 * 1024;
 
-/** Find the best sentence/line boundary near the window end to avoid mid-sentence cuts. */
+/**
+ * Find the best sentence/line boundary within 200 characters after the window end to
+ * avoid mid-sentence cuts. Falls back to the next whitespace in that range, or the end
+ * of the text, to avoid mid-word cuts.
+ */
 function findWindowBoundary(text: string, end: number): number {
   if (end >= text.length) return end;
 
-  const sentenceEnd = text.indexOf(".", end);
-  const newlineEnd = text.indexOf("\n", end);
+  const lookahead = text.slice(end, end + 200);
+  const sentenceEnd = lookahead.search(/\.\s/);
+  const newlineEnd = lookahead.indexOf("\n");
   let boundary = -1;
-  if (sentenceEnd !== -1 && sentenceEnd - end < 200) boundary = sentenceEnd + 1;
-  if (newlineEnd !== -1 && newlineEnd - end < 200 && (boundary === -1 || newlineEnd < boundary)) {
+  if (sentenceEnd !== -1) boundary = sentenceEnd + 1;
+  if (newlineEnd !== -1 && (boundary === -1 || newlineEnd < boundary)) {
     boundary = newlineEnd + 1;
   }
-  return boundary !== -1 ? boundary : end;
+  if (boundary === -1) boundary = lookahead.search(/\s/);
+  if (boundary !== -1) return end + boundary;
+
+  return end + lookahead.length === text.length ? text.length : end;
 }
 
 /** Add chunks from a window to the output, deduplicating by content hash. */
@@ -280,6 +290,9 @@ export function chunkContentStreaming(
     offset = windowEnd - overlap;
     if (offset <= 0 || windowEnd >= content.length) {
       offset = windowEnd;
+    } else {
+      const whitespaceIdx = content.slice(offset, windowEnd).search(/\s/);
+      offset = whitespaceIdx === -1 ? windowEnd : offset + whitespaceIdx;
     }
   }
 

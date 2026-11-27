@@ -142,6 +142,52 @@ More content here.`;
     expect(joined).toContain("Line 1999");
   });
 
+  it("should not cut words at window edges", () => {
+    const words = Array.from({ length: 6000 }, (_, i) => `w${i}${"x".repeat(i % 5)}e`);
+    const lines: string[] = [];
+    for (let i = 0; i < words.length; i += 40) {
+      lines.push(words.slice(i, i + 40).join(" "));
+    }
+
+    const chunks = chunkContentStreaming(lines.join("\n"), { windowSize: 4096 });
+
+    const tokens = new Set(chunks.flatMap((chunk) => chunk.split(/\s+/)));
+    expect(tokens).toEqual(new Set(words));
+  });
+
+  it("should not cut dotted tokens at window edges", () => {
+    const words = Array.from({ length: 2000 }, (_, i) => `v${i}.10.${i}`);
+
+    const chunks = chunkContentStreaming(words.join(" "), { windowSize: 1024 });
+
+    const tokens = new Set(chunks.flatMap((chunk) => chunk.split(/\s+/)));
+    expect(tokens).toEqual(new Set(words));
+  });
+
+  it("should not cut the last word of the content", () => {
+    const content = `${"word ".repeat(20)}finalword`;
+
+    const chunks = chunkContentStreaming(content, { windowSize: 104 });
+
+    const tokens = new Set(chunks.flatMap((chunk) => chunk.split(/\s+/)));
+    expect(tokens).toEqual(new Set(["word", "finalword"]));
+  });
+
+  it("should not start a window in the middle of a word", () => {
+    const words = Array.from({ length: 40 }, (_, i) => `interoperability${i}`);
+
+    const chunks = chunkContentStreaming(words.join(" "), { windowSize: 104 });
+
+    const tokens = new Set(chunks.flatMap((chunk) => chunk.split(/\s+/)));
+    expect(tokens).toEqual(new Set(words));
+  });
+
+  it("should advance past consecutive whitespace", () => {
+    const chunks = chunkContentStreaming("a  b", { windowSize: 1 });
+
+    expect(chunks).toEqual(["a", "b"]);
+  });
+
   it("should respect maxDocumentSize", () => {
     const content = "A".repeat(200);
     expect(() => chunkContentStreaming(content, { maxDocumentSize: 100 })).toThrow(
@@ -284,6 +330,52 @@ More content here.`;
     expect(chunksNeg.length).toBeGreaterThan(0);
     expect(chunksHigh.length).toBeGreaterThan(0);
   });
+
+  it("should not start the overlap in the middle of a word", () => {
+    const content = `# First\n${"alpha ".repeat(30)}interoperability checks\n\n## Second\nBody.`;
+
+    const chunks = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0.1 });
+
+    expect(chunks[1]).toBe("checks\n\nContext: First\n## Second\nBody.");
+  });
+
+  it("should keep the first word when the overlap starts at a word start", () => {
+    const content = `# First\n${"alpha ".repeat(34)}interoperability checks\n\n## Second\nBody.`;
+
+    const chunks = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0.1 });
+
+    expect(chunks[1]).toBe("interoperability checks\n\nContext: First\n## Second\nBody.");
+  });
+
+  it("should add no overlap when it would only be part of a word", () => {
+    const content = "# Install\nnpm install libscope\n\n## Usage\nRun it.";
+
+    const chunks = chunkContent(content);
+
+    expect(chunks[1]).toBe("Context: Install\n## Usage\nRun it.");
+  });
+
+  it("should keep the overlap of text without whitespace", () => {
+    const content = "漢字".repeat(200);
+
+    const chunks = chunkContent(content, { maxChunkSize: 300, overlapFraction: 0.1 });
+
+    expect(chunks).toEqual(["漢字".repeat(150), `${"漢字".repeat(15)}\n\n${"漢字".repeat(50)}`]);
+  });
+
+  it("should keep the overlap of CJK text under a heading", () => {
+    const content = `# 見出し\n${"漢字".repeat(50)}\n\n## Second\nBody.`;
+
+    const chunks = chunkContent(content, { maxChunkSize: 1500, overlapFraction: 0.1 });
+
+    expect(chunks[1]).toBe(`${"漢字".repeat(5)}\n\nContext: 見出し\n## Second\nBody.`);
+  });
+
+  it("should add no overlap from a previous chunk of one word", () => {
+    const chunks = chunkContent("Introduction\n# Next\nBody");
+
+    expect(chunks[1]).toBe("# Next\nBody");
+  });
 });
 
 describe("chunkContent paragraph-boundary splitting", () => {
@@ -302,6 +394,36 @@ describe("chunkContent paragraph-boundary splitting", () => {
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(300 + 50); // small tolerance for overlap
     }
+  });
+
+  it("should split a paragraph without blank lines at whitespace", () => {
+    const words = Array.from({ length: 400 }, (_, i) => `word${i}`);
+    const lines: string[] = [];
+    for (let i = 0; i < words.length; i += 12) {
+      lines.push(words.slice(i, i + 12).join(" "));
+    }
+
+    const chunks = chunkContent(lines.join("\n"), { maxChunkSize: 300, overlapFraction: 0 });
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join(" ").split(/\s+/)).toEqual(words);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(300);
+    }
+  });
+
+  it("should keep a word that ends exactly at the max size", () => {
+    const content = `aaa ${"b".repeat(296)} c`;
+
+    const chunks = chunkContent(content, { maxChunkSize: 300, overlapFraction: 0 });
+
+    expect(chunks.map((chunk) => chunk.length)).toEqual([300, 1]);
+  });
+
+  it("should hard split a word that is longer than the max size", () => {
+    const chunks = chunkContent("A".repeat(700), { maxChunkSize: 300, overlapFraction: 0 });
+
+    expect(chunks.map((chunk) => chunk.length)).toEqual([300, 300, 100]);
   });
 });
 

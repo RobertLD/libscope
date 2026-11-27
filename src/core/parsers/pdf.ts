@@ -19,7 +19,7 @@ export class PdfParser implements DocumentParser {
 
     try {
       const parser = new PDFParse({ data: new Uint8Array(content) });
-      const result = await parser.getText();
+      const result = await parser.getText({ pageJoiner: "" });
       return result.text;
     } catch (err) {
       throw new ValidationError(
