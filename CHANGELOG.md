@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0](https://github.com/RobertLD/libscope/compare/v2.0.1...v2.1.0) (2026-11-27)
+
+
+### Features
+
+* select the local embedding model with embedding.model ([#541](https://github.com/RobertLD/libscope/issues/541)) ([951ca99](https://github.com/RobertLD/libscope/commit/951ca99692effd0715ee0effa26b1c7f2b979333))
+
+
+### Bug Fixes
+
+* docs delete input validation, and same-second document list order ([#529](https://github.com/RobertLD/libscope/issues/529)) ([bae6bef](https://github.com/RobertLD/libscope/commit/bae6befb78ad8094954d68bddd640e398a3d3a4c))
+* drop PDF page markers and stop chunks from splitting words ([#540](https://github.com/RobertLD/libscope/issues/540)) ([8ec921d](https://github.com/RobertLD/libscope/commit/8ec921d7adea3027584237cd344090f5f3ab46ad))
+
 ## [2.0.1](https://github.com/RobertLD/libscope/compare/v2.0.0...v2.0.1) (2026-10-09)
 
 
